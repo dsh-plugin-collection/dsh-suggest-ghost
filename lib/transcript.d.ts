@@ -19,9 +19,21 @@ export interface TrimmedTranscript {
 }
 /** 有界转录及其日志归因。 */
 export interface Transcript {
+    /** 送给模型看的转录对（已按字符 + UTF-8 字节双预算裁剪）。 */
     readonly pairs: readonly TranscriptPair[];
     readonly sourceMessageSeqs: readonly number[];
     readonly baseSeq: number;
+    /**
+     * 语言证据对：回合窗口内**未经预算裁剪**的原始对（不含合成的上下文摘要对）。
+     *
+     * 为什么不能复用 `pairs`：`trimTranscript` 超字节预算时从**最老**的对开始丢，
+     * 于是「长助手回复 + 几条短用户消息」这个最常见组合会把用户消息整批挤掉
+     * （实测 4096 字节预算下，`我合并了` / `我重启DSH了` 被丢弃，只剩一条纯 URL）。
+     * 语言判定一旦失去用户证据，就回退去数助手文本里的代码与 Markdown 拉丁字母，
+     * 把中文回合判成 English。「喂给模型多少内容」与「用户在用什么语言」是两个关注点，
+     * 各用各的窗口，别让前者决定后者。
+     */
+    readonly evidencePairs: readonly TranscriptPair[];
 }
 /** 把字符串截断到不超过 `maxBytes` 个 UTF-8 字节；按码点遍历，不劈裂多字节字符。 */
 export declare function truncateToUtf8(text: string, maxBytes: number): string;
@@ -43,9 +55,15 @@ export declare function trimTranscript(pairs: readonly TranscriptPair[], sourceM
  *    显式选择的交互语言，弱证据下优先遵循；
  * 2. 用户消息按「比例 × 长度 × 时间」加权，强证据可推翻 UI 先验；
  * 3. 取最近 20 条用户消息，去噪后再统计，避免代码/路径里的 CJK 字符误导；
- * 4. 用户消息全为代码时回退到最近一条 assistant 消息的语言。
+ * 4. 用户消息全为代码时回退到最近一条 assistant 消息的语言；
+ * 5. 「拉丁证据推翻 UI 先验」只认来自**真人消息**的证据：回退到助手文本时该覆盖
+ *    不生效（见 `fromAssistantFallback`）。助手回复里的标识符、日志片段、Markdown
+ *    表格不是用户的输入语言，用它推翻等于把中文回合判成英文。
  *
- * @param pairs - 转录对
+ * 调用方注意：传入的必须是**未经输入预算裁剪**的证据对（`Transcript.evidencePairs`），
+ * 而不是喂给模型的那份 `pairs`——裁剪会从最老的对开始丢，短用户消息最先出局。
+ *
+ * @param pairs - 语言证据对（未经预算裁剪，时间正序）
  * @param uiLocale - client 捎带的 UI 语言（'zh' | 'en' | 'ru' 等）
  * @param uiLocaleWeight - UI 语言先验权重（默认 100；越大越倾向 UI 语言）
  * @param lastLanguage - 上次建议的语言（语言惯性：短消息无足够信号时回退）
