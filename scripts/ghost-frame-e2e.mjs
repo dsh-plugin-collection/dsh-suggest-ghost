@@ -27,6 +27,35 @@
  *  - **NOT-COVERED**：前置条件不在（例如宿主那条分支未合并，留痕键压根不存在）→
  *    **必须写清缺的是哪个前置**，并附实测观察（不是空口一句「未覆盖」）；退出码仍 0。
  *
+ * ## (a) 留痕项为什么拆成三条（task-14 的全部改动理由）
+ *
+ * 上一版把 stdout 捕获同时当两个问题的证据，于是 `apply()` 不在场时键集合必然为空，
+ * 脚本就报成「宿主没实现」——那是**归因错误**，不是覆盖不足。现在三条断言各有各的
+ * 证据源，结构上不可能再互相冒充：
+ *
+ *  - **(a1) 数值**：直接导入 `lib/generate.js` 的三个纯函数
+ *    （`createStreamMetrics` / `observeChunk` / `formatStreamMetrics`，`src/generate.ts:422/:447/:484`），
+ *    喂本脚本写死的假流形状，逐键断言数值。**零生产代码改动**，也不需要构建产物之外的东西。
+ *  - **(a1b) 同源旁证**：`generateCompletion` 返回体里那份 `metrics` 必须与 (a1) 的计数一致
+ *    ——证明真流循环确实调了 `observeChunk`，而不是格式化函数自己算对了。
+ *  - **(a2) 接线层在场**：静态断言 `lib/index.js` 里那 4 个 `traceOps(...)` 调用点齐备，
+ *    且同一条模板里带 `${stream}`、`formatStreamMetrics` 已接进接线层。
+ *  - **(a3) 这一行在本次进程里真的被打出来**：需要一次真实回合 → 明确标 NOT-COVERED。
+ *    **不把「格式化算对了」写成「留痕行出现了」**。
+ *
+ * 选路线 A（纯函数 + 静态在场）而不是路线 B（起真 Context 跑完整 apply），依据是 lead 与
+ * host-latency 的判断：B 要同时满足 `inject: ['llm','sessions','settings']`、注入假 llm、
+ * 伪造 `session.requestHeader()` 供 `routeOf`、再喂一个 `turn/end`，成本数倍，
+ * 而它多证明的只有「apply 跑过」——与 (a2) 的静态在场断言重叠。真要做，做成**第二条独立脚本**。
+ *
+ * ## 在整条 `test:e2e` 里的位置
+ *
+ * 链是 fail-fast 的，而 `coldstart-e2e.mjs` 小节 2（重启恢复盘上残留建议）**故意留红**：
+ * `parsePersistedPush` 在 `src/` 里零生产调用点（`e853d1e` 加、`c3b6a80` 删、没接回来），
+ * 见 issue #50。放宽它的断言换绿 = 把产品缺陷盖住，所以本脚本被挪到链首（紧跟构建），
+ * 这样 `pnpm test:e2e` 至少不会因为它排在红项之后就一行不跑。单独跑永远是：
+ * `node scripts/ghost-frame-e2e.mjs`。
+ *
  * ## 契约常量
  *
  * 留痕键名按 #41（lead 与 host-latency 定的那份）写成常量；若 host-latency 落地时改名，
@@ -55,18 +84,26 @@ import {
 
 // ── 契约常量（#41）───────────────────────────────────────────────────────
 /**
- * 宿主侧本轮新增的流式指标键（#39）。host-latency 落地时**必须**同名，
- * 否则本脚本会把已经存在的能力报成 NOT-COVERED——那时改这里，别改断言的期望值。
+ * 宿主侧本轮（#51 已合并）落地的流式指标键，逐条对应 `src/generate.ts` 的
+ * `formatStreamMetrics`（`:484`）渲染出的那一串 `k=v`。名单里有两个容易被写错的：
+ *  - `attempts_outer`（**不是** `attempts`）：只记外层重试，路由内部自重放不可观测、不计入；
+ *    键名在 `fa1eb4c` 才对齐，早于它的产物里仍是 `attempts=`，跑旧产物时会在这里报缺键。
+ *  - `effort_rejected` **恒打印 0/1**（不是「有才打」）：它的用途是「这类失败有多少」的计数，
+ *    缺省写法会让 grep 出来的样本自选择成失败样本。
+ * 新增/改名时改这一处即可，别改下面的期望值。
  */
 const EXPECTED_TRACE_KEYS = [
-  'first_text_delta_ms',      // 首个 text-delta 相对请求起点的毫秒数
-  'first_reasoning_delta_ms', // 首个 reasoning-delta 毫秒数（与上一条分开计，#35 要看档位差异）
+  'first_text_delta_ms',      // 首个 text-delta 相对起点的毫秒数
+  'first_reasoning_delta_ms', // 首个 reasoning-delta 毫秒数（与上一条**分开**记，#35 要看档位差异）
   'content_deltas',           // text-delta 条数（本脚本写死为 TEXT_DELTAS，可精确断言）
-  'content_chars',            // text-delta 累计字符数（同上）
+  'content_chars',            // text-delta 累计字符数
   'reasoning_deltas',         // reasoning-delta 条数
   'reasoning_chars',          // reasoning-delta 累计字符数
   'finish_kind',              // 终止原因（本脚本固定 'stop'）
-  'effort_requested',         // 生效档位（本期默认不传 → 期望 'default'/空标记，不断言具体值）
+  'attempts_outer',           // 外层尝试次数（路由内部重放不计入）
+  'effort_requested',         // 请求的档位（本期默认不传 → 'inherit'；终值由宿主决定，不断言具体值）
+  'effort_rejected',          // 档位是否被适配器拒过（恒 0/1）
+  'outcome',                  // 收口分类：ok / empty / filtered（empty 指向路由与档位，filtered 指向净化链）
 ];
 
 /** 载荷里必须出现的终帧字段（#41）。 */
@@ -84,6 +121,18 @@ const FINISH_KIND = 'stop';
 
 const expectedReasoningChars = REASONING_TEXTS.slice(0, REASONING_DELTAS).join('').length;
 const expectedContentChars = TEXT_CHUNKS.join('').length;
+
+/**
+ * 假流形状 → 期望数值。因为形状由本脚本写死，这几个数字是**精确断言**而不是「大概对」。
+ * `content_chars` / `reasoning_chars` 用 UTF-16 码元长度（与 `observeChunk` 同一量纲）。
+ */
+const EXPECTED_METRIC_VALUES = {
+  content_deltas: TEXT_DELTAS,
+  content_chars: expectedContentChars,
+  reasoning_deltas: REASONING_DELTAS,
+  reasoning_chars: expectedReasoningChars,
+  finish_kind: FINISH_KIND,
+};
 
 /**
  * dsh-llm 的原始流协议（`@deepseek-ai/dsh-llm/lib/types/types.d.ts:417-447`）：
@@ -295,46 +344,152 @@ if (completionError !== null) {
     `completion.text 字符数=${text.length}（期望 >0，源文本「${TEXT_CHUNKS.join('')}」经 sanitize 后非空）`);
 }
 
-// ── 2. (a) 留痕键：宿主本轮新增的那几个键在不在、数值对不对 ──────────────────
-const seenKeys = traceKeysIn(capturedLines);
-const missing = EXPECTED_TRACE_KEYS.filter((k) => !seenKeys.has(k));
-if (missing.length === 0) {
-  // 全在 → 做**数值**断言：形状是我写的，所以对得上才算宿主真的在数。
-  const line = capturedLines.filter((l) => EXPECTED_TRACE_KEYS.every((k) => l.includes(`${k}=`))).pop() ?? '';
-  const numOf = (key) => Number(new RegExp(`${key}=(\\d+)`).exec(line)?.[1]);
-  const checks = [
-    ['content_deltas', numOf('content_deltas'), TEXT_DELTAS],
-    ['content_chars', numOf('content_chars'), expectedContentChars],
-    ['reasoning_deltas', numOf('reasoning_deltas'), REASONING_DELTAS],
-    ['reasoning_chars', numOf('reasoning_chars'), expectedReasoningChars],
-  ];
-  const bad = checks.filter(([, actual, expected]) => actual !== expected);
-  const kindMatch = new RegExp(`finish_kind=(${FINISH_KIND})\\b`).test(line);
-  const firstText = numOf('first_text_delta_ms');
-  const firstReasoning = numOf('first_reasoning_delta_ms');
-  const orderOk = Number.isFinite(firstText) && Number.isFinite(firstReasoning)
-    && firstReasoning >= 0 && firstText >= firstReasoning;
-  if (bad.length === 0 && kindMatch && orderOk) {
-    record(`(a) 留痕键与数值（#39）`, STATUS.PASS,
-      `content_deltas=${TEXT_DELTAS} content_chars=${expectedContentChars}`
-      + ` reasoning_deltas=${REASONING_DELTAS} reasoning_chars=${expectedReasoningChars}`
-      + ` finish_kind=${FINISH_KIND} first_text_delta_ms=${firstText} first_reasoning_delta_ms=${firstReasoning}`);
-  } else {
-    fail('(a) 留痕键与数值（#39）',
-      `content_deltas=${TEXT_DELTAS}, content_chars=${expectedContentChars}, reasoning_deltas=${REASONING_DELTAS},`
-      + ` reasoning_chars=${expectedReasoningChars}, finish_kind=${FINISH_KIND}, first_reasoning ≤ first_text`,
-      bad.map(([k, a, e]) => `${k}=${String(a)}（期望 ${e}）`).join(', ')
-      + `; finish_kind 命中=${kindMatch}; first_text=${String(firstText)} first_reasoning=${String(firstReasoning)}`);
-  }
+// ── 2. (a) 留痕：拆成两条**互不共用观测源**的断言 ────────────────────────────
+//
+// ## 为什么必须拆（这是本条脚本改版的全部理由）
+//
+// 上一版把 stdout 捕获同时当两个问题的证据：「接线层跑没跑」与「留痕键值对不对」。
+// 两者共用一个观测源，于是只要 `apply()` 不在场（本脚本直接调 `generateSuggestion`
+// / `generateCompletion`，而那行是 `src/index.ts` 的接线层打的），键集合就必然为空，
+// 脚本便把它报成「宿主没实现」——**归因错误**，而且错误方向恰好是「把没验到的说成没做的」。
+//
+// 现在拆成三条，各自有独立证据源，结构上不可能再互相冒充：
+//
+// | 断言 | 证据源 | 失败意味着 |
+// |---|---|---|
+// | (a1) 留痕**数值** | `lib/generate.js` 的三个纯函数导出：`createStreamMetrics` / `observeChunk` / `formatStreamMetrics`（`src/generate.ts:422/:447/:484`） | 计数或渲染真错了 → FAIL |
+// | (a2) 接线层**在场** | `lib/index.js` 的静态文本：4 个 `traceOps(...)` 调用点，同一条模板里引 `${stream}`（由 `formatStreamMetrics` 产出） | 打点被删/改名 → FAIL |
+// | (a3) 这一行在本次进程里**真的被打出来** | 需要一次真实回合（`apply()` 在场 + 真 LLM 或注入的服务面） | 本脚本不覆盖 → NOT-COVERED，并写清缺什么 |
+//
+// (a3 不是「原因不明」的未覆盖：它缺的是**一次真实回合**，而补它的部分成本
+// （注入 settings 服务 + 伪造 `session.requestHeader()` 供 `routeOf` + 喂 `turn/end`）
+// 换来的只是「apply 跑过」这一件事，与 (a2) 的静态在场断言高度重叠。lead 的口径是
+// 要做就做成**第二条独立脚本**，不塞进本脚本。
+
+// ── (a1) 数值层：假流形状由本脚本写死，所以每个键都能精确断言 ────────────────
+const metricsFns = await loadMetricsFns(libDir);
+if (metricsFns === null) {
+  record('(a1) 留痕数值（纯函数层）', STATUS.NC,
+    `缺前置：${join(libDir, 'generate.js')} 里没有导出 createStreamMetrics / observeChunk / formatStreamMetrics`
+    + '（实测导出面里找不到这三个名字）。这属于「宿主那条线还没落到产物」，不是判据不过。');
 } else {
-  record('(a) 留痕键与数值（#39）', STATUS.NC,
-    `缺前置：host-latency 那条分支（#41 的流式指标）尚未合进 ${repo} 的构建产物，`
-    + `所以这些键在宿主代码里还不存在。\n`
-    + `缺失键：${missing.join(', ')}\n`
-    + `实测：本次假流确实跑完（stream 调用 ${fakeLlm.requests.length} 次、text=${(completionOutcome?.text ?? '').length} 字符），`
-    + `插件期间捕获到 ${capturedLines.length} 行输出，抽到的键集合=[${[...seenKeys].sort().join(', ') || '空'}]。\n`
-    + '合并后重跑本脚本即可从 NOT-COVERED 变 PASS/FAIL，无需改断言。');
+  const { createStreamMetrics, observeChunk, formatStreamMetrics } = metricsFns;
+  // 假时钟：起点 1000ms，每块 +5ms，与 makeFakeLlm 的真实节奏同形状（数值断言不受机器抖动影响）。
+  const startedAt = 1000;
+  const metrics = createStreamMetrics('inherit');
+  buildStreamChunks().forEach((chunk, i) => observeChunk(metrics, chunk, startedAt, startedAt + (i + 1) * 5));
+  const line = formatStreamMetrics(metrics);
+  const rendered = new Map([...line.matchAll(/([a-z_][a-z0-9_]*)=(\S*)/g)].map(([, k, v]) => [k, v]));
+  const missingKeys = EXPECTED_TRACE_KEYS.filter((k) => !rendered.has(k));
+  const valueChecks = Object.entries(EXPECTED_METRIC_VALUES)
+    .filter(([k, expected]) => rendered.get(k) !== String(expected))
+    .map(([k, expected]) => `${k}=${String(rendered.get(k))}（期望 ${expected}）`);
+  // 两个首块延迟**分开**记：非推理模型时 first_reasoning 是 -1，不能拿 `first_text >= first_reasoning`
+  // 当普遍判据（-1 >= 0 会假）。本脚本的假流有 reasoning，所以这里只断「都 >=0 且 reasoning 不晚于 text」。
+  const firstText = Number(rendered.get('first_text_delta_ms'));
+  const firstReasoning = Number(rendered.get('first_reasoning_delta_ms'));
+  const timingOk = firstReasoning >= 0 && firstText >= 0 && firstText >= firstReasoning;
+  const outcomeOk = ['ok', 'empty', 'filtered'].includes(rendered.get('outcome') ?? '');
+  const effortOk = rendered.has('effort_requested') && ['0', '1'].includes(rendered.get('effort_rejected') ?? '');
+  if (missingKeys.length === 0 && valueChecks.length === 0 && timingOk && outcomeOk && effortOk) {
+    record('(a1) 留痕数值（纯函数层）', STATUS.PASS,
+      `formatStreamMetrics 渲染出的整行 = ${line}\n`
+      + `期望：${Object.entries(EXPECTED_METRIC_VALUES).map(([k, v]) => `${k}=${v}`).join(' ')}、`
+      + `first_reasoning(${firstReasoning}) ≤ first_text(${firstText})、outcome∈{ok,empty,filtered}、`
+      + `effort_rejected∈{0,1}、attempts_outer 在场（只记外层重试）\n`
+      // `outcome` 由**调用方**在净化之后写（`generate.ts:819/834/963/966`），纯函数层只把它初始化成
+      // 'empty'；所以这里的 'empty' 表示「这一层不拥有这个判定」，**不是**「模型一个字都没吐」。
+      // 真实现场的 outcome 看 (a1b)——它读的是 generate* 返回体里那份 metrics。
+      + '注：outcome 由调用方在净化之后写，纯函数层不参与（现场值见 (a1b)）');
+  } else {
+    fail('(a1) 留痕数值（纯函数层）',
+      `整行含 ${EXPECTED_TRACE_KEYS.join(' / ')} 且 ${Object.entries(EXPECTED_METRIC_VALUES).map(([k, v]) => `${k}=${v}`).join(', ')}`,
+      `实得整行 = ${line}`
+      + (missingKeys.length > 0 ? `\n     缺键：${missingKeys.join(', ')}` : '')
+      + (valueChecks.length > 0 ? `\n     数值不符：${valueChecks.join('; ')}` : '')
+      + (timingOk ? '' : `\n     首块时序不成立：first_reasoning=${String(firstReasoning)} first_text=${String(firstText)}`)
+      + (outcomeOk ? '' : `\n     outcome 不是 ok/empty/filtered：${String(rendered.get('outcome'))}`)
+      + (effortOk ? '' : `\n     effort_requested/effort_rejected 形状不对：${String(rendered.get('effort_requested'))} / ${String(rendered.get('effort_rejected'))}`));
+  }
+  // 旁证：真函数返回的 metrics 与纯函数层同源（假流真跑过一遍，两边计数必须一致）。
+  const live = completionOutcome?.metrics ?? null;
+  if (live === null) {
+    record('(a1b) generateCompletion 返回体带 metrics', STATUS.NC,
+      '缺前置：本仓构建产物的 generateCompletion 返回体里没有 metrics 字段'
+      + '（宿主那条线未落到这份产物）；数值层已单独由 (a1) 判定。');
+  } else {
+    const same = live.contentDeltas === EXPECTED_METRIC_VALUES.content_deltas
+      && live.reasoningDeltas === EXPECTED_METRIC_VALUES.reasoning_deltas
+      && live.contentChars === EXPECTED_METRIC_VALUES.content_chars
+      && live.finishKind === EXPECTED_METRIC_VALUES.finish_kind;
+    const liveView = {
+      contentDeltas: live.contentDeltas, contentChars: live.contentChars,
+      reasoningDeltas: live.reasoningDeltas, reasoningChars: live.reasoningChars,
+      finishKind: live.finishKind, outcome: live.outcome, effortRequested: live.effortRequested,
+    };
+    const expectedView = {
+      contentDeltas: EXPECTED_METRIC_VALUES.content_deltas, contentChars: EXPECTED_METRIC_VALUES.content_chars,
+      reasoningDeltas: EXPECTED_METRIC_VALUES.reasoning_deltas, reasoningChars: EXPECTED_METRIC_VALUES.reasoning_chars,
+      finishKind: EXPECTED_METRIC_VALUES.finish_kind,
+    };
+    record('(a1b) generateCompletion 返回体带 metrics 且与纯函数层同源',
+      same ? STATUS.PASS : STATUS.FAIL,
+      '现场=' + JSON.stringify(liveView) + (same ? '' : '；期望=' + JSON.stringify(expectedView)));
+  }
 }
+
+/** 取 lib/generate.js 里的三个指标纯函数；缺任何一个返回 null（调用方按未覆盖处理）。 */
+async function loadMetricsFns(dir) {
+  const mod = await import(join(dir, 'generate.js'));
+  const needed = ['createStreamMetrics', 'observeChunk', 'formatStreamMetrics'];
+  if (needed.some((n) => typeof mod[n] !== 'function')) return null;
+  return {
+    createStreamMetrics: mod.createStreamMetrics,
+    observeChunk: mod.observeChunk,
+    formatStreamMetrics: mod.formatStreamMetrics,
+  };
+}
+
+// ── (a2) 接线层在场性（静态，不靠 stdout）────────────────────────────────────
+const indexPath = join(libDir, 'index.js');
+const indexText = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : '';
+const TRACE_SITES = [
+  'completion generated',
+  'completion dropped (empty or filtered)',
+  'suggestion generated',
+  'suggestion dropped (empty or filtered)',
+];
+const siteLines = TRACE_SITES
+  .map((prefix) => indexText.split('\n').filter((l) => l.includes('traceOps(') && l.includes(prefix)))
+  .map((hits) => hits[0] ?? null);
+const absent = TRACE_SITES.filter((_, i) => siteLines[i] === null);
+const withoutStream = siteLines.filter((l) => l !== null && !l.includes('${stream}')).length;
+const formatterWired = /const stream = formatStreamMetrics\(/.test(indexText);
+if (!existsSync(indexPath)) {
+  record('(a2) 接线层 4 个打点在场（静态）', STATUS.NC, `缺前置：${indexPath} 不存在（没有构建产物）`);
+} else if (absent.length === 0 && withoutStream === 0 && formatterWired) {
+  record('(a2) 接线层 4 个打点在场（静态）', STATUS.PASS,
+    '4 条 traceOps(...) 调用点齐备，且同一条模板里带 ${stream}，'
+    + '且接线层里有 const stream = formatStreamMetrics(...)\n'
+    + '注意：这只证明「生产路径上确实有人打这一行」，**不**等于「本次运行打出了它」（那要看 (a3)）');
+} else {
+  fail('(a2) 接线层 4 个打点在场（静态）',
+    '4 个前缀各有一条 traceOps 调用且都带 ${stream}：' + TRACE_SITES.join(' / '),
+    `缺前缀=[${absent.join(', ')}]；不带 stream 占位的调用点=${withoutStream}；`
+    + `formatStreamMetrics 接进接线层=${formatterWired}`);
+}
+
+// ── (a3) 端到端「这一行真的被打出来」——本脚本不覆盖，说清为什么不覆盖 ─────────
+record('(a3) 本次运行是否真的打出留痕行', STATUS.NC,
+  '缺前置：需要一次真实回合（apply() 在场 + 真 LLM 流）。本脚本直接调 generate*，'
+  + '接线层不在场，所以 stdout 里必然没有这行——实测本次捕获 ' + capturedLines.length + ' 行、'
+  + `抽到的键集合=[${[...traceKeysIn(capturedLines)].sort().join(', ') || '空'}]。\n`
+  + '为什么不用「起真 Context 跑完整 apply」补它：要同时满足 inject:[llm,sessions,settings]、'
+  + '注入假 llm、伪造 session.requestHeader() 供 routeOf、再喂一个 turn/end，'
+  + '成本数倍，而它多证明的只有「apply 跑过」——与上面的 (a2) 静态在场断言重叠。'
+  + 'lead 口径：要做就做成第二条独立脚本。\n'
+  + '现场怎么补：沙箱 tee 日志里 grep completion generated / suggestion generated 这两个前缀，'
+  + '键名清单以 package.json 的 sandbox.greps 为准。');
 
 // ── 3. (b) 载荷里的 frame/final（#41）──────────────────────────────────────
 //
@@ -539,7 +694,9 @@ console.log(`汇总：PASS ${counts[STATUS.PASS] ?? 0} · FAIL ${counts[STATUS.F
 for (const r of results) console.log(`  ${r.status.padEnd(11)} ${r.name}`);
 if ((counts[STATUS.NC] ?? 0) > 0) {
   console.log('');
-  console.log('未覆盖项的含义：本轮实现尚未合并，判据在产物里不存在；不是判据不过。');
-  console.log('合并三条分支后重跑本脚本（在主仓上 --repo 指过去即可），它们会变成 PASS 或 FAIL。');
+  console.log('未覆盖 ≠ 不通过：上面每一项 NOT-COVERED 都写了缺哪个前置与现场实测证据。');
+  console.log('三种状态各自的含义：产物没构建 → NOT-COVERED；判据算错/打点丢失 → FAIL；');
+  console.log('  需要一次真实回合才能观测的东西 → NOT-COVERED（本脚本按 lead 的口径不去补那一层）。');
+  console.log('单独跑：node scripts/ghost-frame-e2e.mjs（整条 test:e2e 在 coldstart-e2e 小节 2 处会停住，那是 #50，见文件头）');
 }
 process.exit((counts[STATUS.FAIL] ?? 0) > 0 ? 1 : 0);
