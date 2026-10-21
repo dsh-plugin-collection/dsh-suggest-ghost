@@ -156,14 +156,19 @@ with dsh 0.2.0-rc.2: peerDependencies {…}
 | | `0.1.5` | `0.1.7+` |
 |---|---|---|
 | 用户可调项 | `ctx.settings.register(ns, schema, …)` 注册命名空间 | `Config` 里逐字段 `.volatile()`，内核把**插件自己的 Config schema** 投影成表单，ns = Loader 条目 id |
-| host → client | `SettingsScope` 的 `_push` 字段 | `ctx.settings.update(ns, {_push})`（`_push` 标 volatile） |
+| host → client | `SettingsScope` 的 `_push` 字段 | `ctx.settings.update(ns, {_push, _hot})`（两格都标 volatile；`_push` = 建议格，`_hot` = 热度/历史格） |
 | client 读取 | `settingsScope.bind(ns).get()` | `remote.settings.describe()`（首读 + 事件驱动重读）|
 | client → host | `scope.set('_ops', …)` | `remote.settings.mutate(ns, [{op:'set',path:['_ops'],…}])` |
 | 变更通知（host） | `scope.watch` | `settings/document-updated(ns, revision)` 事件 |
 | 变更通知（client） | `scope.subscribe` | `remote.$on('settings/document-updated')` |
 
-**载荷结构（`_push` / `_ops` 的 JSON 形态、含 `suggestionSessionId` / `historySessionId`
-归属守卫）逐字未变**，变的只是字段载体，所以 client 的解析与归属逻辑不必改。
+**载荷结构的归属守卫（`suggestionSessionId` / `historySessionId` / `completionSessionId`）
+逐字未变**，变的只是载体。0.6.1 起 host → client 分**两格**：`_push` 只装
+`{suggestion(+frame/final), suggestionSessionId, completion(+final), error}`，`_hot` 只装
+`{hot, total, history, historySessionId}`——两格各自判重，一次纯热度变化不再连带重写建议格。
+**两格都脏时合并成一次 `settings.update`**（省的是客户端一次重解析，不是「一次整档重写」：
+补写泵不排队，各写各的最坏只多等一个 500ms tick）。缺省语义按格成立：整格缺席 = 保留现值，
+**不是**清空——旧宿主没有 `_hot` 时客户端的热度与历史必须原样留着。
 
 三处细节是踩过才知道的：
 
@@ -206,7 +211,7 @@ src/coldstart.ts     冷启动语义（纯函数）：日志取环种子、回�
 src/generate.ts      转录提取 → 脱敏 → ctx.llm.stream → 净化；flattenConfig 拍平 volatile 引用
 src/transcript.ts    转录纯逻辑：字符 + UTF-8 字节双预算裁剪（纯函数，可单测）
 src/sanitize.ts      脱敏 / 净化 / 语义过滤 / 截断（纯函数）
-src/settings.ts      _push / _ops 载荷形状 + effectiveConfig（schema 在 index.ts 的 Config）
+src/settings.ts      _push（建议格）/ _hot（热度格）/ _ops 载荷形状 + effectiveConfig
 src/hotness.ts       跨会话热度表（增量去重、最小堆淘汰、内存上界、固定/管理 API）
 src/hotness-store.ts 热度持久化（storageDomain 域、回合边界合并落盘、重启恢复合并、管理 ops 应用）
 src/projection.ts    suggestGhost 投影 last-wins fold
@@ -217,7 +222,8 @@ scripts/             冒烟测试与会话日志回放
 
 ### 改双向 settings 通道前必读
 
-`_ops` / `_push` 是插件与宿主之间唯一的通道，改过的三个缺陷都长在通道语义上而不是业务逻辑
+`_ops` / `_push` / `_hot` 是插件与宿主之间唯一的通道（后两个是 host→client 的两格），
+改过的三个缺陷都长在通道语义上而不是业务逻辑
 上：`mutate()` 的第三个参数是「我读到的 revision」而不是「我要覆盖的版本」，被拒时看起来像
 写成功；zod schema 与 TS 联合类型是两份互不约束的真相，只改一边就静默丢载荷；单槽 last-wins
 快照装不下「只存在一瞬间」的载荷。另外三条更容易反复踩到：`apply(ctx, config)` 捕获的

@@ -59,6 +59,7 @@ export interface PluginConfigValues {
     uiLocaleWeight: Volatile<number>;
     _ops: Volatile<string>;
     _push: Volatile<string>;
+    _hot: Volatile<string>;
 }
 /**
  * 配置 schema（cordis 插件约定，config catalog 会原样粘贴声明）。
@@ -162,6 +163,22 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      * 侧的解析与 `*SessionId` 归属守卫无需改动——变的只是字段载体。
      */
     _push: z<string, string, "volatile-defined">;
+    /**
+     * host → client 的实时推送载荷·**热度格**（#36 建议 2）。
+     *
+     * 装 `{hot, total, history, historySessionId}`（见 settings.ts 的 `GhostHotPayload`），
+     * 与 `_push`（建议格）分开的唯一理由：两者节奏不同。热表**每次用户输入**都会变，
+     * 而建议每回合最多一次。挤在一格时，热度变化会逼着建议那一格一起被重写、客户端也
+     * 无从分辨「变的是哪一格」。拆开之后：
+     *  - 两格各自有指纹，各自决定要不要写（`src/index.ts` 的 `fingerprintOfPush` / `fingerprintOfHot`）；
+     *  - **同一次 flush 里两格都脏 ⇒ 合并成一次 `settings.update`**。理由不是「省一次
+     *    整档重写」——补写泵不排队（probe-hmr 第二次复核），各写各的最坏只是多等一个
+     *    500ms tick——而是**客户端只被叫醒一次**：一次 `describe()` 回来的就是两格的
+     *    完整当前状态，两格各写会让客户端解析两遍、第二遍里热度是新的、建议是旧的。
+     *  - 热度格**不进补写队列**：它每帧都会被下一帧覆盖，丢了由下一次任何变化自愈
+     *    （失败时清指纹 + 载荷留在槽里等下一次 flush）；建议格才走 #47 的三态分诊与补写。
+     */
+    _hot: z<string, string, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     /** 最终框架化用户提示的最大 UTF-8 字节数。 */
     maxInputBytes: z<number, number, "volatile-defined">;
@@ -256,6 +273,22 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      * 侧的解析与 `*SessionId` 归属守卫无需改动——变的只是字段载体。
      */
     _push: z<string, string, "volatile-defined">;
+    /**
+     * host → client 的实时推送载荷·**热度格**（#36 建议 2）。
+     *
+     * 装 `{hot, total, history, historySessionId}`（见 settings.ts 的 `GhostHotPayload`），
+     * 与 `_push`（建议格）分开的唯一理由：两者节奏不同。热表**每次用户输入**都会变，
+     * 而建议每回合最多一次。挤在一格时，热度变化会逼着建议那一格一起被重写、客户端也
+     * 无从分辨「变的是哪一格」。拆开之后：
+     *  - 两格各自有指纹，各自决定要不要写（`src/index.ts` 的 `fingerprintOfPush` / `fingerprintOfHot`）；
+     *  - **同一次 flush 里两格都脏 ⇒ 合并成一次 `settings.update`**。理由不是「省一次
+     *    整档重写」——补写泵不排队（probe-hmr 第二次复核），各写各的最坏只是多等一个
+     *    500ms tick——而是**客户端只被叫醒一次**：一次 `describe()` 回来的就是两格的
+     *    完整当前状态，两格各写会让客户端解析两遍、第二遍里热度是新的、建议是旧的。
+     *  - 热度格**不进补写队列**：它每帧都会被下一帧覆盖，丢了由下一次任何变化自愈
+     *    （失败时清指纹 + 载荷留在槽里等下一次 flush）；建议格才走 #47 的三态分诊与补写。
+     */
+    _hot: z<string, string, "volatile-defined">;
 }>>, "plain">;
 export declare const Config: z<Schemastery.TypeS<typeof ConfigSchema>, PluginConfigValues>;
 /** 所需服务：LLM 路由 + 会话存储 + 设置服务。 */

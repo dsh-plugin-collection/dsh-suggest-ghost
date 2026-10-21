@@ -139,7 +139,7 @@ Two details worth remembering:
 | | `0.1.5` | `0.1.7+` |
 |---|---|---|
 | User-editable options | `ctx.settings.register(ns, schema, …)` | per-field `.volatile()` in `Config`; the kernel projects the **plugin's own Config schema** into a form, ns = Loader entry id |
-| host → client | `_push` on a `SettingsScope` | `ctx.settings.update(ns, {_push})` (`_push` marked volatile) |
+| host → client | `_push` on a `SettingsScope` | `ctx.settings.update(ns, {_push, _hot})` (both volatile: `_push` = suggestion cell, `_hot` = hotness/history cell) |
 | client reads | `settingsScope.bind(ns).get()` | `remote.settings.describe()` (first read + event-driven re-read) |
 | client → host | `scope.set('_ops', …)` | `remote.settings.mutate(ns, [{op:'set',path:['_ops'],…}])` |
 | change signal (host) | `scope.watch` | `settings/document-updated(ns, revision)` event |
@@ -163,6 +163,12 @@ Three details that only surface when you try them:
 ### Known trade-offs
 
 - **Old settings do migrate**: a value tweaked on the `0.1.5` settings page was measured restoring as-is on `0.2.0` — the profile document holds non-default values today (`historyMaxEntries: 77`, `historyCrossSession: true`), and a restart reads that persisted value rather than the previous run's memory.
+- **Two host→client cells, one write**: `_push` carries only `{suggestion (+frame/final),
+  suggestionSessionId, completion (+final), error}` while `_hot` carries only
+  `{hot, total, history, historySessionId}`. Each cell has its own fingerprint, so a pure hotness
+  change no longer rewrites the suggestion cell; when both are dirty they are merged into a single
+  `settings.update`. Absent cell = keep current value, never clear (a new client on an old host
+  still has no `_hot` and must not wipe the hotness list).
 - **Do not treat "volatile fields are not persisted" as a guarantee**: this plugin's `_ops` / `_push` are written into the profile document, and the clear-after-consume write is refused as a nested transaction, so a payload stays on disk and a fresh instance replays it at boot (measured in an isolated instance: one leftover `complete` was consumed before any client connected). See the cold-start section above and issue #22.
 - **No polling on the client**: what `0.1.7` removed along with `settingsScope` is only `scope.subscribe`. The kernel has a separate Host→client event channel — `ctx.remote.$on('settings/document-updated')`, on dsh-api-remotes' forwarding allowlist (mode `emit`). The kernel's own settings page drives `SettingsDescribeMirror` off exactly that. This plugin subscribes the same way, so `describe()` is issued only when the host actually pushes `_push`, plus once at startup and once per `connection/reset`.
 
@@ -176,7 +182,7 @@ src/coldstart.ts     cold-start semantics (pure): ring seeding from the log, tur
 src/generate.ts      transcript extraction → sanitization → ctx.llm.stream → purification
 src/transcript.ts    pure transcript logic: char + UTF-8 byte dual-budget trimming (unit-testable)
 src/sanitize.ts      sanitize / purify / semantic filter / truncation (pure functions)
-src/settings.ts      settings namespace + host→client push (_push) and client→host ops channel (_ops, tail-write coalescing)
+src/settings.ts      settings namespace + host→client cells (_push = suggestion, _hot = hotness/history) + client→host ops channel (_ops, tail-write coalescing)
 src/hotness.ts       cross-session hotness table (incremental dedup, min-heap eviction, bounded memory, pin/manage APIs)
 src/hotness-store.ts hotness persistence (storageDomain unit, turn-boundary coalesced writes, restore-on-restart, ops application)
 src/projection.ts    suggestGhost projection last-wins fold
@@ -186,7 +192,8 @@ scripts/             smoke tests and session log replay
 
 ### Read this before touching the settings channel
 
-`_ops` / `_push` are the only two ways this plugin talks to the host, and three separate bugs came
+`_ops` / `_push` / `_hot` are the only ways this plugin talks to the host (the last two are the
+host→client cells), and three separate bugs came
 from that channel's semantics, not from business logic: `mutate()`'s third argument means "the
 revision I read" rather than "the value I want to overwrite", so a refused write can look like a
 successful one; a zod schema and a TS union are two separate truths, so adding an operation to only

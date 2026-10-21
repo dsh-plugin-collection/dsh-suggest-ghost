@@ -25,14 +25,27 @@ import type { FlatConfig } from './generate.js';
  * 导入会让本模块链接失败；该 helper 仅是校验后原样返回同样的字符串。
  */
 export declare const SUGGEST_GHOST_NAMESPACE: SettingsNamespace;
-/** `_push` / `_ops` 的空载荷（JSON 字符串的 null 表示）。 */
+/** `_push` / `_hot` / `_ops` 的空载荷（JSON 字符串的 null 表示）。 */
 export declare const EMPTY_PUSH = "null";
 /**
- * host → client 推送载荷（`_push` 字段的 JSON 形态）。
+ * host → client 的**建议格**载荷（`_push` 字段的 JSON 形态）。
  *
- * 跨会话单份载荷 + `*SessionId` 归属字段：client 据此只在同会话显示建议 /
- * 使用历史环。0.1.7 里字段载体从 `SettingsScope` 换成 volatile 配置字段，
- * **载荷结构不变**，故 client 的守卫逻辑也无需改动。
+ * ## #36 建议 2：一格一节奏
+ *
+ * 今天所有推送数据挤在一个载荷、一道指纹、一次写里，于是「用户又打了一句话
+ * （热表 +1）」和「出新建议了（用户真正等的东西）」共用同一把锁、同一次整档 profile
+ * 重写，客户端也无从分辨哪一格变了。现在拆成两格：
+ *  - `_push`（本类型）：**建议 / 续写 / 错误**——低频、珍贵，走 #47 的三态分诊与事务外补写；
+ *  - `_hot`（{@link GhostHotPayload}）：**热度快照 / 总数 / 历史环**——高频、每帧都可被下一帧覆盖。
+ *
+ * 两格各自有指纹、各自判「变没变」；同一次 flush 里两格都脏就**合并成一次**
+ * `settings.update`。合并的理由**不是**「少一次整档重写」——补写泵不排队（probe-hmr
+ * 第二次复核：泵在事务外，每 500ms 无脑调一次 `update()`，前一笔在途时不 await、
+ * 不延后，锁串行发生在内核 `withFileLock` 内部），各写各的最坏只是多等一个 500ms
+ * tick。合并真正省的是**客户端一次重解析**：一次 `describe()` 回来的就是两格的完整
+ * 当前状态，两格各写会把客户端叫醒两次（第二次里热度是新的、建议是旧的）。
+ *
+ * `*SessionId` 归属守卫与帧字段（`frame` / `final`，#41 契约）都在这一格里，语义未动。
  */
 export interface GhostPushPayload {
     /** 递增标识新值。 */
@@ -54,25 +67,46 @@ export interface GhostPushPayload {
     } | null;
     /** 建议所属会话（null = 无有效建议）。 */
     readonly suggestionSessionId: string | null;
-    /** 跨会话热度快照（top-K）。 */
+    /** 行内续写；缺省表示不携带（client 保留现值），null = 作废。 */
+    readonly completion?: {
+        readonly draft: string;
+        readonly text: string;
+        readonly final: boolean;
+    } | null;
+    /** completion 所属会话。 */
+    readonly completionSessionId?: string | null;
+    /** 最近一次生成失败的摘要（可诊断）。 */
+    readonly error?: string;
+}
+/**
+ * host → client 的**热度格**载荷（`_hot` 字段的 JSON 形态）。
+ *
+ * 缺省语义与建议格一致：**整格缺省（键不存在 / 空载荷）= client 保留现值**，
+ * 不是「热度清空了」；格内的 `history` 同样是「省略 = 不携带、null/空 = 不更新」。
+ * 所以旧载荷（没有 `_hot` 的年代）在新客户端上只是「这一格没说话」，不会清空列表。
+ */
+export interface GhostHotPayload {
+    /** 递增标识新值（与 `_push` 的 rev 各自独立：两格不是同一次变更的产物）。 */
+    readonly rev: number;
+    /** 跨会话热度快照（top-K）；null = 无热度数据。 */
     readonly hot: readonly {
         text: string;
         count: number;
         pinned?: boolean;
     }[] | null;
-    /** 热表总条目数（管理面板「共 N 条」展示）。 */
+    /** 热表总条目数（管理面板「共 N 条」展示；快照只是 top-K）。 */
     readonly total: number;
     /** 本会话历史环；缺省表示不携带（client 保留现值）。 */
     readonly history?: readonly string[];
     /** history 所属会话。 */
     readonly historySessionId?: string;
-    /** 最近一次生成失败的摘要（可诊断）。 */
-    readonly error?: string;
 }
-/** `_push` / `_ops` 在 settings 里的传输形状（两个 JSON 字符串）。 */
+/** `_push` / `_hot` / `_ops` 在 settings 里的传输形状（三个 JSON 字符串）。 */
 export interface SuggestGhostSettings {
-    /** host → client 的实时推送载荷（见 `GhostPushPayload`）。 */
+    /** host → client 的实时推送载荷·建议格（见 `GhostPushPayload`）。 */
     _push: string;
+    /** host → client 的实时推送载荷·热度格（见 `GhostHotPayload`）。 */
+    _hot: string;
     /** client → host 的热度管理操作队列（见 `parseHotnessOps`）。 */
     _ops: string;
 }
