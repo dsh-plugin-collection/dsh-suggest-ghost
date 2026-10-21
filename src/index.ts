@@ -23,14 +23,17 @@ import type { Session, SessionId } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-session-projection';
 import {
   appendToRing,
+  decidePersistedPush,
   HISTORY_PUSH_CAP,
   nextTrackedSuggestion,
+  parsePersistedPush,
   seedRingFromLog,
   SUGGESTION_CACHE_CAP,
   suggestionFieldsFor,
   suggestionIsCurrent,
   userTextOfEvent,
 } from './coldstart.js';
+import type { PersistedPushVerdict } from './coldstart.js';
 import {
   COMPLETION_DEADLINE_MS,
   completionFaultMessage,
@@ -468,15 +471,17 @@ export function apply(ctx: Context, config: GenerateConfig): void {
    */
   let clientUiLocale: string | undefined;
   /**
-   * 取当前 `_ops` 的载荷字符串。
+   * 取当前某个传输通道的载荷字符串（`_ops` / `_push`）。
    *
    * **必须走 settings 服务的 `describe()`**：内核每次配置写入会重新解析 config
    * 并替换 fiber 持有的对象，apply 参数里捕获的 volatile 引用会冻结在失效时刻的
    * 值（实测：client 写入 complete op 后，插件内的旧引用永远停在首次 pull 的
    * 载荷）。`describe()` 同步读取 `entry.fiber.config` 的展开值，是唯一权威源。
    * settings 服务尚未注入（启动早期）时回退到 volatile 引用读取。
+   *
+   * `_push` 与 `_ops` 走**同一个** describe 行，所以回读残留建议不必多读一次盘。
    */
-  const readOps = (): string => {
+  const readChannel = (name: '_ops' | '_push'): string => {
     const svc = settingsSvc as { describe?: () => unknown } | null;
     if (svc !== null && typeof svc.describe === 'function') {
       try {
@@ -488,17 +493,27 @@ export function apply(ctx: Context, config: GenerateConfig): void {
             : [];
         for (const row of rows as Array<{ ns?: string; revision?: number; value?: Record<string, unknown> }>) {
           if (row?.ns !== SUGGEST_GHOST_NAMESPACE) continue;
-          const v = row.value?._ops;
+          const v = row.value?.[name];
           if (typeof v === 'string') return v;
         }
       } catch { /* describe 异常回退引用读取 */ }
     }
-    const ref = (resolved as { _ops?: unknown })._ops;
+    const ref = (resolved as { _ops?: unknown; _push?: unknown })[name];
     const payload = typeof ref === 'object' && ref !== null && typeof (ref as { get?: unknown }).get === 'function'
       ? (ref as { get: () => unknown }).get()
       : ref;
     return typeof payload === 'string' ? payload : EMPTY_PUSH;
   };
+  /** 取当前 `_ops` 的载荷字符串（读面依据见 {@link readChannel}）。 */
+  const readOps = (): string => readChannel('_ops');
+  /**
+   * 取当前 `_push` 的载荷字符串（启动回读用；读面依据同 {@link readChannel}）。
+   *
+   * **为什么要现读**：`_push` 是建议（不可重建的 LLM 输出）唯一的持久载体，宿主
+   * 重启后盘上那条残留就是上一个进程写的建议——回读必须读到**当前**盘上值，否则
+   * 恢复的是一份陈旧快照（apply 参数里的 volatile 引用会冻结在失效时刻）。
+   */
+  const readPush = (): string => readChannel('_push');
   ctx.inject(['settings'], (settingsCtx) => {
     try {
       const svc = (settingsCtx as { settings?: { update: (ns: unknown, patch: object) => Promise<void> } }).settings;
@@ -558,6 +573,43 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       // 已被错过，这里补一次关掉那个时序窗口。热度 ops 是幂等的；但 `complete`
       // 的补消费会**为旧草稿重新生成一次续写**，那是上面那条结构性失败带来的代价
       // （修法见 issue #16 的跟进：载荷自带 seq + 把清空挪到事务外）。
+      // **启动回读**：`_push` 是建议（不可重建的 LLM 输出）唯一的持久载体 ——
+      // 上面的自述写着这件事，但读回那段在 `c3b6a80`（0.1.7 volatile 适配）里随
+      // `parsePersistedPush(scope.get()._push)` 一起被删掉、之后没接回来（#50）：
+      // 于是「宿主重启后把盘上残留的建议恢复出来」这条语义一直是缺的——盘上残留
+      // 既没被恢复、也没被清掉，随后 client 第一次 pull 用内存里的空把盘上那条
+      // 盖掉（`fingerprintOf` 对「空建议」与「有建议」是两个指纹，空载荷被当成
+      // 新值写下去）。
+      //
+      // **本段只读不写、不推**：
+      //  - 不写：回读不是一次推送，无故写一次就是把 rev 顶上去一格（内容却一样）；
+      //    清盘也不该在启动期做——判据还没成立（见下面「会话未进店」那条）。
+      //  - 不推：启动期推一次 = client 可能收到两份内容相同、rev 不同的载荷
+      //    （#18 记过的 last-wins 通道「瞬时载荷必然被跳过」那类问题）。恢复后的
+      //    建议由**该会话第一次 pull** 的应答带出去（见 `restorePersistedPushForSession`），
+      //    那才是 client 真正需要的入口。
+      const rawPush = readPush();
+      persistedPushRaw = rawPush === '' || rawPush === 'null' ? null : rawPush;
+      if (persistedPushRaw !== null) {
+        // rev 与指纹先对齐盘上那份：恢复之后内存里的状态与盘上那份**是同一件事**，
+        // 不对齐就会在第一次 pull 时多写一次（内容一样、rev 不同）。
+        seedPushStateFromPersisted(persistedPushRaw);
+        const verdict = judgePersistedPush('startup', null);
+        persistedPushVerdict = verdict;
+        tracePersistedPush('read', 'startup', { present: true, suggestion: verdict.suggestion });
+        if (verdict.action === 'restore') {
+          trackSuggestion(verdict.sessionId, verdict.suggestion);
+          tracePersistedPush('restored', 'startup', { suggestion: verdict.suggestion });
+        } else if (verdict.reason !== 'session-unavailable') {
+          // 'session-unavailable' = 会话还没进店 ⇒ 判不了，留给该会话第一次 pull 补判
+          // （此刻既不恢复、也不清盘、更不推残留）。
+          tracePersistedPush('skipped', 'startup', { reason: verdict.reason, suggestion: verdict.suggestion });
+        }
+      } else {
+        tracePersistedPush('read', 'startup', { present: false });
+      }
+      // ⚠️ `_ops` 遗留补消费放在本段**之后**：遗留 `_ops` 里若带 pull op，它的应答要
+      // 带上刚恢复的建议（顺序反了 ⇒ 应答里是空的，又把盘上那条盖掉）。
       lastOpsPayload = readOps();
       consumeOps(parseHotnessOps(lastOpsPayload), svc);
       // 热度恢复是异步的（storageDomain.open）：恢复完成后补推一次快照，修正
@@ -680,6 +732,118 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     );
     lastSuggestion = next.suggestion;
     lastSuggestionSession = next.sessionId;
+  };
+
+  // —— 启动回读：把盘上残留的建议接回来（#50）——
+  /**
+   * 盘上残留的 `_push` 载荷原文（null = 盘上没有残留）。
+   *
+   * **为什么留原文而不是判定结果**：启动那一刻会话常常还没进店（宿主的持久化懒恢复
+   * 未发生），判不了新旧；等该会话第一次 pull 时它一定在店了，那时再判（见
+   * {@link restorePersistedPushForSession}）。
+   */
+  let persistedPushRaw: string | null = null;
+  /**
+   * 回读判定结果（null = 还没判）。`reason === 'session-unavailable'` 表示「判不了，
+   * 留给 pull 补判」——其余 reason 都是终判，不再重判。
+   */
+  let persistedPushVerdict: PersistedPushVerdict | null = null;
+  /** 已记过「会话不匹配」的会话（同一会话反复 pull 不重复刷同一条留痕）。 */
+  const persistedMismatchLogged = new Set<string>();
+
+  /**
+   * 启动回读的留痕（读 / 恢复 / 未恢复各一行）。
+   *
+   * **不打正文、不打可回推的标识**：只带 turn / baseSeq / 字符数与原因，够对上号又
+   * 不会把建议内容抄进 tee 日志（同 `ops consumed: complete … draftChars=N` 的口径）；
+   * 会话 id 是可回推的标识，这里**不写**。
+   */
+  const tracePersistedPush = (
+    line: 'read' | 'restored' | 'skipped',
+    source: 'startup' | 'pull',
+    detail: { present?: boolean; reason?: string; suggestion?: SuggestGhostSuggested | null },
+  ): void => {
+    const present = detail.present === undefined ? '' : ` present=${detail.present ? 1 : 0}`;
+    const reason = detail.reason === undefined ? '' : ` reason=${detail.reason}`;
+    const s = detail.suggestion ?? null;
+    const turn = s === null ? 'n/a' : String(s.turn);
+    const baseSeq = s === null ? 'n/a' : String(s.baseSeq);
+    const chars = s === null ? 'n/a' : String(s.text.length);
+    traceOps(`persisted push ${line} source=${source}${present}${reason} turn=${turn} baseSeq=${baseSeq} chars=${chars}`);
+  };
+
+  /**
+   * 判定盘上残留的建议能不能恢复。**不恢复时绝不动盘**（不删不清不改）。
+   *
+   * @param source - 判定来源（留痕用）。
+   * @param forSessionId - 只判这个会话的残留（pull 时用）：残留属于别的会话就不动它
+   *   （那条对**它**的会话仍然有效，清掉才是把好数据弄丢）。
+   */
+  const judgePersistedPush = (
+    source: 'startup' | 'pull',
+    forSessionId: string | null,
+  ): PersistedPushVerdict => {
+    const raw = persistedPushRaw;
+    if (raw === null) {
+      return { action: 'skip', reason: 'no-persisted-payload', suggestion: null, sessionId: null };
+    }
+    const verdict = decidePersistedPush(raw, {
+      sessionExists: (id) => ctx.sessions.get(id as SessionId) !== undefined,
+      isCurrent: (suggestion, id) => suggestionIsCurrent(suggestion, ctx.sessions.get(id as SessionId)),
+    });
+    if (verdict.action === 'restore' && forSessionId !== null && verdict.sessionId !== forSessionId) {
+      // 残留属于别的会话：不恢复、不动盘（它对那个会话仍然有效）。
+      return {
+        action: 'skip',
+        reason: 'session-mismatch',
+        suggestion: verdict.suggestion,
+        sessionId: verdict.sessionId,
+      };
+    }
+    return verdict;
+  };
+
+  /**
+   * 该会话第一次 pull 时的**补判**：启动那一刻会话常常还没进店（懒恢复），判不了
+   * 新旧；此刻 client 正在问这个会话，它一定在店了 ⇒ 现在判。
+   *
+   * **只在判出「可恢复」时动内存**；本会话已有更新的建议时**不**接回（旧残留盖掉
+   * 更新的建议是这条语义最容易犯的错）；其余情况一律不动盘。
+   */
+  const restorePersistedPushForSession = (sessionId: string): void => {
+    if (persistedPushRaw === null) return;
+    // 启动期已经终判过 ⇒ 不再判（避免每次 pull 都重判同一条）。
+    const startupVerdict = persistedPushVerdict;
+    if (startupVerdict !== null && startupVerdict.reason !== 'session-unavailable') return;
+    const verdict = judgePersistedPush('pull', sessionId);
+    if (verdict.action === 'skip') {
+      if (verdict.reason === 'session-unavailable') return; // 还不判得了 → 留给下一次 pull
+      if (verdict.reason === 'session-mismatch') {
+        // 残留属于别的会话：不动盘、也不改判定状态（它对那个会话仍然有效）。
+        if (!persistedMismatchLogged.has(sessionId)) {
+          persistedMismatchLogged.add(sessionId);
+          tracePersistedPush('skipped', 'pull', { reason: verdict.reason, suggestion: verdict.suggestion });
+        }
+        return;
+      }
+      persistedPushVerdict = verdict;
+      tracePersistedPush('skipped', 'pull', { reason: verdict.reason, suggestion: verdict.suggestion });
+      return;
+    }
+    // 可恢复，但**本会话已有更新的建议时不得接回**（旧残留不得盖掉更新的建议）。
+    if (suggestionBySession.has(sessionId)) {
+      persistedPushVerdict = {
+        action: 'skip',
+        reason: 'superseded',
+        suggestion: verdict.suggestion,
+        sessionId: verdict.sessionId,
+      };
+      tracePersistedPush('skipped', 'pull', { reason: 'superseded', suggestion: verdict.suggestion });
+      return;
+    }
+    trackSuggestion(sessionId, verdict.suggestion);
+    persistedPushVerdict = verdict;
+    tracePersistedPush('restored', 'pull', { suggestion: verdict.suggestion });
   };
 
   // —— 停顿续写状态 ——
@@ -871,6 +1035,84 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         ? '\u2204' // 未携带（保留 client 现值）
         : `${p.completionSessionId ?? ''}#${p.completion.draft}=${p.completion.text}`;
     return `${sug}<HOT>${hotKey}<T>${p.total}<HIST>${historyKey}<CPL>${completionKey}<ERR>${p.error ?? ''}`;
+  };
+  /**
+   * 把盘上残留载荷折成与 {@link fingerprintOf} 同口径的形状再算指纹。
+   *
+   * **为什么不能拿载荷原样算**：指纹是按「推送载荷」的字段算的（建议键 / 热度键 /
+   * 历史键 / 续写键），盘上那份存的正是同一形状，但要逐字段做**类型收窄**才能喂给
+   * `fingerprintOf`（盘上内容不可信，与 `parsePersistedPush` 同一理由）。
+   *
+   * @returns 折出来的指纹；载荷结构不合法时 null（⇒ 不并入判重，让第一次 push 照常写）。
+   */
+  const fingerprintOfPersisted = (payload: Record<string, unknown>): string | null => {
+    const rawSuggestion = payload.suggestion;
+    let suggestion: SuggestGhostSuggested | null = null;
+    if (typeof rawSuggestion === 'object' && rawSuggestion !== null) {
+      const s = rawSuggestion as Record<string, unknown>;
+      if (typeof s.turn === 'number'
+        && typeof s.baseSeq === 'number'
+        && typeof s.text === 'string'
+        && typeof s.truncated === 'boolean'
+        && typeof s.acceptKey === 'string') {
+        suggestion = {
+          version: 1,
+          turn: s.turn,
+          baseSeq: s.baseSeq,
+          text: s.text,
+          truncated: s.truncated,
+          acceptKey: s.acceptKey,
+        };
+      }
+    }
+    const hot = Array.isArray(payload.hot)
+      ? payload.hot.filter((entry): entry is SuggestGhostHotEntry =>
+        typeof entry === 'object' && entry !== null
+        && typeof (entry as { text?: unknown }).text === 'string'
+        && typeof (entry as { count?: unknown }).count === 'number')
+      : null;
+    const history = Array.isArray(payload.history)
+      ? payload.history.filter((text): text is string => typeof text === 'string')
+      : null;
+    const completion = (() => {
+      const c = payload.completion;
+      if (typeof c !== 'object' || c === null) return undefined;
+      const row = c as { draft?: unknown; text?: unknown };
+      if (typeof row.draft !== 'string' || typeof row.text !== 'string') return undefined;
+      return { draft: row.draft, text: row.text };
+    })();
+    return fingerprintOf({
+      suggestion,
+      suggestionSessionId: typeof payload.suggestionSessionId === 'string' ? payload.suggestionSessionId : null,
+      hot,
+      total: typeof payload.total === 'number' ? payload.total : 0,
+      history,
+      historySessionId: typeof payload.historySessionId === 'string' ? payload.historySessionId : null,
+      ...(completion === undefined ? {} : { completion }),
+      completionSessionId: typeof payload.completionSessionId === 'string' ? payload.completionSessionId : null,
+      ...(typeof payload.error === 'string' ? { error: payload.error } : {}),
+    });
+  };
+  /**
+   * 把「盘上残留那份」的 rev 与指纹并进本进程的推送状态。
+   *
+   * **为什么要并**：回读恢复之后，本进程内存里的状态与盘上那份**是同一件事**。
+   *  - rev：盘上那份的 rev 更大 ⇒ 下一笔写必须比它大（rev 是单调序号，回退会让
+   *    client 侧的「旧载荷丢弃」判据失灵）。
+   *  - 指纹：并进去之后，第一次 pull 若算出的状态与盘上那份**一致**就**不写**
+   *    （否则同一件事被写两遍：内容一样、rev 却顶上去一格）。
+   */
+  const seedPushStateFromPersisted = (raw: string): void => {
+    let payload: Record<string, unknown>;
+    try {
+      const value: unknown = JSON.parse(raw);
+      if (typeof value !== 'object' || value === null) return;
+      payload = value as Record<string, unknown>;
+    } catch { return; }
+    const rev = payload.rev;
+    if (typeof rev === 'number' && Number.isInteger(rev) && rev > pushRev) pushRev = rev;
+    const fingerprint = fingerprintOfPersisted(payload);
+    if (fingerprint !== null) lastPushFingerprint = fingerprint;
   };
   /**
    * 经 `_push` volatile 字段把最新建议+热度+历史推给 client。
@@ -1387,6 +1629,11 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     for (const op of ops) {
       if (op.op === 'pull') {
         traceOps(`ops consumed: pull session=${op.sessionId} (应答走 pushToClient)`);
+        // **回读态补判**（#50）：启动那一刻会话可能还没进店（宿主的持久化懒恢复），
+        // 判不了盘上残留建议的新旧；此刻 client 正在问这个会话，它一定在店了 ⇒
+        // 现在判。判出可恢复就接回追踪态，于是**这次 pull 的应答自然带上它**——
+        // 不需要额外推一次，也不会出现「空建议把盘上那条盖掉」。
+        restorePersistedPushForSession(op.sessionId);
         // 无论历史环可不可得都应答：环缺失（会话尚未进店/已销毁）时 statePushOf
         // 会省略 history（client 保留现值），但热度与对账后的建议照常送达——
         // 静默丢弃会让 client 永远等不到这一轮对账。

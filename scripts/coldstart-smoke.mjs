@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import {
   appendToRing,
+  decidePersistedPush,
   lastCompletedTurnInLog,
   nextTrackedSuggestion,
   parsePersistedPush,
@@ -243,4 +244,86 @@ const suggestion = (turn, text = '跑一下测试') => ({
   assert.deepEqual(fields, { suggestion: { ...suggestion(2), frame: 1, final: true }, sessionId: 's' });
 }
 
-console.log('✅ coldstart 冒烟测试通过（结构校验/语义校验/按需物化/增量维护/跨会话追踪）');
+// —— 11. decidePersistedPush：启动回读的三态判定（#50 的核心语义）——
+//
+// 这条语义是 `e853d1e` 加的、`c3b6a80`（0.1.7 volatile 适配）删掉后一直没接回来的：
+// 「宿主重启后把盘上残留的建议恢复出来」。判定分两步：结构（parsePersistedPush）
+// 与语义（会话在不在店 + 回合是否仍是最后一个已完成回合）。
+{
+  const events = [userMessage(1, '第一句'), turnEnd(2, 1), userMessage(3, '第二句'), turnEnd(4, 2)];
+  const live = sessionOf(events);
+  /** 语义判据的注入点：会话在店 + 回合语义。 */
+  const ctx = {
+    sessionExists: (id) => id === 's',
+    isCurrent: (sug, id) => suggestionIsCurrent(sug, id === 's' ? live : undefined),
+  };
+  const persisted = JSON.stringify({
+    rev: 9,
+    suggestion: suggestion(2),
+    suggestionSessionId: 's',
+  });
+
+  // ① 回读 → 判回合有效性 → **恢复**：盘上那条（回合 2 = 最后已完成回合）被恢复，
+  //    且恢复出来的就是**盘上那一条**（turn/baseSeq/text 逐项对上，不是重新生成的）。
+  const restored = decidePersistedPush(persisted, ctx);
+  assert.equal(restored.action, 'restore');
+  assert.equal(restored.reason, null);
+  assert.equal(restored.sessionId, 's');
+  assert.equal(restored.suggestion.turn, 2);
+  assert.equal(restored.suggestion.baseSeq, 3);
+  assert.equal(restored.suggestion.text, '跑一下测试');
+  // 帧语义一起恢复（#39：重启即失效的老坑）
+  assert.equal(restored.suggestion.frame, 1);
+  assert.equal(restored.suggestion.final, true);
+
+  // ② **负向：回合已过时则不恢复**（会话在停机期间又推进了回合）
+  const stale = decidePersistedPush(
+    JSON.stringify({ rev: 9, suggestion: suggestion(1), suggestionSessionId: 's' }),
+    ctx,
+  );
+  assert.equal(stale.action, 'skip');
+  assert.equal(stale.reason, 'stale-turn');
+  assert.equal(stale.suggestion.turn, 1, '判废也要说清是哪一条（留痕带 turn/baseSeq）');
+
+  // ③ **会话未进店**（宿主的持久化懒恢复未发生）→ 无从判新旧 ⇒ 不猜、不清盘，
+  //    留给该会话第一次 pull 时再判（不许当成「陈旧」）。
+  const notInStore = decidePersistedPush(persisted, {
+    sessionExists: () => false,
+    isCurrent: () => false,
+  });
+  assert.equal(notInStore.action, 'skip');
+  assert.equal(notInStore.reason, 'session-unavailable');
+  assert.equal(notInStore.suggestion.turn, 2, '判不了也要带着那条建议（等它进店后能直接接回）');
+
+  // ④ 载荷损坏（结构不合法）→ 不恢复，且原因要说清是「载荷坏了」而不是「陈旧」。
+  assert.equal(decidePersistedPush('{ 坏 JSON', ctx).reason, 'corrupt-payload');
+  assert.equal(
+    decidePersistedPush(JSON.stringify({ suggestion: { turn: 'x' }, suggestionSessionId: 's' }), ctx).reason,
+    'corrupt-payload',
+  );
+  assert.equal(decidePersistedPush('null', ctx).reason, 'no-persisted-payload');
+  assert.equal(decidePersistedPush(undefined, ctx).reason, 'no-persisted-payload');
+
+  // ⑤ 有建议但**无会话 id** → 无法归属 ⇒ 「会话不匹配」（不是「载荷损坏」）。
+  const noSession = decidePersistedPush(JSON.stringify({ suggestion: suggestion(2) }), ctx);
+  assert.equal(noSession.action, 'skip');
+  assert.equal(noSession.reason, 'session-mismatch');
+
+  // ⑥ 恢复之后，**第一次 pull 的应答仍带上它**（这正是 #50 缺的那半截：应答里原来
+  //    是 `suggestion: null`，把盘上那条盖掉了）。
+  let tracked = { suggestion: null, sessionId: null };
+  if (restored.action === 'restore') {
+    tracked = nextTrackedSuggestion(tracked, restored.sessionId, restored.suggestion);
+  }
+  const fields = suggestionFieldsFor(tracked, 's', tracked.suggestion);
+  assert.equal(fields.suggestion?.text, '跑一下测试', 'pull 应答必须带上恢复出来的那条');
+  assert.equal(fields.sessionId, 's');
+  // 反面：判废的那条**不得**出现在应答里（否则就是「陈旧建议复活」）。
+  assert.equal(
+    suggestionFieldsFor({ suggestion: null, sessionId: null }, 's', null).suggestion,
+    null,
+    '没有恢复时应答里不该凭空长出建议',
+  );
+}
+
+console.log('✅ coldstart 冒烟测试通过（结构校验/语义校验/按需物化/增量维护/跨会话追踪/启动回读判定）');

@@ -52,6 +52,55 @@ export declare function seedRingFromLog(session: Session): string[];
  */
 export declare function lastCompletedTurnInLog(session: Session): number;
 /**
+ * 启动回读**不恢复**盘上残留建议的原因（留痕要写清是哪一种，不许笼统成「没恢复」）。
+ *
+ *  - `no-persisted-payload`：盘上根本没有残留载荷（正常态）。
+ *  - `corrupt-payload`：盘上有载荷但结构不合法（上个进程写坏了 / 被人手改过）。
+ *  - `session-mismatch`：载荷里的建议**无法归属**到会话（缺 `suggestionSessionId`），
+ *    或它属于**另一个**会话（用户切了会话）——此时不恢复、不 track、**不动盘**。
+ *  - `session-unavailable`：会话尚未进店（宿主的持久化懒恢复未发生）⇒ 无从判新旧，
+ *    绝不猜、绝不据此清盘，留给该会话第一次 pull 时再判。
+ *  - `stale-turn`：建议对应的回合已不是该会话最后一个已完成回合 ⇒ 陈旧，作废。
+ *  - `superseded`：该会话**已有更新的建议**（更新一轮产出/回读后接上的），残留不得
+ *    盖掉它 ⇒ 不接回（这不是载荷的毛病，是状态更新了）。
+ */
+export type PersistedPushSkipReason = 'no-persisted-payload' | 'corrupt-payload' | 'session-mismatch' | 'session-unavailable' | 'stale-turn' | 'superseded';
+/** 一次回读判定的结论。 */
+export type PersistedPushVerdict = {
+    readonly action: 'restore';
+    readonly reason: null;
+    readonly suggestion: SuggestGhostSuggested;
+    readonly sessionId: string;
+} | {
+    readonly action: 'skip';
+    readonly reason: PersistedPushSkipReason;
+    /** 解析得出来的建议（载荷损坏/无法归属时为 null）——留痕要带 turn/baseSeq/字符数。 */
+    readonly suggestion: SuggestGhostSuggested | null;
+    readonly sessionId: string | null;
+};
+/**
+ * 判定盘上残留的建议能不能恢复（**纯函数**，可离线驱动）。
+ *
+ * 这条语义是 `e853d1e` 加的、`c3b6a80`（0.1.7 volatile 适配）删掉后一直没接回来的：
+ * 「宿主重启后把盘上残留的建议恢复出来」。删掉的理由是读面变了（`scope.get()._push`
+ * 那个 API 没了），但**语义本身没作废**——`_push` 至今仍是建议（不可重建的 LLM
+ * 输出）唯一的持久载体，`src/index.ts` 的启动对账那段自述至今还写着这件事。
+ *
+ * 判定分两步，顺序不能换：
+ *  1. **结构**（{@link parsePersistedPush}）：盘上内容不可信，逐字段校验。
+ *  2. **语义**：会话在不在店（不在 ⇒ 无从判新旧，绝不猜）、建议回合是否仍是该会话
+ *     最后一个已完成回合（不是 ⇒ 陈旧作废）。
+ *
+ * @param raw - `_push` 字段的 JSON 字符串（'null' / undefined = 无残留）。
+ * @param ctx - 两个**语义**判据的注入点（纯函数不能自己碰 ctx）：
+ *  - `sessionExists`：该会话是否已在宿主里（懒恢复可能还没发生）。
+ *  - `isCurrent`：该建议此刻是否仍对那个会话有效（回合语义）。
+ */
+export declare function decidePersistedPush(raw: string | undefined, ctx: {
+    readonly sessionExists: (sessionId: string) => boolean;
+    readonly isCurrent: (suggestion: SuggestGhostSuggested, sessionId: string) => boolean;
+}): PersistedPushVerdict;
+/**
  * 从 settings 盘上残留的 `_push` 回读建议状态（重启复用）。字段逐个做结构校验，
  * 任一可疑即按「无建议」处理——盘上内容是上一次进程写的，可能被手改或来自旧版本。
  *
