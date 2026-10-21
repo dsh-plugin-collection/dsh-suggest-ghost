@@ -407,6 +407,10 @@ export function buildTranscript(
     pairs: trimmed.pairs,
     sourceMessageSeqs: trimmed.sourceMessageSeqs,
     baseSeq,
+    // 语言证据用未经裁剪的窗口对：裁剪会从最老的对开始丢，短用户消息（「我合并了」、
+    // 一条纯 URL）最先出局，一旦只剩助手文本，语言判定就会被代码里的拉丁字母带跑。
+    // 合成的摘要对排除在外——它是 `[Earlier context summary]` 这个英文前缀开头的伪 user 消息。
+    evidencePairs: recentPairs,
   };
 }
 
@@ -499,11 +503,12 @@ export async function generateSuggestion(
   }
   const route = routeOf(session, config);
   // 语言判定：指定模式直接使用用户选择的语言；自动模式才走加权推断。
+  // 证据取 evidencePairs（未经输入预算裁剪），不取 transcript.pairs——见其注释。
   let language: string;
   if (languageMode && languageMode !== 'auto') {
     language = LANGUAGE_NAMES[languageMode] ?? 'English';
   } else {
-    language = suggestionLanguage(transcript.pairs, uiLocale, uiLocaleWeight, lastLanguage);
+    language = suggestionLanguage(transcript.evidencePairs, uiLocale, uiLocaleWeight, lastLanguage);
   }
   const system = systemPrompt(config.maxSuggestionChars, language);
   const framed = frameTranscript(transcript.pairs);
@@ -600,7 +605,8 @@ export async function generateCompletion(
   const startedAt = Date.now();
   const route = routeOf(session, config);
   // 语言判定：指定模式直接使用用户选择的语言；自动模式才走加权推断。
-  // 草稿本身提供语言信号；有会话历史时 pairs 辅助，无历史时仅靠草稿。
+  // 注意：草稿目前**没有**参与语言推断（只传历史证据对）——「中文会话里打英文草稿
+  // 被判成中文续写」是已知缺口，另开条目修，不在本改动里混做。
   const transcript = buildTranscript(
     session,
     config.maxRecentTurns ?? 3,
@@ -614,7 +620,10 @@ export async function generateCompletion(
   if (languageMode && languageMode !== 'auto') {
     language = LANGUAGE_NAMES[languageMode] ?? 'English';
   } else {
-    language = suggestionLanguage(pairs, uiLocale, uiLocaleWeight, lastLanguage);
+    // 与 suggest 路径同源：语言证据取未经输入预算裁剪的窗口对。
+    language = suggestionLanguage(
+      transcript?.evidencePairs ?? [], uiLocale, uiLocaleWeight, lastLanguage,
+    );
   }
   const inlineMaxChars = config.inlineMaxChars ?? 160;
   const system = inlinePrompt(inlineMaxChars, language);
