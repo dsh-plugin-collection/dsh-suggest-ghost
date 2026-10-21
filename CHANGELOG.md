@@ -46,6 +46,16 @@ All notable changes to this project will be documented in this file.
   / `overlay-growth` 13 / `trace-gate` 10，共 77 项断言），只加在 `test:smoke` 链尾；`ghost-geom` /
   `accept-cas` / `render-storm` / `completion-align` 四条既有回归预言**一字未改**
 
+- **端到端验收脚本 `scripts/ghost-frame-e2e.mjs`**（进程内 harness + 假 llm 服务）：把「宿主出终帧 →
+  载荷 → 客户端判据」三条线的接缝跑成一条命令。harness 用真 Context + 真 dsh-session + 本仓
+  `lib/generate.js`，假 llm 只实现 `ctx.llm.stream` 的异步迭代（即 `src/generate.ts` 真正读的那一个
+  成员），流形状写死 3×`reasoning-delta` + 5×`text-delta` + `finish stop`，因此留痕数值可精确断言。
+  断言分三档输出 PASS / FAIL / **NOT-COVERED**，未覆盖项必须写清「为什么没覆盖」且不影响退出码 0
+  ——**没验到的不得写成通过**（(b) 项在拿不到盘上 `_push` 时，证据源退化到「宿主产物真正产出的对象」，
+  脚本自己写的契约样本只喂 (c) 并在输出首行标注来源）。假流形状有三处坑留在注释里：增量字段名是
+  `text`、`finish.reason` 必须是对象 `{kind:'stop'}`（写字符串会抛 unsupported finish reason，现象与
+  「模型没话说」同形）、assistant/message 数据形状是 `{turn,step,message,stream}` 且带 `surfaceOp`
+
 ### 修复
 
 - **客户端类型检查基线里 18 条是同一个 bug 的产物**（#34）。`src/client/index.ts` 里 `_push` 的解析
