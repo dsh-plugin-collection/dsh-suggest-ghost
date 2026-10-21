@@ -10,11 +10,36 @@
 
 import {
   cleanSuggestion,
+  prefixSafeClean,
   sanitizeSuggestion,
   shouldFilterCompletion,
   shouldFilterCompletionFor,
   stripDraftEcho,
 } from './sanitize.js';
+
+// ── 净化的链序与判据分组（#37） ────────────────────────────────────────────────────
+//
+// ## 终帧净化链（调用既有 `cleanSuggestion()`）
+//
+//   head围栏(```/~~~) → tail围栏(```/~~~) → 转义序列(CSI/OSC/DCS) → 控制符(C0/C1) →
+//   BIDI → 空白折叠(\s+→' ') → trim() → 头引号 → 尾引号 → trim()
+//
+// 各步的分组归属：
+//   - prefixSafe（流式中途可用）：head围栏、转义序列、控制符、BIDI、**已闭合**空白折叠、
+//     头引号、trimStart。
+//   - finalOnly（终帧专用）：tail围栏、尾引号、**尾随**空白 trim()。
+//
+// ## 流式前缀安全版本（`sanitizeCompletionFrame()`）
+//
+//   head围栏(```/~~~) → tail围栏扣住最后一行 → 转义序列/控制符/BIDI → **已闭合**空白折叠
+//   → 头引号 → trimStart → 草稿回显头锚剥离/全长窗口后段扣住 → 尾段扣住（backtick/twiddle/引号/空白）
+//   → 长度截断按 floor(max*0.6)+1 下界保守裁剪
+//
+// 本模块导出两种净化入口：
+//   - `sanitizeCompletion(raw, draft, maxChars)` —— 终帧版（原行为不变，回归预言）。
+//   - `sanitizeCompletionFrame(frameText, draft, maxChars)` —— 流式前缀安全版，供需要
+//     「每帧显示稳定前缀」时使用；其输出始终是终态结果的前缀（`scripts/sanitize-monotonic-smoke.mjs` 钉住）。
+//
 
 /**
  * 行内续写指令：预测草稿的自然延续，禁止复述草稿或生成内容。
@@ -74,7 +99,7 @@ export function inlinePrompt(maxChars: number, language: string): string {
  * 过滤这一环走 `shouldFilterCompletionFor(out, draft)`（而非单参的
  * `shouldFilterCompletion`）：后者在续写场景**刻意放行**问句/助手口吻，
  * 而「续写变成回答」正是从这个口子漏出去的。新判据 = 原语义过滤 + 一道形态兜底
- * （输出 ≥40 字且 > 草稿 ×5 → 判为对话式回答）。详见 `src/sanitize.ts`。
+ * （输出 ≥40 字且 > 草稿 ×3 → 判为对话式回答）。详见 `src/sanitize.ts`。
  * 调用顺序与签名 `(raw, draft, maxChars)` 未动。
  */
 export function sanitizeCompletion(raw: string, draft: string, maxChars: number): string | undefined {
@@ -83,4 +108,32 @@ export function sanitizeCompletion(raw: string, draft: string, maxChars: number)
   out = out.trim();
   if (out.length === 0 || shouldFilterCompletionFor(out, draft)) return undefined;
   return sanitizeSuggestion(out, maxChars).text;
+}
+
+/**
+ * 续写净化的**流式前缀安全入口**（#37）。
+ *
+ * 签名为前端展示提供“每帧都是终态前缀”的保证：对同一份 raw 的所有前缀 k，
+ *   prefixSafeClean(raw.slice(0,k), draft, maxChars) ⊑ sanitizeCompletion(raw, draft, maxChars)
+ * （终态存在时）。这条性质由 `scripts/sanitize-monotonic-smoke.mjs` 钉住。
+ *
+ * 区别於 `sanitizeCompletion()`：
+ *   - 使用 `prefixSafeClean()` 而不是 `cleanSuggestion()` → 剥围栏头行但不剥尾行、
+ *     折叠已闭合空白但不碰尾空白、扣住可疑尾巴再晚一帧显示。
+ *   - 不做最终过滤器（`shouldFilterCompletionFor()` 不在帧上跑）——它是
+ *     **finalOnly**（表 B #6/#7），中途帧的比值门限必然偏小导致误放行。
+ *   - 长度截断按终态下界保守裁剪（floor(max·0.6)+1），保证输出的前缀关系不受词边界回退影响。
+ *
+ * 用途：需要实时显示增量文本的场景；宿主目前仍用 `sanitizeCompletion()`，本出口为将来
+ * 的流式渲染预留。
+ */
+export function sanitizeCompletionFrame(
+  frameText: string,
+  draft: string,
+  maxChars: number,
+): string | undefined {
+  const cleaned = prefixSafeClean(frameText, draft, maxChars);
+  // 注意：不在帧上运行 finalOnly 过滤器（它们只在终帧跑）。如果 caller 需要知道是否会被
+  // 终态过滤掉，请额外调用 shouldFilterCompletionFor(cleaned, draft)。
+  return cleaned || undefined;
 }

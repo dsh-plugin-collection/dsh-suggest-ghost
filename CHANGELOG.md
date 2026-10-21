@@ -4,7 +4,119 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### 新增
+
+- **幽灵文本的「终态帧」契约与客户端判据**（#38 #39）。`_push` 的 suggestion 载荷新增 `frame`
+  （number，`>=1`，单次生成内单调）与 `final`（boolean，终帧为 true）；`completion` 本期**不带帧号**、
+  只带 `final`。两字段缺省按 `frame=0` / `final=true` 处理，旧载荷行为逐字不变。契约与取舍记在
+  #41 的评论里。客户端把这两个字段变成三条能判的判据：
+  - **陈旧帧整条作废**：按 `(会话, turn)` 分桶，帧号**严格小于**已见值才丢；相等必须放行（会话切回
+    时的对账 `pull` 会把同一份建议原样再推一次，丢掉它就没有建议也没有历史环）。台账独立于文档级
+    `rev === lastRevision` 早退（`src/client/index.ts:1502` 那条，载荷自带的 `rev` 客户端从不读），
+    两者若共用判据，宿主一次自写就会把终帧判成「没变化」而丢掉
+  - **采纳只认终帧**：Tab 整条与 `→` 逐词在 `final === false` 的帧上一字符不写、且**不吞按键**
+    （不 `preventDefault`）。显示不归这条判据管：provisional 帧即便显示也只是中间态，**采纳才是
+    不可逆动作**
+  - **幽灵形态在单次生成内不得翻转**：`alignCompletion` 裁空那一支（`src/client/completion-align.ts:87`）
+    原本会让本帧从 `inline` 掉到 `history`，灰色尾巴无声换成另一段不相干的文字。判据用
+    `alignCompletion` 自己的归属前缀关系（`draft === payload.draft || draft.startsWith(payload.draft)`）
+    当「这次生成仍在场」的证据，不靠草稿逐字相同，因此与 #33 的「边打边等」不打架。取舍是
+    `consumed` 时**本帧不显示**而不是回落 history（少一次补全可接受，显错形态不可接受），纯判据、
+    无内部状态，六条出口各有断言
+
+- **overlay 的「同一次生成文本增长」快路径**（#38）。`GhostOverlay.show()` 原本每次都
+  `textContent = ''` 整棵重建后缀 span，再跑两轮强制同步布局（`align()` 的 `getComputedStyle` +
+  `offsetTop/clientWidth` + rect + 约 35 项排版属性复制，`verify()` 的再一次 rect + `querySelector`）。
+  快路径条件是「同形态 + 同锚定文本 + 新后缀以旧后缀开头」：锚点未脏时**一次测量都不做**；锚点脏了
+  只量一次行尾，位移 ≤ 1px 就不重排，越界才落回全量。实测模型：40 帧流式增长从 **80 次强制同步布局
+  降到 0 次**（掺滚动事件时 8 次）。增长期间 `[60,300,900]` 三次错峰补渲染让路（它们的职责只是覆盖
+  rebind 时 composer 尚未挂载的竞态，幽灵已在屏幕上时补渲染只是把同一段文本再画一遍）。两条硬约束
+  一字未动：先标 `data-shown="1"` 再 `display:block`、必须 `display:block` 才能测量；`verify()` 失败
+  即不绘制的语义原样保持
+
+- **客户端留痕的出口补齐**（#39）。三处「判据在跑、输出被摘空」的分支补回留痕槽位：inline armed 的
+  `disabled` / `no-session`（`inline-arm-cancel`）、Tab 采纳被草稿 CAS 放弃（`tab-abandon`）、`→` 逐词
+  采纳被 CAS 放弃（`word-abandon`）；另加本轮新增的 `stale-frame`、`accept-gate-tab` /
+  `accept-gate-word`、`form-hold`。长期只累加不打印的 `renderHits` 有了出口（`render-source`）：两把
+  闸——同一理由 500 次到达只出 1 行；归因来源**切换**且距上次打印已累计 50 次 render 才打一行（纯
+  计数节流、无计时器，离线可测也不受标签页冻结影响）。#21 现场 1127 次 render 回放 = **1 行**。
+  隐私沿用既有口径：只打字符数与原因，不打正文
+
+- **新冒烟 6 条**（`frame-monotonic` 12 / `provisional-accept` 14 / `legacy-payload` 13 / `form-flip` 15
+  / `overlay-growth` 13 / `trace-gate` 10，共 77 项断言），只加在 `test:smoke` 链尾；`ghost-geom` /
+  `accept-cas` / `render-storm` / `completion-align` 四条既有回归预言**一字未改**
+
+- **端到端验收脚本 `scripts/ghost-frame-e2e.mjs`**（进程内 harness + 假 llm 服务）：把「宿主出终帧 →
+  载荷 → 客户端判据」三条线的接缝跑成一条命令。harness 用真 Context + 真 dsh-session + 本仓
+  `lib/generate.js`，假 llm 只实现 `ctx.llm.stream` 的异步迭代（即 `src/generate.ts` 真正读的那一个
+  成员），流形状写死 3×`reasoning-delta` + 5×`text-delta` + `finish stop`，因此留痕数值可精确断言。
+  断言分三档输出 PASS / FAIL / **NOT-COVERED**，未覆盖项必须写清「为什么没覆盖」且不影响退出码 0
+  ——**没验到的不得写成通过**（(b) 项在拿不到盘上 `_push` 时，证据源退化到「宿主产物真正产出的对象」，
+  脚本自己写的契约样本只喂 (c) 并在输出首行标注来源）。假流形状有三处坑留在注释里：增量字段名是
+  `text`、`finish.reason` 必须是对象 `{kind:'stop'}`（写字符串会抛 unsupported finish reason，现象与
+  「模型没话说」同形）、assistant/message 数据形状是 `{turn,step,message,stream}` 且带 `surfaceOp`
+
+- **写失败不再是「一种」**（#36 复核产物）。此前只按 `/cannot be nested/i` 一条正则分诊，于是另一类失败
+  ——**写锁等待超时**（`atomic-write: timed out waiting for the writer lock`，上限 2000ms，
+  `dsh-config-editor` 取锁不传 options 所以调用方改不了）——落到 `push-failed` 分支被判成**终局丢弃**：
+  载荷不入补写队列，客户端收不到幽灵，只留一条被节流的留痕。现在按三类分诊（`src/deferred-writes.ts`
+  新增纯函数 `triageWriteFailure(error, channel)`，零 runtime import，可离线驱动）：
+  - `structural-refusal`（nested）→ 进补写队列，kind 沿用 `push-nested` / `ops-clear-nested` /
+    `deferred-*-nested`
+  - `retryable-contention`（锁超时）→ **也进补写队列**，新增 kind `push-lock-timeout` /
+    `ops-clear-lock-timeout` / `deferred-*-lock-timeout`
+  - `unknown` → 丢弃但留痕带「unknown failure class」，kind `push-failed` / `ops-clear-failed` /
+    `deferred-*-failed`
+
+  三类 kind 两两不同 ⇒「哪种失败吃掉了几次」可统计，不再靠一条正则兜着。顺带修了 `errorText` 在
+  「抛的不是 Error 实例」时退化成 `[object Object]` 的老坑
+
+- **三类写不再自己争同一把锁**（#36 复核产物）。补写泵、即时写 `_push`、消费后 `_ops` 清空共用一把
+  profile 锁，此前没有互斥：补写泵在有写在途时也会取槽抢锁，于是自己把自己的写卡到超时。现在补写泵在
+  `anyWriteInFlight()` 时**不取槽、不抢锁**（留痕 `deferred-wait … waitedMs=N`，按 kind 分桶、第一条
+  必报、之后每 50 次一条带计数、不带正文）；即时写在补写/清空占锁时排队等落地，排队期间**不放指纹**
+  （载荷一直挂在 pending 上，落地后由 `retryFlushAfterWrite` 唤醒）
+
+- **两处依据订正**（#36 复核产物）：`dsh-hmr` 的行号补上代次锚点（0.2.0-rc.2 `:271`/`:280`/`:283` ↔
+  0.2.1-rc.2 `:736`/`:749`/`:752`，两代逐条核对过；原文的 `:270`/`:284` 是错的），`dsh-settings` 的
+  `:510` → `:509`；内嵌的两处 PROBE 五行换成复核评论的 A/B 实测表（原文「差别在上下文在哪儿建立」只
+  覆盖了两种成因里的一种）；补写泵 500ms 间隔的依据注释改成实测值（单次写 191-332ms、首笔 2.2-2.5s ⇒
+  「500ms ≈ 生成耗时 1/4~1/3」不成立）。**泵间隔本轮未动**：间隔变小会加剧本仓锁竞争，等互斥修完、
+  有新失败率数据再定
+
+- **新冒烟 `scripts/push-failure-triage-smoke.mjs`（25 组）**，`test:smoke` 链现 35 项
+
 ### 修复
+
+- **客户端类型检查基线里 18 条是同一个 bug 的产物**（#34）。`src/client/index.ts` 里 `_push` 的解析
+  结果声明成 `let pushed: {…} | null = null` 再用 `as typeof pushed` 断言，而 `typeof` 在该处取到的是
+  **已被窄化过的 `null`**，于是每个 `pushed?.x` 都报 `TS2339 … on type 'never'`。改成具名
+  `type PushedPayload` 后这 18 条整片消失：`tsc -p tsconfig.client.json --noEmit` 从 **41 条降到 23 条**，
+  本次改动**新增 0 条**。即 #34 正文里的「基线 40 条」应重新表述为「约 23 条真错 + 18 条同源假错」，
+  清零路径因此短了一截。诊断配置仍未开 `allowImportingTsExtensions`（本包 NodeNext 相对导入必须带
+  扩展名，每新增一个 `src/client` 下的文件就多一条 TS5097），所以本轮的客户端判据**折进既有文件**
+  （`accept-guard.ts` / `completion-align.ts` / `inline-arm-policy.ts` 末段）而不是新增 4 个文件；
+  是否开该选项归 #34 定
+
+- **净化链的判据显式分成「只看前缀能定论」与「只能在终帧定论」两组**（#37）。这是为将来的逐帧呈现
+  做的前置：现有六个净化函数里至少 6 处判据依赖**结尾**或**总长**（围栏尾行、尾引号、尾随空白、
+  `>200`、尾问句、`<40` 与「草稿 ×3」比值、回声窗口按全长算、`maxChars` 词边界截断），中途看前缀
+  判不出来，于是**中途放行 ≠ 终态放行**。现在 `src/sanitize.ts` 模块头有两张带行号的表
+  （表 A prefixSafe 六条、表 B finalOnly 九条，26 个 `L行:标记` 锚点由新冒烟逐条核对，改代码不改表
+  就先红），六个对外函数只做命名化拆分，**链序与常量一字未动**
+  - 新增导出 `prefixSafeClean(text, draft, maxChars)`：finalOnly 判据一律不判，改成「把可能被终态
+    改写的最短尾段扣住不输出」——**只会让文本晚一帧出现，永不撤回已显示的字符**
+  - `src/inline.ts` 补链序/分组注释，并预留出口 `sanitizeCompletionFrame()`（**未接进宿主投递**）
+  - 行为不变的证据是差分参照而不是既有冒烟：把 #37 之前的六个函数逐字抄一份，对 3286 条输入 ×
+    全部 `maxChars`/草稿组合断言完全相等（含整条 `sanitizeCompletion` 链）；单调性 1,535,356 帧 /
+    124,936 个终态 **0 违规**，另加两条活性断言防止「每帧返回空串」把单调性白骗过去；变异测试证伪
+    三条（帧上改跑 `cleanSuggestion` → 单调性红、退化成空串 → 活性红、终态 `0.3` 改 `0.5` →
+    差分参照红）
+  - 三类反例已被冒烟钉住「当前会被误放行」：围栏尾行误剥（帧 `x```keep` → `"x"`，而终态是
+    `"x```keepmore"`）、`>200` 与「草稿 ×3」中途放行、回声窗口按总长误判（帧 `"xyabc"` 根本不是终态
+    `"xy def gh ij kl mn op"` 的前缀，`prefixSafeClean` 同帧给 `"xy"` 扣住）
+  - 顺带修正 `src/sanitize.ts:242` 与 `src/inline.ts:102` 两处既有注释笔误（写「× 5」而常量是 3），
+    只动注释
 
 - **中文会话里蹦出英文建议**（三处修，缺一不可）。根因是一条链：语言推断被喂了「按 UTF-8 输入预算裁剪
   后的转录」→ 回退证据用了**原文** → 推翻先验用的是**绝对阈值**。默认 `maxInputBytes=4096` 下，「长中文
