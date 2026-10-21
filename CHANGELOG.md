@@ -200,8 +200,9 @@ All notable changes to this project will be documented in this file.
     才判；判出可恢复就接回追踪态 ⇒ **这次 pull 的应答自然带上它**，不需要额外推一次
   - 三个不变量各有断言：旧载荷不得盖掉更新的载荷（本会话已有建议 ⇒ reason=superseded，不接回）／归属
     未确认时不得清盘或推残留（会话未进店 ⇒ 盘上残留原样保留 + 启动期零写）／不得因为回读多推一次
-  - 留痕 `persisted push read|restored|skipped source=startup|pull … turn= baseSeq= chars=`，**不打正文、
-    不打会话 id**（会话 id 属可回推的标识）
+  - 留痕 `persisted push read|restored|skipped|deferred source=startup|pull … turn= baseSeq= chars=`，**不打正文、
+    不打会话 id**（会话 id 属可回推的标识）。其中 `deferred` 专门表示**「读到了却判不了」**（会话还没进店）
+    ——它与「判废」是两回事，若只靠 `read` 那行撑着，日志里会看起来像「读到了、然后什么也没发生」
   - 顺带修了一个被掩盖的问题：cordis 4.0.1 的 `Context` **没有** dispose/stop/`Symbol.asyncDispose` 面 ⇒
     e2e 脚本里的 `root[Symbol.asyncDispose]?.()` 是空操作 ⇒ 插件的排水定时器一直 ref 着、进程退不出去。
     此前只因「小节 2 红 ⇒ `process.exit(1)`」才看起来正常，#50 修好后成功路径第一次被走到就挂住了
