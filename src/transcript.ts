@@ -174,6 +174,9 @@ const EVIDENCE_TEXT_CAP_CHARS = 4000;
  * 5. 「拉丁证据推翻 UI 先验」只认来自**真人消息**的证据：回退到助手文本时该覆盖
  *    不生效（见 `fromAssistantFallback`）。助手回复里的标识符、日志片段、Markdown
  *    表格不是用户的输入语言，用它推翻等于把中文回合判成英文。
+ * 6. 推翻先验用**相对比较**（拉丁 vs 该语言侧含先验的总证据），不用绝对阈值：
+ *    单条消息得分上限 360，绝对阈值 100 相当于「去噪后拉丁占比 >27.8% 就翻」，
+ *    会把「中文但混满路径与仓库名」的任务提示词（占比普遍 52%-61%）整批判成英文。
  *
  * 调用方注意：传入的必须是**未经输入预算裁剪**的证据对（`Transcript.evidencePairs`），
  * 而不是喂给模型的那份 `pairs`——裁剪会从最老的对开始丢，短用户消息最先出局。
@@ -273,20 +276,27 @@ export function suggestionLanguage(
 
   // 语言判定：
   // - 无 UI 先验时：CJK/西里尔证据足够 → 对应语言；否则 → English
-  // - 有 UI 先验时：CJK/西里尔证据领先拉丁 → 对应语言；
-  //   **仅当拉丁证据来自真人消息**且超过 UI 先验 → English（用户持续用英语推翻 UI）；
+  // - 有 UI 先验时：该语言证据领先 → 对应语言；
+  //   **仅当拉丁证据来自真人消息**且压过「该语言证据 + 先验」的总和 → English；
   //   否则 → UI 语言（先验压制短英文消息）
   if (cjkScore >= 6 && cjkScore >= cyrillicScore) {
     if (!hasUiPrior) return '简体中文';
-    // 覆盖判据的语义是「用户持续用英语推翻界面语言」，所以只有来自真人消息的
-    // 拉丁证据有资格触发它。回退到助手文本时，拉丁字母来自代码标识符、IP:端口、
-    // Markdown 表格——那不代表用户的输入语言（实测正是这条把中文回合判成了英文）。
-    if (!fromAssistantFallback && latinScore > uiLocaleWeight) return 'English';
+    // 覆盖判据的语义是「用户持续用英文推翻界面语言」，两条约束缺一不可：
+    //  ① 只有来自真人消息的拉丁证据有资格触发它。回退到助手文本时，拉丁字母来自
+    //     代码标识符 / IP:端口 / Markdown 表格，那不代表用户的输入语言。
+    //  ② 比的是**本分支的总证据**（含界面先验加成），不是先验本身。旧写法
+    //     `latinScore > uiLocaleWeight` 拿一个绝对阈值替混合语言做决定：单条消息
+    //     得分上限 60×6=360，于是去噪后拉丁占比只要 >27.8% 就推翻中文先验，而
+    //     「中文但混满路径与仓库名」的任务提示词占比普遍 52%-61%（38 个真实会话里
+    //     13 条属这批，全部被误判成英文）。改成相对比较后纯英文用户照样推翻先验
+    //     （三条长英文提示 → English），混合中文不再被误杀。
+    //     顺带让 uiLocaleWeight 回归单一职责：它只是该语言侧的加成，不再同时当门槛。
+    if (!fromAssistantFallback && latinScore > cjkScore) return 'English';
     return '简体中文';
   }
   if (cyrillicScore >= 6 && cyrillicScore > cjkScore) {
     if (!hasUiPrior) return 'Russian';
-    if (!fromAssistantFallback && latinScore > uiLocaleWeight) return 'English';
+    if (!fromAssistantFallback && latinScore > cyrillicScore) return 'English';
     return 'Russian';
   }
 

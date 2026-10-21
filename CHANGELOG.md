@@ -6,23 +6,35 @@ All notable changes to this project will be documented in this file.
 
 ### 修复
 
-- **中文会话里蹦出英文建议**：语言推断被喂了「按 UTF-8 输入预算裁剪后的转录」，而裁剪是从**最老**的
-  对开始丢的。默认 `maxInputBytes=4096` 下，「长中文助手回复 + 几条短用户消息」这个最常见组合会把
-  `我合并了` / `我重启DSH了` 整批挤掉，只剩一条纯 URL；`stripNoise` 把 URL 删空后触发「回退到最后一条
-  assistant」，而回退用的是**原文**——中文调试报告里的标识符、`IP:端口`、Markdown 表格把 `latinScore`
-  顶到 195，越过 `uiLocaleWeight(100)`，于是那条本为「用户持续用英文推翻界面语言」设计的覆盖判据被
-  **助手文本**触发。反直觉之处在于：只有 `zh` / `ru` 界面会翻车（`en` 或无 UI 先验走不到那个分支，同一
-  份转录反而判出简体中文）。实测复现于 `session-47dc0add…` 回合 22，判出的英文建议即
-  `yes, go ahead and change that line`。两处改动：**①** `buildTranscript` 额外给出未经裁剪的
-  `evidencePairs`（排除合成的 `[Earlier context summary]` 伪 user 对），suggest 与 inline 两条路径的语言
-  判定都改用它；送给模型的 `pairs` 一字不改，token 成本与裁剪行为零影响。**②** 覆盖判据加
-  `fromAssistantFallback` 门控——助手文本不代表用户，无资格推翻 UI 先验；真人英文消息推翻先验的既有
-  行为（用例 4、10、13）原样保留。顺带给证据文本加 `EVIDENCE_TEXT_CAP_CHARS=4000` 上界：证据窗口不再
-  由输入预算兜住，得自缚一个界，防止用户粘贴的巨型日志把 `stripNoise` 的正则成本放大成整轮瓶颈。
-  同源缺口**未**在本次处理：停顿续写的草稿本身仍不参与语言判定（中文会话里打英文草稿会被判成中文续写），
-  `src/generate.ts` 的注释已改为如实说明。回归：`scripts/suggestion-language-smoke.mjs` 用例 11–13
-  （11/12 在修复前实测返回 English），新增 `scripts/language-evidence-smoke.mjs` 端到端钉住
-  `evidencePairs`（修复前实测 TypeError），两者均已入 `test:smoke` 链
+- **中文会话里蹦出英文建议**（三处修，缺一不可）。根因是一条链：语言推断被喂了「按 UTF-8 输入预算裁剪
+  后的转录」→ 回退证据用了**原文** → 推翻先验用的是**绝对阈值**。默认 `maxInputBytes=4096` 下，「长中文
+  助手回复 + 几条短用户消息」这个最常见组合会把 `我合并了` / `我重启DSH了` 整批挤掉，只剩一条纯 URL；
+  `stripNoise` 把 URL 删空后触发「回退到最后一条 assistant」，而中文调试报告里的标识符、`IP:端口`、
+  Markdown 表格把 `latinScore` 顶到 195，越过 `uiLocaleWeight(100)`，于是那条本为「用户持续用英文推翻
+  界面语言」设计的覆盖判据被**助手文本**触发。反直觉之处在于：只有 `zh` / `ru` 界面会翻车（`en` 或无 UI
+  先验走不到那个分支，同一份转录反而判出简体中文）。实测复现于 `session-47dc0add…` 回合 22，判出的英文
+  建议即 `yes, go ahead and change that line`。
+
+  - **① 证据窗口与输入预算解耦**：`buildTranscript` 额外给出未经裁剪的 `evidencePairs`（排除合成的
+    `[Earlier context summary]` 伪 user 对），suggest 与 inline 两条路径的语言判定都改用它；送给模型的
+    `pairs` 一字不改 → token 成本与裁剪行为零影响。顺带给证据文本加 `EVIDENCE_TEXT_CAP_CHARS=4000`
+    上界：证据不再由输入预算兜住，得自缚一个界，防用户粘贴的巨型日志把 `stripNoise` 的正则成本放大成
+    整轮瓶颈
+  - **② 覆盖判据加 `fromAssistantFallback` 门控**：助手文本不代表用户，无资格推翻 UI 先验
+  - **③ 绝对阈值改相对比较**：`latinScore > uiLocaleWeight` → `latinScore > cjkScore`（该语言侧含先验
+    的总证据；西里尔分支同理）。单条消息得分上限 60×6=360，绝对阈值 100 等于「去噪后拉丁占比 >27.8%
+    就翻」，而「中文但混满路径与仓库名」的任务提示词占比普遍 52%-61%——**做完 ①② 之后这批仍全被判成
+    英文**，因为那时证据已是真人消息、② 的门不再拦。`uiLocaleWeight` 由此回归单一职责（只是该语言侧的
+    加成），与设置页文案「值越大越倾向界面语言」一致
+
+  38 个真实会话末回合复算（判 English 的数量）：**线上 14 → ①② 10 → ①②③ 0**。① 单独只救回 6 条，
+  还会打破 2 条本来靠「裁剪 → 回退到中文助手简报」歪打正着判对的会话；③ 把这 2 条一并收回。边界探针
+  确认覆盖判据没被改成死代码（三条长英文提示仍判 English）。同源缺口**未**在本次处理：停顿续写的草稿
+  本身仍不参与语言判定（中文会话里打英文草稿会被判成中文续写），`src/generate.ts` 的注释已改为如实说明。
+
+  回归：`scripts/suggestion-language-smoke.mjs` 用例 11–17（11/12 钉 ②、14/15 钉 ③，四例在对应修复前
+  实测均返回 English；16 摘自语料 A，17 是英文探针），新增 `scripts/language-evidence-smoke.mjs` 端到端
+  钉 ①（修复前实测 TypeError），两者均已入 `test:smoke` 链（现 27 项）
 
 ## [0.6.0] - 2026-10-20
 
