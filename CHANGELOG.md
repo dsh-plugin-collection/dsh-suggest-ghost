@@ -169,6 +169,22 @@ All notable changes to this project will be documented in this file.
   其余两条顺序原样、coldstart 的断言一字未放宽；链仍会在 coldstart 小节 2 停住（设计如此，见 #50），脚本
   文件头写明单独跑的方式
 
+- **端到端脚本补上「没有正文的终帧」这一组判据**（#39 收口追加）。真实环境里**没有正文**比「有正文」更常见
+  （host-latency 在 efficient 路由上两次实测 `content_deltas=0 / outcome=empty`、`reasoning_chars=8354`、
+  耗时 29771ms / 15557ms），而原来的假流永远有正文 ⇒ 只覆盖了较少见的那一半。现在四条新断言、全走真判据、
+  零 DOM 零接线层：
+  - 空正文**续写**终帧 → 不显示 inline、**允许**回落历史、`hold=null`
+  - **成对**的对照：同一次生成内被裁空 → 扣住（`hold=inline-consumed`）、不回落 history。**1/2 必须成对钉**，
+    因为「空正文=放行 / 裁空=扣住」单独任一条都能被写反
+  - 空正文**建议**终帧 → 帧判据只看 `final`、不看正文长度，写成**事实断言**（不主张空正文应当被采纳或被渲染）
+  - 空正文建议的**实际渲染结果** → NOT-COVERED（判定在 `computeGhostContent` / `GhostOverlay.show()`，需要 DOM
+    与接线层）
+
+  判据归属也钉住了：`outcome` 由调用方在**净化之后**写（`src/generate.ts:819`/`:834`/`:963`/`:966`），纯函数层
+  那个 `outcome=empty` 只代表「这层不拥有这个判定」，不代表「模型一个字没吐」。变异测试验过 FAIL 路真会红
+  （把放行与扣住各写反 ⇒ FAIL 2、退出码 1）。脚本现状 **PASS 11 · FAIL 0 · NOT-COVERED 2**，两条 NOT-COVERED
+  分别是「缺真实回合」与「缺 DOM/接线层」，都不是原因不明
+
 ### 修复
 
 - **客户端类型检查基线里 18 条是同一个 bug 的产物**（#34）。`src/client/index.ts` 里 `_push` 的解析
