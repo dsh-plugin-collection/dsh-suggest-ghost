@@ -48,10 +48,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 function makeMedium(initial = {}) {
   let document = structuredClone(initial);
+  /** 每次写的留痕（ns + patch）。断言「某一次写里带了什么」要用它——介质上的**当前**值
+   *  会被后一次写覆盖，而「那一次写带了什么」才是被验的那件事。 */
+  const writes = [];
   return {
     get document() {
       return structuredClone(document);
     },
+    writes,
     /** 读某个 ns 的当前值（`describe()` 的行就报这份）。 */
     read(ns) {
       return structuredClone(document[ns] ?? {});
@@ -59,8 +63,16 @@ function makeMedium(initial = {}) {
     /** 写某个 ns 的一段补丁（对齐 `SettingsForms.update` 的 ns + patch 形状）。 */
     merge(ns, patch) {
       document = { ...document, [ns]: { ...document[ns], ...structuredClone(patch) } };
+      writes.push({ ns, patch: structuredClone(patch) });
     },
   };
+}
+
+/** 介质上历次写里带过的 `_push` 载荷（按写入顺序）。 */
+function pushWrites(medium) {
+  return medium.writes
+    .filter((w) => typeof w.patch._push === 'string')
+    .map((w) => JSON.parse(w.patch._push));
 }
 
 /**
@@ -119,10 +131,13 @@ async function bootProcess(medium, seed = {}) {
   // 一个 fiber，服务后建则回调不再触发（真实宿主里 loader 保证服务先于插件）。
   const settings = installSettingsService(root, medium);
   const sessions = root.sessions;
-  const session = makeSession(sessions, seed.sessionId ?? 'session-a', {
-    turns: seed.turns ?? 2,
-    userTexts: seed.userTexts ?? ['第一句', '第二句'],
-  });
+  const sessionId = seed.sessionId ?? 'session-a';
+  const sessionSeed = { turns: seed.turns ?? 2, userTexts: seed.userTexts ?? ['第一句', '第二句'] };
+  const createSession = () => makeSession(sessions, sessionId, sessionSeed);
+  // `lateSession`：会话在插件 apply **之后**才进店 —— 模拟宿主的持久化懒恢复
+  // （重启后会话常常还没被加载）。这时启动期的回读**判不了新旧** ⇒ 不得猜、不得清盘，
+  // 留给该会话第一次 pull 时补判（小节 6）。
+  const session = seed.lateSession === true ? null : createSession();
   // 0.1.7 起没有 register/scope 可拦截；client 读的就是这个 ns 在介质里的值，
   // 所以「插件推出去什么」= 「介质里现在是什么」。scope 这个形态留给下面
   // 第 4、5 小节沿用（`scope.get()._push` / `._ops`），语义与旧版一致。
@@ -142,7 +157,7 @@ async function bootProcess(medium, seed = {}) {
     await sleep(10);
   }
   await sleep(30);
-  return { root, session, sessions, captured, settings };
+  return { root, session, sessions, captured, settings, createSession };
 }
 
 /** 读 host 推给 client 的 `_push`（client 侧读的是同一份 settings 值）。 */
@@ -212,7 +227,7 @@ await section(1, '首次启动：应答里无建议，历史归属于被 pull �
 await section(2, '重启对账：盘上残留的上一条建议应被恢复', async () => {
   const persistedPush = JSON.stringify({
     rev: 9,
-    suggestion: { turn: 2, baseSeq: 3, text: '跑一下测试', truncated: false, acceptKey: 'Tab' },
+    suggestion: { turn: 2, baseSeq: 3, text: '跑一下测试', truncated: false, acceptKey: 'Tab', frame: 1, final: true },
     suggestionSessionId: SESSION,
     hot: null,
     total: 0,
@@ -223,12 +238,21 @@ await section(2, '重启对账：盘上残留的上一条建议应被恢复', as
   const { root, captured, settings } = await bootProcess(medium, { sessionId: SESSION, turns: 2, userTexts: ['第一句', '第二句'] });
 
   // 重启对账的核心断言：会话已进店且回合归属正确 → 建议被**恢复**而非清空。
+  //
+  // **第一次 pull 必须零写**：回读恢复之后，内存里的状态与盘上那份**是同一件事**
+  // （同一份建议、同一份历史、热度同为 0），指纹一致 ⇒ pull 应答被判重跳过 ⇒ 盘上
+  // `_push` 的**内容与 rev 都不变**。否则就是「内容一样、rev 不同」的多余写：既白写
+  // 一次盘，又把 rev 顶上去一格（rev 是单调序号，client 侧的「旧载荷丢弃」看它）。
+  const before = medium.read(NS)._push;
   await coldStartPull(settings, SESSION);
+  const after = medium.read(NS)._push;
+  assert.equal(after, before, '恢复之后第一次 pull 不该再写 _push（指纹判重应跳过）');
   const p = pushed(captured);
   assert.ok(p !== null, '重启后应推送对账状态');
   assert.ok(p.suggestion !== null, '重启后上一轮建议应被恢复（这是本次修复的核心）');
   assert.equal(p.suggestion.text, '跑一下测试');
   assert.equal(p.suggestion.turn, 2);
+  assert.equal(p.suggestion.baseSeq, 3, 'baseSeq 也要对上：恢复的是盘上那一条，不是新生成的');
   assert.equal(p.suggestionSessionId, SESSION);
   assert.deepEqual(p.history, ['第一句', '第二句'], '历史同样立即可用，无需等新回合');
   await root[Symbol.asyncDispose]?.();
@@ -238,7 +262,7 @@ await section(2, '重启对账：盘上残留的上一条建议应被恢复', as
 await section(3, '陈旧作废：会话在停机期间推进了回合 → 建议必须作废', async () => {
   const persistedPush = JSON.stringify({
     rev: 9,
-    suggestion: { turn: 1, baseSeq: 1, text: '这条已经过期', truncated: false, acceptKey: 'Tab' },
+    suggestion: { turn: 1, baseSeq: 1, text: '这条已经过期', truncated: false, acceptKey: 'Tab', frame: 1, final: true },
     suggestionSessionId: SESSION,
     hot: null,
     total: 0,
@@ -256,7 +280,7 @@ await section(3, '陈旧作废：会话在停机期间推进了回合 → 建议
 await section(4, '懒恢复：会话未进店时不得清盘', async () => {
   const persistedPush = JSON.stringify({
     rev: 9,
-    suggestion: { turn: 2, baseSeq: 3, text: '等会话进店后再判', truncated: false, acceptKey: 'Tab' },
+    suggestion: { turn: 2, baseSeq: 3, text: '等会话进店后再判', truncated: false, acceptKey: 'Tab', frame: 1, final: true },
     suggestionSessionId: 'session-not-restored-yet',
     hot: null,
     total: 0,
@@ -298,10 +322,51 @@ await section(5, 'pull 应答：历史可得、消费后清空、未知会话不
   await root[Symbol.asyncDispose]?.();
 });
 
+// —— 6. 会话在插件启动**之后**才进店（宿主的持久化懒恢复）→ pull 时补判 ——
+await section(6, '懒恢复补判：会话启动后才进店 → 第一次 pull 才判、应答仍带上它', async () => {
+  const persistedPush = JSON.stringify({
+    rev: 9,
+    suggestion: { turn: 2, baseSeq: 3, text: '等会话进店再判', truncated: false, acceptKey: 'Tab', frame: 1, final: true },
+    suggestionSessionId: SESSION,
+    hot: null,
+    total: 0,
+  });
+  const medium = makeMedium({ 'suggest-ghost': { _push: persistedPush, _ops: 'null' } });
+  // `lateSession`：这个进程里会话是在插件 apply **之后**才创建的 ⇒ 启动期回读判不了
+  // 新旧（「会话未进店」），按安全约束既不恢复、也不清盘、更不推残留。
+  const { root, captured, settings, createSession } = await bootProcess(medium, {
+    sessionId: SESSION,
+    turns: 2,
+    userTexts: ['第一句', '第二句'],
+    lateSession: true,
+  });
+  const rawAfterBoot = captured.scope?.get()?._push;
+  assert.ok(typeof rawAfterBoot === 'string' && rawAfterBoot !== 'null', '会话未进店时不得清盘');
+  assert.equal(JSON.parse(rawAfterBoot).suggestion?.text, '等会话进店再判', '盘上建议原样保留，等它进店后由 pull 对账');
+  assert.equal(pushWrites(medium).length, 0, '启动期不得写 _push（回读只读不写）');
+
+  // 会话进店 → 第一次 pull 补判（此刻会话一定在店 ⇒ 判得了）→ 应答带上它。
+  //
+  // ⚠️ 断言落在**那一次写**上，而不是介质上的当前值：本小节刻意把会话建成「插件
+  // apply 之后才进店」，于是插件会把这个会话的 turn/end 当成新回合走一遍生成路径
+  // （真宿主上不会：重启后会话的事件是**重放**的，插件的
+  // `lastSuggestedTurnInLog` 守卫会直接跳过，见 src/index.ts 的 handleTurnEnd），
+  // 那次生成在本 harness 里必然失败（没有 LLM 路由），随后的一次写会把建议清掉。
+  // 验的是「pull 应答那一刻**带上了**它」，所以看写留痕，不看最终值。
+  createSession();
+  await coldStartPull(settings, SESSION);
+  const written = pushWrites(medium);
+  assert.ok(
+    written.some((p) => p.suggestion?.text === '等会话进店再判' && p.suggestion.turn === 2),
+    '会话进店后第一次 pull 的应答必须带上那条建议',
+  );
+  await root[Symbol.asyncDispose]?.();
+});
+
 console.log('');
 if (failures.length > 0) {
   const labeled = failures.map((f) => `小节 ${f.no}${f.knownIssue ? `（已知缺陷 #${f.knownIssue}）` : '（未预期）'}`);
-  console.error(`❌ coldstart e2e：${failures.length} / 5 小节红 —— ${labeled.join('、')}`);
+  console.error(`❌ coldstart e2e：${failures.length} / 6 小节红 —— ${labeled.join('、')}`);
   console.error('   红的小节不要用放宽断言换绿：小节 2 验的是「重启恢复盘上残留建议」这条产品语义，'
     + '它在 c3b6a80（0.1.7 volatile 适配）里随 `parsePersistedPush(scope.get()._push)` 一起被删掉、之后没接回来（#50）。');
   console.error('   另注：小节 3 现在是绿的，但它绿的原因是「压根没恢复」而不是「恢复后被回合语义判废」——'
@@ -309,3 +374,10 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log('✅ coldstart e2e：重启对账 / 陈旧作废 / 懒恢复不覆盖 / pull 应答 全部通过');
+// **成功路径必须显式退出**（失败路径早就有 `process.exit(1)`，所以这条以前从没被走到）：
+// cordis 4.0.1 的 `Context` **没有** dispose/stop/`Symbol.asyncDispose` 面，本脚本里
+// `root[Symbol.asyncDispose]?.()` 那个可选调用是**空操作** ⇒ 插件的排水定时器
+// （`src/index.ts` 里 `setInterval(drainDeferred, 500)`，设计上是跨 apply 存活的，只在
+// 真正的 ctx 卸载时才 clear）就一直 ref 着，事件循环排不空、进程退不出去。
+// 证据：#50 修好前这条脚本只因「小节 2 红 → process.exit(1)」而退出，看起来一切正常。
+process.exit(0);
