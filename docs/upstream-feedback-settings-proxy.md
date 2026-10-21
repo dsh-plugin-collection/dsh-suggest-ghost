@@ -8,6 +8,12 @@
 > `@deepseek-ai/dsh-api-settings-controller@0.2.0-rc.2`、
 > `@deepseek-ai/dsh-api-gateway@0.2.0-rc.2`、`@deepseek-ai/dsh-hmr@0.2.0-rc.2`、
 > `@deepseek-ai/cordis@4.0.1`（本机核对于 2026-10-19）。
+> **2026-10-21 复跑所用版本**：实跑宿主 `@deepseek-ai/dsh-hmr@0.2.1-rc.2`、
+> `@deepseek-ai/dsh-settings@0.2.1-rc.2`、`@deepseek-ai/dsh-config-editor@0.2.1-rc.2`、
+> `@deepseek-ai/dsh-atomic-write@0.2.1-rc.2`、`@deepseek-ai/cordis@4.0.5`。
+> 其中 `dsh-settings` 与 `dsh-config-editor` 的 `lib/index.js` 与 0.2.0-rc.2 **逐字节相同**
+> （`cmp` 通过）⇒ 本文引这两包的行号在两代都成立；`dsh-hmr` 有位移（672 → 1465 行）但
+> `runExclusive` 函数体逐字未变 ⇒ **语义未变，只是行号漂**。详见「机制链」与文末「复跑更正」。
 > 报告方：dsh-suggest-ghost 插件（`src/client/index.ts` 的 `writeOps`，修复见 `a864545`
 > 与本轮的 `src/client/settings-result.ts`）。
 >
@@ -19,6 +25,12 @@
 >    回调里写 settings 必被 `HMR transactions cannot be nested` 拒绝，且该上下文沿
 >    await/timer 传播、无法靠「推迟一个 tick」摆脱。本插件有实测数据：一个进程内
 >    372/373 次 `_ops` 清空都是这个拒绝。
+>    **2026-10-21 复跑限定（不改上面的历史结论，只标范围）**：判据复现成立（真事务内五种退路全
+>    FAIL、同步拒绝 23–68ms、`revision` 零递增），但「必被拒」要限定为「**由事务内那次
+>    `describe()`（`dsh-settings/lib/index.js:509`）触发的**事件」；`await edit(…)` 之后那次
+>    `describe()`（`:536`）与订阅方自己读的 `describe()` 都在事务外 emit。另外 0.2.1 的
+>    `dsh-hmr/lib/index.js:1321` 新增「`reconcileProfile` 必须在事务内」的反向断言，把事务边界
+>    变**宽**了 —— 也就是说这条问题在新代次上更容易撞上，不是被修好了。
 
 ## 一句话
 
@@ -32,6 +44,12 @@
    `HMR transactions cannot be nested` 拒绝；而这个上下文沿 await/microtask/timer
    继续传播，调用方**没有办法**靠自己「推迟到下一个 tick」摆脱它。我们要么需要一个
    显式的退出机制，要么需要该事件改为事务外 emit。
+   > **2026-10-21 复跑修正这两句的范围**（详见「复跑更正」一节）：① 「任何写入都被拒」应为
+   > 「**由事务内那次 `describe()`（`dsh-settings/lib/index.js:509`）触发的**回调里发起的写入都被拒」
+   > ——同一事件若由 `await edit(…)` 之后的 `describe()`（`:536`）触发，回调里写得进；② 「推迟到
+   > 下一个 tick」确实摆脱不了（真事务内五种退路实测全 FAIL，23–68ms、`revision` 零递增），但
+   > **显式退出今天已可用**：`executing.exit()` 实测能写进去，只是它在类型面上是 private
+   > （`dsh-hmr/lib/types/index.d.ts:89`）。所以诉求一请当作「转正既有内部能力」来看。
 
 ## 期望的行为（内核源码里确实是这么实现的）
 
@@ -172,21 +190,34 @@ API 形状本身**。三点补充观察：
 | `_ops` 清空成功 | 0 |
 | `consumeOps` 消费 `complete` op | 169（消费本身成功） |
 
-**机制链**（0.2.0-rc.2，逐处 file:line）：
+**机制链**（逐处 file:line。2026-10-21 已在实跑宿主 `0.2.1-rc.2` 复跑：`dsh-settings` 与
+`dsh-config-editor` 的 `lib/index.js` **两代逐字节相同** ⇒ 它们没有行号位移；有位移的只有
+`dsh-hmr`，且 `runExclusive` 的函数体两代逐字未变）：
 
 ```
-dsh-config-editor/lib/index.js:134      await (hmr === void 0 ? run() : hmr.runExclusive(run));
-dsh-hmr  executing = new AsyncLocalStorage()            （0.2.0 是 :271，0.2.1 是 :736）
+dsh-config-editor/lib/index.js:134      await (hmr === void 0 ? run() : hmr.runExclusive(run));   ← 两代同一行
+dsh-hmr  executing = new AsyncLocalStorage()                       （0.2.0 :271 / 0.2.1 :736）
 dsh-hmr  if (this.executing.getStore()) return Promise.reject(new Error("HMR transactions cannot be nested"));
-dsh-hmr  return this.executing.run(true, operation)   （0.2.0 是 :284，0.2.1 是 :752）
-dsh-settings/lib/index.js:510           await this.ownerContext.configEditor.edit(entry, (raw, inherited) => {
-                                            const descriptor = this.describe()...   ← 事务内
+                                                                       （0.2.0 :280 / 0.2.1 :749）
+dsh-hmr  return this.executing.run(true, operation)                （0.2.0 :283 / 0.2.1 :752）
+           ↑ 原文这里记的「0.2.0 是 :284」是错的：:284 是紧随其后的 `});`，已更正。
+dsh-settings/lib/index.js:508           await this.ownerContext.configEditor.edit(entry, (raw, inherited) => {
+                                            const descriptor = this.describe()...   ← 事务内（:509）
+           ↑ 原文记的 :510 是下一行 `descriptor === void 0` 的抛错，已更正；两代行号相同。
 dsh-settings/lib/index.js:435           ...this.ownerContext.emit("settings/document-updated", entry.options.id, revision);
+           ↑ 两代同一行；另有 :461 第二处 emit（条目转 inactive），0.2.1 没有新增 emit 点。
 ```
 
-于是：**插件在 `settings/document-updated` 的回调里（含该回调的任何 await 续体）发起的
-settings 写入，必被拒**。而「消费完清空队列」「应答 pull」「续写完成后推载荷」这些再正常
-不过的反应式写入，全都长在这个回调上。
+于是：**由这一次「事务内 `describe()`」触发的 `settings/document-updated` 回调里（含该回调的任何
+await 续体）发起的 settings 写入，必被拒**。而「消费完清空队列」「应答 pull」「续写完成后推载荷」
+这些再正常不过的反应式写入，全都长在这个回调上。
+
+> **范围限定（复跑新增，请维护者一并确认）**：`write()` 里 `describe()` 有**三类调用点**，
+> 只有第①类在事务内——① edit 回调内（`:509`）、② `await edit(…)` **之后**那次（`:536`，跑在调用方
+> 上下文，`getStore()` 为 `undefined`）、③ 插件/订阅方自己读的 `describe()`。同一个回调被①触发时
+> 写不进、被②③触发时写得进。这解释了为什么插件侧曾同时留下「全 FAIL」和「handler OK」两组
+> 互相矛盾的观测（issue #36 复核评论 `#issuecomment-37810` 有逐条实测表）：判据本身没错，
+> 差在**是哪一次 `describe()` emit 的这一次事件**。
 
 **调用方自救不了**，我们实测过四条路：
 
@@ -197,23 +228,55 @@ settings 写入，必被拒**。而「消费完清空队列」「应答 pull」�
 | `queueMicrotask(...)` 里写 | `true` | 拒绝 |
 | 回调里 `setTimeout(..., 5)` 里写 | `true` | 拒绝（ALS 上下文随 timer 一起传播） |
 | 事务**外**建的 `setTimeout` / `new AsyncResource()` 里写 | `undefined` | 可以通过 |
+| 事务**内**建的 `AsyncResource`，3s 后 `runInAsyncScope` 里写（2026-10-21 补测） | `true` | 拒绝 |
+| 事务**内**建的 `setTimeout`，**等事务关闭后** 5s 才触发（2026-10-21 补测） | `true` | 拒绝 |
+| 事务**内**用 `hmr.executing.exit(() => settings.update(...))`（2026-10-21 补测） | `undefined` | **可以通过** |
 
 最后一行是唯一的出路，但它要求调用方**持有一个建立于事务之外的锚点**。插件侧没有可靠的
 这样的锚点：`apply(ctx)` 本身就可能跑在配置重载事务里（`dsh-hmr/lib/index.js:289` 的
 `runReload` 也在 `runExclusive` 内），所以在启动期捕获的 `AsyncResource` 有可能一开始就
 带着 `true`。让每个订阅方去赌锚点的时机，不是一个可写进文档的规则。
 
+> **复跑补充（2026-10-21，隔离沙箱，实跑宿主 `0.2.1-rc.2`）**：
+> 1. 上面这张表在真事务里全部复现，且拒绝是**同步**的——实测 23–68ms 即失败、`revision` 零递增
+>    （`dsh-hmr/lib/index.js:749` 直接 `Promise.reject`，不进锁也不进 reconcile）。
+> 2. `runReload` 的行号请维护者按代次看：`0.2.0` 声明在 `:288`、它调 `runExclusive` 在 `:289`
+>    （原文只写 `:289` 容易被读成声明行）；`0.2.1` 对应 `:757` / `:758`。
+> 3. **更重要**：正文那段说的「唯一出路」指补测前表格的第五行（事务**外**建的 `setTimeout` /
+>    `new AsyncResource()`）；而今天其实已经存在一条更直的退出手腕——补测新增的 `executing.exit()`
+>    那一行，实测 1438–1524ms 写成功、`revision` 递增。它不需要调用方赌锚点
+>    时机。这直接改变下面「诉求一的修法 1」的性质：**不是请内核造新机制，而是把内核自己已经在
+>    用的能力（`dsh-hmr/lib/index.js:772`，0.2.0 是 `:303`）转正**。今天它只是没进类型面：
+>    `executing` 在 `@deepseek-ai/dsh-hmr/lib/types/index.d.ts:89` 声明为
+>    `private readonly executing`（同文件 `runExclusive` 是 public，`:101`），插件靠运行时字段访问
+>    才摸得到——我们不会把这种拿法当受支持用法，所以才提出诉求一。
+> 4. 还有一种**与事务无关**的写失败，请一并考虑：`atomic-write: timed out waiting for the writer
+>    lock`（`dsh-atomic-write/lib/index.js:208`，0.2.0 是 `:206`；上限
+>    `DEFAULT_LOCK_WAIT_MS = 2e3`，`:164` / 0.2.0 `:163`）。`dsh-config-editor/lib/index.js:72` 调
+>    `withFileLock` 时不传 options，所以两笔在事务外发起的写一旦重叠超过 2s，后到那笔就这样失败；
+>    一次事务外的写锁空闲时实测 191–332ms，与另一笔重叠可到 1.4–2.5s。它的报文与 nested 拒绝
+>    完全不同，但上层同样只看到一个被拒的 Promise。
+
 **我们建议的修法（按侵入性从小到大）**：
 
 1. **提供显式退出**：`dsh-hmr` 已经在自己的 `watchConfig` 里用了
-   `this.executing.exit(...)`（`dsh-hmr/lib/index.js:303`），把这个能力以受控形式暴露给
+   `this.executing.exit(...)`（`dsh-hmr/lib/index.js:303`，0.2.1 是 `:772`），把这个能力以受控形式暴露给
    订阅方即可（例如 `hmr.runDetached(fn)` 或 `ctx.settings.writeOutsideTransaction(fn)`），
-   并写明「事件回调内回写 settings 必须走它」。
+   并写明「事件回调内回写 settings 必须走它」。**2026-10-21 复跑更新**：这条不需要新机制——
+   运行时直接 `executing.exit()` 已经能用（实测写成功、`revision` 递增，见上面复跑补充第 3 条），
+   缺的只是它不在类型面上（`lib/types/index.d.ts:89` 的 `private readonly executing`）。
+   请把它从「内部实现细节」升为「有支持的公开面」，并说明它与 `runExclusive`（`types/index.d.ts:101`，
+   public）的关系；否则插件只能靠运行时字段访问，而那不构成为它兜底的契约。
 2. **把 `document-updated` 改成事务外 emit**（把 `describe()` 里那次 emit 排到当前事务
    结束后再广播）。代价是订阅者看到的事件可能落后于实际文档状态，但至少回调里的写入是
    合法动作，而不是注定失败的静默 no-op。注意 `SettingsForms.write()` 在 edit 回调内调
-   `describe()` 只为读一次 `descriptor.revision` 做比较（`dsh-settings/lib/index.js:510`）——
+   `describe()` 只为读一次 `descriptor.revision` 做比较（`dsh-settings/lib/index.js:509`；
+   原文记的 `:510` 是 `descriptor === void 0` 那行，已更正）——
    如果那次内部 `describe()` 不 emit（或者提供一个不发事件的内部读取面），这条链就断了。
+   **2026-10-21 复跑补充**：这条链其实**已经断了一半**——`write()` 在 `await edit(…)` 之后还有一次
+   `describe()`（`:536`），它跑在调用方上下文里、`getStore()` 为 `undefined`。所以插件侧今天同时
+   观察到「回调里写被拒」和「回调里写得进」，取决于事件由哪一次 `describe()` emit。请维护者明确
+   哪一种才是设计意图：现在这个「同一事件有两种可信度」的状态比全 FAIL 更难推理。
 3. **最低成本**：把 nested 拒绝从 `Promise.reject(new Error(...))` 换成带稳定码的失败
    （现在只有一句人读文本，上层无法可靠分诊），并在 `dsh-settings` 文档里明确写
    「settings 事件回调内不可再写 settings」。我们插件现在靠自己 `text.includes('cannot be nested')`
@@ -239,16 +302,53 @@ settings 写入，必被拒**。而「消费完清空队列」「应答 pull」�
 （`src/client/settings-result.ts` + `scripts/ops-write-verify-smoke.mjs`），文档见
 `docs/internals-cordis-settings-pitfalls.md` 陷阱 1。
 
+## 复跑更正（2026-10-21，实跑宿主 `0.2.1-rc.2` + `cordis@4.0.5`，隔离沙箱**实测**）
+
+这一节不改动上面的历史观测记录，只把复跑得出的四条事实集中列给维护者：
+
+1. **事务边界的判据没变，但 0.2.1 上它更宽。** `dsh-hmr` 的 `runExclusive` 函数体在
+   `0.2.0-rc.2:279-287` 与 `0.2.1-rc.2:748-756` 之间**逐字相同**（`diff` 空）；而
+   `0.2.1-rc.2` 的 `dsh-hmr/lib/index.js:1321` **新增**了一条反向断言
+   （`reconcileProfile` 里 `if (this.executing.getStore() !== true) throw "HMR profile reconciliation must run inside runExclusive"`，
+   0.2.0 没有这条，`reconcileProfile` 也不在 `dsh-hmr` 里）。它把「必须在事务内」也变成硬约束，
+   profile 级对账整体进事务 ⇒ 订阅方回调撞上 nested 拒绝的窗口**变大**。请把它当作诉求二的
+   严重度输入，而不是「新一代次已经修好」。
+2. **`document-updated` 的事件有两种可信度**（不是两个代次）：`dsh-settings/lib/index.js` 里
+   `describe()` 的调用点是①edit 回调内 `:509`（**在事务内**）、②`await edit(…)` 之后 `:536`
+   （**在事务外**）、③订阅方自己读的 `describe()`（事务外）。同一个回调被①触发时写不进、被②③
+   触发时写得进。这就是插件侧同时留下「四种推迟全 FAIL」和「handler 里写得进」两组矛盾记录的
+   原因（复核：issue #36 评论 `#issuecomment-37810`）。请明确哪一种才是设计意图。
+3. **诉求一的能力已经存在，只是没进类型面**：事务内
+   `root.get('hmr').executing.exit(() => settings.update(…))` 实测**写成功**（1438–1524ms、
+   `revision` 递增、`getStore()` 由 `true` 变 `undefined`）。`executing` 目前是
+   `@deepseek-ai/dsh-hmr/lib/types/index.d.ts:89` 的 `private readonly executing`，而
+   `runExclusive` 在同文件 `:101` 是 public；内核自己已经在 `dsh-hmr/lib/index.js:772`（0.2.0 `:303`）
+   用它。所以这条诉求是「把已有内部能力转正 + 写明用法」，成本远低于新机制。
+4. **还有第三种失败与事务无关**：`atomic-write: timed out waiting for the writer lock`
+   （`dsh-atomic-write/lib/index.js:208`，0.2.0 `:206`；`DEFAULT_LOCK_WAIT_MS = 2e3`，`:164` /
+   0.2.0 `:163`）。`dsh-config-editor/lib/index.js:72` 不传 options ⇒ 调用方无法调这个上限。
+   两笔**都在事务外**的写重叠超过 2s 就后到那笔失败；锁空闲时一次事务外写实测 191–332ms，重叠时
+   可达 1.4–2.5s（因为一次 volatile 写 = 一次全量 profile reconcile + 一次整文档原子写，见
+   `dsh-config-editor/lib/index.js:123` 全文写与 `:125` 写后 reconcile）。请求：给
+   `withFileLock` 的等待上限留出可配置面，或把「重试用尽」与「结构性拒绝」在报文里区分开
+   （这与诉求三的「带稳定码」是同一条）。
+
 ## 发出前要补的证据
 
 - [x] ~~区分「内核没收到」与「内核拒绝但没回传」~~ —— 已在源码层定位（见「环节在哪一层
       丢的」）：内核抛了、控制层分类了、远程面折进 error 分支兑现。仍需在真实宿主上复跑
       一遍 1-5 步以确认代次一致性，但结论不再依赖它。
-- [ ] 诉求二需要一次可控复现：在 `settings/document-updated` 回调里写同 ns 的另一个
-      volatile 字段，记录 `HMR transactions cannot be nested` 与四种「推迟」写法的结果
-      （我们的小样本见上面那张表，来自单一进程的运行日志）。
-- [ ] 确认观测所用的内核代次：本仓库同时支持 `0.1.1-rc.2` 到 `0.2.0-rc.2` 五代
-      （`package.json` peerDependencies），事故记录未标注代次。
+- [x] ~~诉求二需要一次可控复现~~ —— **2026-10-21 已做**：隔离沙箱实例（实跑宿主
+      `0.2.1-rc.2`，插件私有副本 + 临时 ALS 探针，整进程重启三轮），用 `hmr.runExclusive(…)`
+      建立真事务后逐条写同 ns 的 volatile 字段。结果：五种「推迟」写法全 FAIL（23–68ms、
+      `revision` 零递增），`executing.exit()` 一条 OK（1438–1524ms、`revision` 递增）；
+      事务外建立的锚点全 OK（boot 首笔 2.2–2.5s，其余 191–332ms）。逐条表见
+      `docs/internals-cordis-settings-pitfalls.md` 陷阱 1.5 与本文件「复跑补充」。
+- [x] ~~确认观测所用的内核代次~~ —— **2026-10-21 已核**：事故记录（372/373 那组）出自
+      `0.2.0-rc.2` 一代；本轮复跑在 `0.2.1-rc.2` 上判据不变（`dsh-hmr` `runExclusive` 函数体
+      两代逐字相同）。`dsh-settings` / `dsh-config-editor` 两代 `lib/index.js` 逐字节相同 ⇒
+      本文件引这两包的行号无需按代次换算；只有 `dsh-hmr`（`:271/:280/:283` ↔
+      `:736/:749/:752`）与 `dsh-atomic-write`（`:188/:206/:163` ↔ `:189/:208/:164`）需要标代次。
 - [ ] 用 `code === 'SETTINGS_CONFLICT'` 而不是文本匹配做一次判定，确认客户端能否拿到该码
       （当前插件代码靠 `/conflict|revision/i` 匹配文本，`src/client/index.ts:1086`）。
 
@@ -257,6 +357,13 @@ settings 写入，必被拒**。而「消费完清空队列」「应答 pull」�
 dsh-suggest-ghost 分支 `fix/issue-16-18-cleanup`，基线 commit `1eb708d`；本文行号与 diff
 核对于该基线。内核侧行号核对于本机
 `@deepseek-ai/dsh-settings@0.2.0-rc.2`（2026-10-19）。
+
+**2026-10-21 复跑记录**：内核侧在实跑宿主 `0.2.1-rc.2` + `cordis@4.0.5` 上重核（安装包
+`~/.npm/_npx/1e7f6d9597241db0/node_modules/@deepseek-ai/`），代码基线 `fe2dd17`。运行时观测来自
+隔离沙箱 `~/dsh-sbx-hmr`（`DSH_HOME` 独立、GUI 随机端口、profile 副本监听端口改走 `--rewrite`），
+ALS 探针只打进**沙箱私有副本** `~/dsh-sbx-hmr/plugin/lib/index.js`，**未回拷仓内**：仓内 `src/` 与
+`lib/` 与该 commit 的 HEAD 一致（`grep -c "__alsProbe" lib/index.js src/index.ts` 均为 0）。
+本文件「复跑更正」一节引用的实测数字都出自这三轮。
 
 ## 诉求三：三个默认值/文档层面的缺口，让插件作者以为"必须重启"
 

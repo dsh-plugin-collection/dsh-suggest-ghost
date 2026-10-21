@@ -20,7 +20,8 @@
 |---|---|
 | 已修 | 该代码在 `1eb708d` 上存在，本文核对过其 diff；未额外注明时不代表跑过运行时验证 |
 | 待宿主验证 | 代码已合入，但未完成一次真实宿主重启后的端到端观察 |
-| 内核契约 | 直接引自本机 `@deepseek-ai/dsh-settings@0.2.0-rc.2` 的源码行号（核对于 2026-10-19，换内核代次需重新核对） |
+| 内核契约 | 直接引自本机 `@deepseek-ai/dsh-settings@0.2.0-rc.2` 的源码行号（核对于 2026-10-19，换内核代次需重新核对；2026-10-21 已在**实跑宿主 `0.2.1-rc.2`** 逐包复跑，位移结论见下表下方） |
+| 0.2.1 沙箱实测 | 2026-10-21 在隔离沙箱实例（`~/dsh-sbx-hmr`，插件私有副本 + 临时 ALS 探针，**不是** live 宿主）跑出的「判定 / 耗时 / 是否 bump revision」，标注为「实测」；没在真实 LLM 回合上跑过的链路判断仍按「推断」记，别引用成结论 |
 | 插件经验 | 只有本插件观测到过，内核源码与文档未确认；不要当作内核保证引用 |
 
 ## 内核代次与锚点位置
@@ -33,14 +34,38 @@
 |---|---|---|
 | `dsh-hmr` `executing = new AsyncLocalStorage()` | `:271` | `:736` |
 | `dsh-hmr` `runExclusive` 的 `if (this.executing.getStore()) reject("HMR transactions cannot be nested")` | `:280` | `:749` |
-| `dsh-hmr` `executing.run(true, operation)` | `:284` | `:752` |
-| `dsh-settings` `describe()` 内 `emit("settings/document-updated")` | `:435` | `:435`（另有 `:461` 第二处 emit） |
-| `dsh-settings` `write()` 在 `configEditor.edit` 回调内 `this.describe()` | `:509-510` | `:509` |
+| `dsh-hmr` `executing.run(true, operation)` | `:283`（2026-10-20 记的 `:284` 是紧随其后的 `});`，**已更正**） | `:752` |
+| `dsh-hmr` `runExclusive` 的函数体整体 | `:279-287` | `:748-756`（**逐字未变**，见下） |
+| `dsh-hmr` `runReload` 声明 / 它调 `runExclusive` 那行 | `:288` / `:289` | `:757` / `:758` |
+| `dsh-hmr` `watchConfig` 里宿主自用的 `this.executing.exit(...)` | `:303` | `:772` |
+| `dsh-hmr` dispose 的 `if (!this.executing.getStore()) await this.operations` | `:337` | `:827` |
+| `dsh-hmr` `reconcileProfile` 的反向断言 `if (getStore() !== true) throw "…must run inside runExclusive"` | **无此断言**（0.2.0 的 `dsh-hmr` 里没有 `reconcileProfile`，profile 对账走 `dsh-app-boot` 的 `reconcileProfilePatches`，被调点 `:370`） | **`:1321`（0.2.1 新增）** |
+| `dsh-settings` `describe()` 内 `emit("settings/document-updated")` | `:435` | `:435`（另有 `:461` 第二处 emit；**两代都只有这两处，0.2.1 没新增 emit 点**） |
+| `dsh-settings` `write()` 里 `await configEditor.edit(entry, (raw, inherited) => {` | `:508` | `:508` |
+| `dsh-settings` `write()` 在 `configEditor.edit` 回调内 `this.describe()`（**2026-10-20 记的 `:509-510` / `:509` 误导出「两代有位移」，已更正**：`:509` 是 describe、`:510` 是 `descriptor === void 0` 抛错） | `:509` | `:509` |
 | `dsh-settings` CAS 判据 `expected !== void 0 && …` | `:511` | `:511` |
+| `dsh-config-editor` `edit()` / `withFileLock(…package.json…)` / `writeFileAtomic` 全文写 / 写后 `reconcileProfilePatches` / `runExclusive(run)` | `:69` `:72` `:123` `:125` `:134` | **同左**（整包 `lib/index.js` 逐字节相同） |
+| `dsh-atomic-write` `withFileLock` 声明 / 超时抛出 / `const DEFAULT_LOCK_WAIT_MS = 2e3` | `:188` / `:206` / `:163` | `:189` / `:208` / `:164` |
 | `dsh-app-boot` 唯一 logger exporter（`levels:{default:2}` + 只收 warn/error） | `:4053-4066` | `:4513-4515` |
 | `dsh/lib/bin.js` `reportStartupFailure`（startupLogs 唯一写盘处） | `:158` | `:158` |
 
 其余文档与代码注释**不再各自抄行号**，一律按符号引用并指回本表。
+
+**代次位移结论**（2026-10-21 在实跑宿主复跑核对，`cmp` + `diff` 直证，**实测**）：
+
+- `@deepseek-ai/dsh-settings` 与 `@deepseek-ai/dsh-config-editor` 的 `lib/index.js` 在
+  `0.2.0-rc.2` 与 `0.2.1-rc.2` 之间**逐字节相同**（都 544 / 138 行，`cmp` 通过）。⇒ 这两包
+  **不存在行号位移**：本表凡是把它们写成「0.2.0 一个值、0.2.1 另一个值」的行都是错的，已按同一
+  值合并。**凡引这两包行号的地方都要按这条复核**，别再当作代次差异去查。
+- `@deepseek-ai/dsh-hmr` 是唯一大位移：`lib/index.js` 672 → 1465 行。**位移 ≠ 语义变化**：
+  `runExclusive` 函数体两代逐字相同（`0.2.0:279-287` ↔ `0.2.1:748-756`，`diff` 空），
+  `runReload` / `watchConfig` 的 `executing.exit(...)` / dispose 三处也只是位置移动。
+- 但 `:1321` 那条**新增**的反向断言把「必须在事务内」也变成了硬约束（profile 级 `reconcileProfile`
+  整体进事务），所以 0.2.1 上的事务边界比 0.2.0 **更宽**：嵌套拒绝的命中窗口变大，不是变小。
+  任何「0.2.1 是不是把 nested 拒绝修好了」的判断都要先排除这一条。
+- `@deepseek-ai/dsh-atomic-write` 只有 1 行位移（新增 `node:timers/promises` 的 `setTimeout$1`
+  与 `options.signal`），锁等待上限 `2e3` 两代相同。
+- 本表 `dsh-app-boot` 与 `dsh/lib/bin.js` 两行沿用 2026-10-20 的核对，2026-10-21 本轮**未复核**。
 
 ## 通道长什么样
 
@@ -52,6 +77,15 @@
 两个字段都是整值覆盖：没有队列、没有版本协商，最后一次写入决定读者看到什么。
 `_ops` 之所以看起来像队列，是因为消费方读完立刻写回空值（`src/index.ts:730`），
 单条载荷在盘上停留的时间取决于写入节奏，不取决于协议。
+
+**本节的 `src/index.ts:` 行号是 `1eb708d` 基线的历史值**（见开头「怎么读这份文档」），别拿它们
+当前行定位。2026-10-21 在 `fe2dd17` 上按写入点复核到的对应位置（**实测**，按符号引用为准）：
+
+- `ctx.settings.update(ns, {_push})`（`:653`）→ 即时写 `src/index.ts:921`（`pushInFlight = settingsSvc.update(…)`），
+  事务外补写那份在 `:1055`；`pushToClient` 声明在 `:867`。
+- 「消费完立刻写回空值」（`:730`）→ 即时清空 `src/index.ts:1224`；`drainDeferred` 里排队后的清空在 `:1081`。
+- `settingsSvc.describe()` 取 `_ops`（`:268-291`）→ `readOps` 声明 `src/index.ts:449`（内部 `svc.describe()` 在 `:384`）。
+- `settings/document-updated(ns, revision)` 订阅（`:327`）→ `src/index.ts:537`。
 
 ## 陷阱 1：`mutate` 的第三个参数是「我读到的 revision」，不是「我要覆盖的版本」
 
@@ -168,13 +202,23 @@ issue #20 只记到了第 1 条的一半）：
 `HMR transactions cannot be nested`，而当时错误分支是 `/* noop */`，所以没人知道。
 
 **根因**（内核契约）：`SettingsForms.write()` 在 `configEditor.edit()` 的**回调内**调
-`this.describe()` 做版本比较（`dsh-settings/lib/index.js:510`），而 `describe()` 就地
+`this.describe()` 做版本比较（`dsh-settings/lib/index.js:509`；原文记的 `:510` 是下一行
+`descriptor === void 0` 的抛错，`edit(entry, …)` 这次调用本身在 `:508`——**两代行号相同**，见
+上面「代次位移结论」），而 `describe()` 就地
 `emit("settings/document-updated", ns, revision)`（同文件 :435）。`edit` 由 `dsh-hmr` 的
-`runExclusive` 串行化，事务标记来自 `executing.run(true, operation)`
-（`dsh-hmr/lib/index.js:271,284`），入口判据是
-`if (this.executing.getStore()) return Promise.reject(new Error("HMR transactions cannot be nested"))`（:280）。
-→ 插件的事件回调**整个跑在事务上下文里**，回调里（含它的 await 续体）发起的任何 settings
-写入都被拒。
+`runExclusive` 串行化（`dsh-config-editor/lib/index.js:134`），事务标记来自 `executing.run(true, operation)`
+（`dsh-hmr/lib/index.js:271,283`（0.2.0）/ `:736,752`（0.2.1）），入口判据是
+`if (this.executing.getStore()) return Promise.reject(new Error("HMR transactions cannot be nested"))`（`:280` / `:749`）。
+→ 由这一次 `describe()` 触发的那次事件回调**整个跑在事务上下文里**，回调里（含它的 await 续体）
+发起的任何 settings 写入都被拒（限定条件见下面的引用块：并非每次 `document-updated` 都在事务里）。
+
+> **限定条件（2026-10-21 实测更正，`dsh-settings/lib/index.js`）**：不是每一次
+> `document-updated` 都在事务里。`emit` 有两处（`:435`、`:461`），而 `describe()` 有**三类调用点**：
+> ① `write()` 的 edit 回调内（`:509`）——**在事务内**；② `write()` 里 `await edit(…)` **之后**那次
+> （`:536`）——跑在**调用方**上下文里，`getStore()` 是 `undefined`；③ 插件自己读的（`readOps` /
+> `liveSettings` 的 `svc.describe()`）——同样在事务外。所以同一段回调代码，被①触发时写不进、被
+> ②③触发时写得进。这就是历史上那两组互相矛盾的观测的真正来源（issue #36 的复核评论
+> `#issuecomment-37810` 有逐条实测表）。
 
 **「排到下一个 tick」逃不掉**（本机实测，不是推测）：`executing` 是 `AsyncLocalStorage`，
 上下文沿 await / `queueMicrotask` / **事务内建的 `setTimeout`** 继续传播，`getStore()` 仍是
@@ -183,6 +227,50 @@ issue #20 只记到了第 1 条的一半）：
 就可能跑在配置重载事务里），所以本仓库**没有**上排水队列，只做分诊留痕（`ops-clear-nested`
 / `push-nested` 两个 kind）。
 
+> **现状更正（2026-10-21）**：上面最后那半句已过期——`#22` 之后本仓库**已有**事务外排水队列：
+> `src/deferred-writes.ts` 的两槽队列（类在 `:244`，`pushSlot` / `clearSlot` 各一槽，`:245-246`，
+> 同类只留最新）+ `DEFERRED_PUMP_MS = 500` 的泵（`:52`，定时器在 `src/index.ts:499` 的 `apply()`
+> 同步续体里建立）+ `DEFERRED_PUSH_MAX_AGE_MS = 8000` 超龄淘汰（`:68`）+
+> `DEFERRED_MAX_ATTEMPTS = 8` 次数上限（`:79`）。
+> 「历史是历史」这句保留不动，是为了留下当时的决策状态；引用本节前先看这条更正。
+
+**真事务内的退路清单**（2026-10-21 隔离沙箱**实测**：用宿主公开的 `hmr.runExclusive(…)` 建立事务，
+与 `dsh-config-editor/lib/index.js:134` 的写入事务同一机制；判定列为 FAIL 的行错误报文一律
+`HMR transactions cannot be nested`，且 `revision` **0 递增**）：
+
+| 事务内的写法 | 判定 | 实测耗时 | bump revision |
+|---|---|---|---|
+| 回调里直接写 | FAIL | 23–31ms | 否 |
+| `await Promise.resolve()` 之后再写 | FAIL | 23–25ms | 否 |
+| `queueMicrotask(…)` 里写 | FAIL | 25–28ms | 否 |
+| 回调里 `setTimeout(…, 5)` 里写 | FAIL | 57–68ms | 否 |
+| 事务内 `new AsyncResource()`，3s 后 `runInAsyncScope` 里写 | FAIL | 24–26ms | 否 |
+| 事务内建 `setTimeout`，**事务关闭后** 5s 才触发 | FAIL | 26–30ms | 否 |
+| `hmr.executing.exit(() => 写)` | **OK** | 1438–1524ms | **是** |
+
+两点值得单独记：① 「等得久一点就逃出去了」被最后第二行直接证伪——定时器捕获的是**建它那一刻**的
+上下文，与触发时刻事务是否已关无关。② **退出手腕今天就在宿主里**：`executing` 在
+`@deepseek-ai/dsh-hmr/lib/types/index.d.ts:89` 声明成 `private readonly executing`（`runExclusive`
+倒是 public，`:101`），但运行时它就是普通类字段，插件侧
+`root.get('hmr').executing.exit(() => 写)` 实测能把 `store` 从 `true` 打成 `undefined` 并写成功。
+所以「诉求一：请提供显式退出」不是要内核新造机制，只是把这条路**转正**（见
+`docs/upstream-feedback-settings-proxy.md`）。依赖它的前提是它没进类型面契约，跨代次可能改名或
+真私有化 ⇒ 本仓库仍按「槽队列是主路径、`exit()` 待上游转正后再考虑替换」处理。
+
+**写失败有两种，本节的分诊只认了其中一种**（2026-10-21 **实测**，此前文档与代码都没记）：
+
+1. **结构性拒绝** `HMR transactions cannot be nested`：同步 `Promise.reject`（`dsh-hmr/lib/index.js:749`），
+   不进锁也不进 reconcile ⇒ 个位数到几十毫秒、零副作用、同一上下文重试多少次结果一样。
+2. **可重试的争用失败** `atomic-write: timed out waiting for the writer lock`：抛在
+   `dsh-atomic-write/lib/index.js:208`（0.2.0 是 `:206`），上限 `DEFAULT_LOCK_WAIT_MS = 2e3`
+   （`:164` / 0.2.0 `:163`）。`dsh-config-editor/lib/index.js:72` 调 `withFileLock` 时**不传
+   options**，所以这 2s 调用方调不了。它发生在 `getStore()` 为 `undefined` 的上下文里——写的人
+   完全在事务外，纯粹是两笔写撞在同一份 profile 文档上。一次事务外的写在锁空闲时实测
+   191–332ms，但和另一笔写在途重叠时能到 1.4–2.5s，因此**排在 500ms 泵上的补写有相当概率正好
+   撞进即时写的窗口**。
+   本仓库当前把非 `nested` 的失败按 `deferred-*-failed` 记（`src/index.ts:1095-1107`）并塞进同一个
+   8 次预算；把这两种病分开分诊是 `push-retry` 那条线在做的事。
+
 **同一条链上的连带怀疑（未验证，已单独报 lead）**：`handleComplete` 由该回调同步调起，它的
 LLM 续写 `await` 之后仍在同一个上下文里 → 那次 `pushToClient` 可能与 `_ops` 清空失败是
 **同一个拒绝**。若成立，#18「ghost 永不显示」的真实原因在这，而不是载荷被下一次推送覆盖。
@@ -190,6 +278,19 @@ LLM 续写 `await` 之后仍在同一个上下文里 → 那次 `pushToClient` �
 `handleComplete` → `:573` `generateCompletion(...).then(` → `:591` `pushToClient` →
 `flushPush` → `settingsSvc.update`。定论需要运行时计数，即 `push landed` 与 `push-nested`
 两条留痕的比例（这正是本轮补上留痕之后才能做的事）。
+
+> **这条怀疑的前提 today 不成立（2026-10-21 复核，`推断` 级，不是实测级结论）**：上面那句
+> 「`handleComplete` 由该回调同步调起」把链路接错了。续写的驱动链是
+> **回合事件**，不是 settings 事件——`turn/end` 判定 `src/index.ts:1340` → `handleTurnEnd`
+> `:1245` → 生成结果 `.then(` 续体 `:1292`（合并推送 `:1284`）→ `pushToClient` `:867` →
+> `flushPush` 的即时写 `:921`；这条链上**没有任何 `settings/document-updated` 订阅**。
+> 配套的两条实测：事务外建立的 await 续体写得进（同一沙箱里「回调内 `await 500ms` /
+> `await 3000ms` 再写」均 OK，315–1893ms，`revision` 递增，`getStore()` 为 `undefined`），
+> 而真事务内的五种退路全断（见上表）。
+> **前提写明**：这个「写得进」是在**没挂真实 LLM 回合**的隔离实例上得到的（沙箱里没有 GUI
+> client 连上来，用同形态的 await 续体作等价类替身）。要把它定论成「真实回合下 completion 的
+> await 续体不在事务内」，还需要一次真实回合观测：比 `push landed` 与 `push-nested` 两条留痕的
+> 比例。在那之前，#18「ghost 永不显示」的原因**不要**引用本条怀疑当作已证。
 
 **上游待确认**：见 `docs/upstream-feedback-settings-proxy.md` 第二个诉求（显式退出事务，
 或把 `document-updated` 改成事务外 emit）。
@@ -356,7 +457,11 @@ eventCtx.on('settings/document-updated', (ns, revision) => { /* ... */ });
    已被 `6dfcd78` 删掉输出，只剩计算，要复现得先把日志加回来。
 4. 宿主收到了但没动：查 `ops batch received` / `hotness ops applied` / `_ops batch dropped`
    三行留痕（陷阱 2）；再查 `_ops clear refused inside settings transaction`
-   （陷阱 1.5——清空失败会让同一份载荷被重读）。
+   （陷阱 1.5——清空失败会让同一份载荷被重读）。**读报文时分清两种失败**（陷阱 1.5 的
+   「写失败有两种」）：`HMR transactions cannot be nested` 是结构性拒绝（重试同一上下文多少次
+   都一样，个位数到几十毫秒），`atomic-write: timed out waiting for the writer lock` 是争用超时
+   （2s 上限，人在事务外，重试有意义）。只按 `/cannot be nested/i` 分诊会把后者全部归进
+   「其它错误、不排队」那一支。
 5. 宿主动了但客户端看不到：查载荷是否已被下一次推送覆盖（陷阱 3）。
 
 ## 上游待确认

@@ -34,6 +34,13 @@
  * 全为 UTF-16 码元比较（与 `commonPrefixLength` 同款），不做语言相关的归一化：
  * 幽灵渲染按字符对齐，越界或错位比"少显示一个字符"更糟。
  *
+ * ## 裁空之后：形态不得在同一次生成内翻转（Gitea #38 第 4 条）
+ *
+ * `:87` 那支裁空（`suffix === ''`）返回的是 `ok: false`，而调用方的分支顺序是
+ * 「续写 → 历史补全 → LLM 建议」，于是本帧会继续往下落，幽灵从 `inline` 掉到
+ * `history`。判据收在本文件末尾（`decideInlineForm`），理由：它唯一的证据就是这里
+ * 的归属前缀关系，拆开写就会变成第二份互相不约束的真相。
+ *
  * @module dsh-suggest-ghost/completion-align
  */
 
@@ -86,4 +93,116 @@ export function alignCompletion(
   // 裁完为空 = 你已经把整段续写打完了，此时没有幽灵可显示（不是错误）。
   if (suffix === '') return { ok: false, reason: 'empty-text' };
   return { ok: true, kind: 'extended', suffix, full: cur + suffix };
+}
+
+// ── 同一次生成内的形态判据（Gitea #38 第 4 条）──────────────────────────
+//
+// ## 要闭合的现象
+//
+// 上面 `:87` 那支裁空（你已经把整段续写打完了）返回 `ok: false`，而调用方
+// `computeGhostContent` 的分支顺序是「续写 → 历史补全 → LLM 建议」，于是本帧会继续往下
+// 落：幽灵从 `inline` 掉到 `history`，用户看到的是「灰色尾巴无声换成另一段不相干的文字」
+// ——形态在同一次生成里翻转了。
+//
+// ## 判据：只作用于「同一次生成的连续帧」，且不靠草稿逐字相同
+//
+// 「这次生成仍然在场」的证据**不是** `draft === payload.draft`（#33 之后「边打边等」是
+// 主路径，草稿会长）。真正的证据就是上面 `alignCompletion` 的**归属前缀**关系：
+// `draft === payload.draft || draft.startsWith(payload.draft)`。该关系在 `:72` 已被检查，
+// 只有先通过它才可能走到 `:87` 的裁空——所以「裁空」这一事实本身就意味着这次生成仍拥有
+// 这份草稿。判据因此不需要任何自造的 generation key，也不会与 #33 打架。
+//
+// | 状态 | 含义 | 历史补全可否回落 |
+// |---|---|---|
+// | `show` | 续写可显示 | ——（本来就不回落） |
+// | `consumed` | 载荷仍拥有这份草稿，只是被裁空 | **否**（宁可不显示） |
+// | `superseded` | 这次生成结束了（改中间/删字/清空/换会话/空文本/无载荷/开关关闭） | 是 |
+//
+// 取向与上面「宁可少显示，不可显错」一致：少一次建议可接受，显错形态不可接受。下一次宿主
+// 出新载荷、或用户把草稿改成 `superseded`，历史补全自然回来。LLM 建议那一支不在这里管：
+// `consumed` 只在草稿非空时成立，而 LLM 建议只在草稿为空时显示，两条路径天然不相交。
+
+/** 本帧「续写这一路」处于什么状态。`reason` 供留痕与冒烟断言。 */
+export type InlineFrameState =
+  | { readonly kind: 'show' }
+  | { readonly kind: 'consumed' }
+  | {
+      readonly kind: 'superseded';
+      readonly reason:
+        | 'inline-disabled'
+        | 'empty-draft'
+        | 'no-payload'
+        | 'other-session'
+        | 'no-text'
+        | 'draft-mismatch'
+        | 'empty-draft-after-align';
+    };
+
+/** 判据的入参：全部来自 `settings` + 当前草稿 + 一次 {@link alignCompletion} 的结果。 */
+export type InlineFrameInput = {
+  /** 停顿续写开关。 */
+  readonly inlineEnabled: boolean;
+  /** 当前草稿（原样，判据内部才 trim）。 */
+  readonly draft: string;
+  /** host 推来的续写载荷（`settings.completion`）。 */
+  readonly payload: { readonly draft: string; readonly text: string } | null | undefined;
+  /** 载荷是否属于当前会话（`settings.completionSessionId === currentId`）。 */
+  readonly payloadBelongsToCurrentSession: boolean;
+  /** `alignCompletion(...)` 的 `ok`；未对齐（载荷不属于本会话）时为 false。 */
+  readonly alignedOk: boolean;
+  /** `alignCompletion(...)` 的失败理由；`ok` 时为 null。 */
+  readonly alignedReason: 'draft-mismatch' | 'empty-text' | 'empty-draft' | null;
+};
+
+/**
+ * 这份载荷当前是否仍然**拥有**草稿——即 #33 的「草稿未变 / 末尾继续打字」关系。
+ *
+ * 只在前置判据成立时才算拥有；导出它是因为冒烟要能单独钉住这条，而不必借道
+ * `alignCompletion` 的实现细节。
+ */
+export function ownsDraftByAlignmentContract(draft: string, payloadDraft: string): boolean {
+  return draft === payloadDraft || draft.startsWith(payloadDraft);
+}
+
+/** 给一次生成定状态。顺序与 `computeGhostContent` 的守卫一致，先排除「根本没有续写在场」。 */
+export function classifyInlineFrame(input: InlineFrameInput): InlineFrameState {
+  if (!input.inlineEnabled) return { kind: 'superseded', reason: 'inline-disabled' };
+  if (input.draft.trim() === '') return { kind: 'superseded', reason: 'empty-draft' };
+  const payload = input.payload;
+  if (payload === null || payload === undefined) return { kind: 'superseded', reason: 'no-payload' };
+  if (!input.payloadBelongsToCurrentSession) return { kind: 'superseded', reason: 'other-session' };
+  // 宿主推了空续写：这不是一次「生成」，没有形态可保护。
+  if (payload.text === '') return { kind: 'superseded', reason: 'no-text' };
+  if (input.alignedOk) return { kind: 'show' };
+  // 裁空：`alignCompletion` 只在「载荷仍拥有草稿」时才可能走到它那步裁剪。
+  if (input.alignedReason === 'empty-text') {
+    return ownsDraftByAlignmentContract(input.draft, payload.draft)
+      ? { kind: 'consumed' }
+      : { kind: 'superseded', reason: 'draft-mismatch' };
+  }
+  if (input.alignedReason === 'empty-draft') return { kind: 'superseded', reason: 'empty-draft-after-align' };
+  return { kind: 'superseded', reason: 'draft-mismatch' };
+}
+
+/** 本帧的形态裁决。 */
+export type InlineFormVerdict = {
+  /** 续写本身可否显示。 */
+  readonly showInline: boolean;
+  /** 可否回落到历史补全。 */
+  readonly allowHistory: boolean;
+  /** 非 null = 本帧被扣住（同代不得翻转），值就是留痕的理由。 */
+  readonly hold: string | null;
+};
+
+/**
+ * 「续写 → 历史补全」的回落判据：只有 `consumed` 扣住，其余一切保持现状。
+ *
+ * 注意 LLM 建议那一支不在这里管：草稿非空时才可能 `consumed`，而 LLM 建议只在草稿
+ * 为空时显示，两条路径天然不相交。
+ */
+export function decideInlineForm(input: InlineFrameInput): InlineFormVerdict {
+  const state = classifyInlineFrame(input);
+  if (state.kind === 'show') return { showInline: true, allowHistory: true, hold: null };
+  if (state.kind === 'consumed') return { showInline: false, allowHistory: false, hold: 'inline-consumed' };
+  return { showInline: false, allowHistory: true, hold: null };
 }
