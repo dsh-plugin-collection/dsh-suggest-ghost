@@ -9,8 +9,9 @@ import type { Volatile } from '@deepseek-ai/cosmokit';
 import {
   BlockAssembler,
   createUserMessage,
+  ReasoningEffortId,
 } from '@deepseek-ai/dsh-llm';
-import type { FinishReason, GenerateOptions, Message } from '@deepseek-ai/dsh-llm';
+import type { FinishReason, GenerateOptions, Message, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { Session } from '@deepseek-ai/dsh-session';
 import { deriveEventMessage } from '@deepseek-ai/dsh-session/surface';
 import { deadline, MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout';
@@ -100,6 +101,14 @@ export interface Config {
   contextSummaryEnabled?: boolean;
   /** 上下文摘要最大字符数。 */
   contextSummaryChars?: number;
+  /**
+   * 「下一条建议」那次辅助调用的推理档位（#35）。空串 = **不传**
+   * `GenerateOptions.reasoningEffort`，保持继承语义（判据与 provider/model 同套，
+   * 见 `effortOf`）；非空 = 按适配器注册的档位 id 原样透传。
+   */
+  suggestionReasoningEffort?: string;
+  /** 停顿续写那次辅助调用的推理档位（#35），语义同 `suggestionReasoningEffort`。 */
+  completionReasoningEffort?: string;
 }
 
 /**
@@ -123,6 +132,10 @@ export interface EditableConfig {
   inlineDelayMs?: Volatile<number> | number;
   inlineMinChars?: Volatile<number> | number;
   inlineMaxChars?: Volatile<number> | number;
+  /** 建议调用的推理档位（#35）；空串 = 继承，见 Config 的同名注释。 */
+  suggestionReasoningEffort?: Volatile<string> | string;
+  /** 续写调用的推理档位（#35）；空串 = 继承。 */
+  completionReasoningEffort?: Volatile<string> | string;
 }
 
 /** 内核解析后的插件配置：策略字段是裸值，可调字段是引用。 */
@@ -160,6 +173,8 @@ export type FlatConfig = Config & {
   inlineMaxChars: number;
   contextSummaryEnabled: boolean;
   contextSummaryChars: number;
+  suggestionReasoningEffort: string;
+  completionReasoningEffort: string;
 };
 
 /**
@@ -184,6 +199,12 @@ export function flattenConfig(config: ResolvedPluginConfig): FlatConfig {
     inlineMaxChars: readVolatile(config.inlineMaxChars, 160),
     contextSummaryEnabled: readVolatile(config.contextSummaryEnabled, true),
     contextSummaryChars: readVolatile(config.contextSummaryChars, 1500),
+    // 档位默认**空串 = 不传**（#35 的实测结论：档位按 provider/model 声明，
+    // 带一个模型没有的档位会让整次调用在发请求前就失败）。与 index.ts 的 schema
+    // `.default('')` 同值，五处登记点由 scripts/reasoning-effort-smoke.mjs 逐处核对。
+    // 空串在这里是**合法值**而不是缺失——它表达的就是「继承路由自己的默认档位」。
+    suggestionReasoningEffort: readVolatile(config.suggestionReasoningEffort, ''),
+    completionReasoningEffort: readVolatile(config.completionReasoningEffort, ''),
   } as FlatConfig;
 }
 
@@ -221,6 +242,8 @@ export function resolveConfig(config: Config): Config {
     wordAccept: readVolatile(raw.wordAccept, true),
     languageMode: readVolatile(raw.languageMode, 'auto'),
     uiLocaleWeight: readVolatile(raw.uiLocaleWeight, 100),
+    suggestionReasoningEffort: readVolatile(raw.suggestionReasoningEffort, ''),
+    completionReasoningEffort: readVolatile(raw.completionReasoningEffort, ''),
   };
   const int = (name: string): number => {
     const n = readVolatile<unknown>(value[name], undefined);
@@ -268,8 +291,205 @@ export function resolveConfig(config: Config): Config {
     && (typeof value.inlineMaxChars !== 'number' || !Number.isInteger(value.inlineMaxChars as number) || (value.inlineMaxChars as number) <= 0)) {
     throw new Error('dsh-suggest-ghost: inlineMaxChars must be a positive integer');
   }
+  // 推理档位：**空串合法**（= 不传，继承路由默认档位），与 provider/model 同一套
+  // 「留空即继承」的判据。这里只挡类型错误——具体档位 id 由适配器自己校验
+  // （dsh-llm 在不支持的档位上抛 UNSUPPORTED_REASONING_EFFORT，见 effortOf 的注释）。
+  for (const name of ['suggestionReasoningEffort', 'completionReasoningEffort'] as const) {
+    if (value[name] !== undefined && typeof value[name] !== 'string') {
+      throw new Error(`dsh-suggest-ghost: ${name} must be a string (empty = inherit)`);
+    }
+  }
   return deepFreeze(Object.assign({}, value)) as unknown as Config;
 }
+
+/**
+ * 配置的档位值 → 该不该往 `GenerateOptions` 上写 `reasoningEffort`。
+ *
+ * 判据与 {@link routeOf} 的 provider/model 完全同套：**空串（含纯空白）= 不传**，
+ * 让内核沿用路由自己的默认档位；非空才品牌化成 `ReasoningEffortId` 传下去。
+ * 之所以不能「传了再说」：dsh-llm 的 `resolveCallWithInfo` 对**不支持**的显式档位
+ * 直接抛 `UNSUPPORTED_REASONING_EFFORT`（`@deepseek-ai/dsh-llm/lib/index.js:2178`），
+ * 一次都不重试就整轮失败——把 `low` 硬塞给一个不支持推理档位的模型，代价是
+ * 「这条会话彻底没有建议」，而不是「档位被忽略」。
+ * @returns 品牌化后的档位；空配置返回 undefined（= 调用方不写这个键）。
+ */
+export function effortOf(raw: string | undefined): ReasoningEffortId | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  // 品牌化只是给 string 打类型标记、不做校验（dsh-llm 的 brandString），校验在适配器那一侧。
+  return trimmed.length === 0 ? undefined : ReasoningEffortId(trimmed);
+}
+
+/**
+ * 请求档位的留痕写法。参数是**当前这次尝试实际要发的档位**（不是配置原文）：
+ * 档位被拒后退一档重发，那一次尝试的请求里根本没有这个键，留痕就该显示 `inherit`。
+ */
+export function effortLabel(effort: ReasoningEffortId | undefined): string {
+  return effort === undefined ? 'inherit' : String(effort);
+}
+
+/**
+ * 这个错误是不是「档位不受该模型支持」。
+ *
+ * 判据要**同时**命中「档位」与「不支持」两个要素，两个方向都会出错：
+ *  - 只匹配「不支持」→ 把 `provider/model must be supplied together` 那种真配置错
+ *    误判成档位问题，悄悄退一档、把该暴露的问题盖掉；
+ *  - 只匹配「档位」→ 把「档位格式非法」之类的真错误也吞成降级。
+ * 所以先认权威的错误码（dsh-llm 用 `HarnessError.code` 分派，见
+ * `lib/types/error.d.ts` 里 `errorChain` 的注释：**never parse the result; route on code**），
+ * 没有 code 时再要求报文里两个要素同时出现——档位校验有两条来路：`prepareCall` 直接抛，
+ * 或者被 `finishError` 从终止帧的 `failure.code/message` 还原成 Error。
+ */
+export function isUnsupportedEffort(error: unknown): boolean {
+  const box = error as { code?: unknown; message?: unknown } | null | undefined;
+  if (typeof box?.code === 'string' && box.code === UNSUPPORTED_EFFORT_CODE) return true;
+  const message = typeof box?.message === 'string' ? box.message : '';
+  if (message.includes(UNSUPPORTED_EFFORT_CODE)) return true;
+  return EFFORT_HINT.test(message) && UNSUPPORTED_HINT.test(message);
+}
+
+/** `dsh-llm` 对不受支持的推理档位使用的错误码。 */
+const UNSUPPORTED_EFFORT_CODE = 'UNSUPPORTED_REASONING_EFFORT';
+/** 要素一：这条错误说的是**档位**。实测报文形态：`does not support reasoning effort "low"`。 */
+const EFFORT_HINT = /reasoning[ _-]?effort|effort\s*["']/i;
+/** 要素二：说的是「不支持」而不是别的失败。 */
+const UNSUPPORTED_HINT = /unsupported|not support|does not support|no such|invalid effort/i;
+
+/**
+ * 一次流式读取的增量画像（#39 的观测面）。
+ *
+ * 存在的理由：过去留痕只有一个端到端 `in Nms`，于是「慢在首块」与「慢在收尾」、
+ * 「模型根本没输出」与「输出了但被净化链丢掉」在观测上同形。档位（#35）一上来
+ * 就要靠这几个数判断有没有用，所以先把它们取回来。
+ *
+ * TS 字段用 camelCase（本仓惯例），**留痕里的键用 lead 指定的 snake_case**
+ * （`first_text_delta_ms` / `effort_requested` / `effort_rejected`），映射只发生在
+ * `formatStreamMetrics` 一处；两边名字不同是有意的，改留痕键名要动 sandbox.greps。
+ */
+export interface StreamMetrics {
+  /**
+   * 首个**正文**增量（`text-delta`）距本次尝试起点的毫秒数；-1 = 一个字都没等到。
+   * 这是「用户还要干等多久才看见东西」。
+   */
+  firstTextDeltaMs: number;
+  /**
+   * 首个**推理**增量（`reasoning-delta`）距本次尝试起点的毫秒数；-1 = 没有推理增量
+   * （非推理模型本来就是 -1）。
+   *
+   * 必须与 `firstTextDeltaMs` **分开报**：推理模型先出 reasoning、很久之后才出正文。
+   * 沙箱实测 qfmodel 缺省档 first-reasoning 806ms 而 first-text 1410ms，efficient
+   * 更夸张（首块 6147ms）。合成一个「首块」就会把「用户在干等」记成正常。
+   */
+  firstReasoningDeltaMs: number;
+  /** 正文增量（`text-delta`）条数。 */
+  contentDeltas: number;
+  /** 正文增量累计字符数。 */
+  contentChars: number;
+  /** 推理增量（`reasoning-delta`）条数；非推理模型恒 0。 */
+  reasoningDeltas: number;
+  /** 推理增量累计字符数。 */
+  reasoningChars: number;
+  /** 终止原因（`BlockAssembler.finish.kind`）；`none` = 没收到 finish 帧。 */
+  finishKind: string;
+  /**
+   * **外层**尝试序号（1 起）。
+   * 路由内部的自我重放不算在这里（opencode2dsh 在「只出 reasoning 且 max-tokens
+   * 收尾」时会改用 off 重打一遍并合并 usage，见 @opencode2dsh/dsh-plugin/lib/index.js:1437-1446），
+   * 插件观测不到它，报出来就是假数。
+   */
+  attempts: number;
+  /**
+   * 插件**请求**的档位；`inherit` = 没配置或配置为空串（不传）。
+   * 叫「请求的」而不是「生效的」：终值由宿主 `resolveCallWithInfo` 决定，插件侧不可观测。
+   */
+  effortRequested: string;
+  /** 本次生成里档位是否被适配器拒过（拒过 = 退一档、不带档位重发了一次）。 */
+  effortRejected: boolean;
+  /** 本次调用的收口分类，用于区分「空回复」与「被过滤」。 */
+  outcome: StreamOutcome;
+}
+
+/**
+ * 收口分类：
+ *  - `ok` 有可用产出；
+ *  - `empty` 模型**一个字都没吐**（正文块拼起来 trim 后为空）；
+ *  - `filtered` 模型吐了东西，但净化/过滤链把它丢掉了。
+ * 这一分别是 #39 要的第 3 条：`empty` 指向提示词/档位/路由，`filtered` 指向净化链。
+ */
+export type StreamOutcome = 'ok' | 'empty' | 'filtered';
+
+/** 建一份增量画像（每次尝试一份；重试不复用，见各生成函数的循环体）。 */
+export function createStreamMetrics(effortRequested: string): StreamMetrics {
+  return {
+    firstTextDeltaMs: -1,
+    firstReasoningDeltaMs: -1,
+    contentDeltas: 0,
+    contentChars: 0,
+    reasoningDeltas: 0,
+    reasoningChars: 0,
+    finishKind: 'none',
+    attempts: 1,
+    effortRequested,
+    effortRejected: false,
+    outcome: 'empty',
+  };
+}
+
+/**
+ * 把一个流式增量块记进画像。**纯函数**（除入参外不碰任何东西），这样
+ * `scripts/stream-metrics-smoke.mjs` 能离线逐块喂假数据断言计数，
+ * 不需要真 LLM——历史上这几条判据散在 async 闭包里，离线一条都测不到。
+ * @param metrics - 目标画像（就地累加）。
+ * @param chunk - dsh-llm 的原始流块。
+ * @param startedAtMs - 本次尝试的起点（`Date.now()` 量纲）。
+ * @param nowMs - 当前时刻（由调用方给，测试里是假时钟）。
+ */
+export function observeChunk(
+  metrics: StreamMetrics,
+  chunk: StreamChunk,
+  startedAtMs: number,
+  nowMs: number,
+): void {
+  switch (chunk.type) {
+    case 'text-delta':
+      if (metrics.firstTextDeltaMs < 0) metrics.firstTextDeltaMs = nowMs - startedAtMs;
+      metrics.contentDeltas += 1;
+      metrics.contentChars += chunk.text.length;
+      break;
+    case 'reasoning-delta':
+      // 单独记：推理增量到得早、正文到得晚，两者之差就是「用户在盯着一行字等」。
+      if (metrics.firstReasoningDeltaMs < 0) metrics.firstReasoningDeltaMs = nowMs - startedAtMs;
+      metrics.reasoningDeltas += 1;
+      metrics.reasoningChars += chunk.text.length;
+      break;
+    case 'finish':
+      metrics.finishKind = chunk.reason.kind;
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 把画像渲染成留痕后缀（`k=v` 串）。
+ *
+ * 键名是 lead 在 #39 上指定的 snake_case（`first_text_delta_ms` /
+ * `effort_requested` / `effort_rejected`），与 TS 字段名不同——映射只在这里发生一次。
+ * `effort_rejected` **恒打印** 0/1（不是「有才打」），因为它的用途是「这类失败有多少」
+ * 的计数，缺省写法会让 grep 出来的样本自选择成失败样本。
+ *
+ * 只打计数与耗时，**不打任何正文**：续写正文是模型对用户草稿的模仿，抄进 tee 日志
+ * 等于把用户输入的第二份副本落到盘上（这条约束见 `src/index.ts` 的续写留痕）。
+ */
+export function formatStreamMetrics(m: StreamMetrics): string {
+  return `first_text_delta_ms=${m.firstTextDeltaMs} first_reasoning_delta_ms=${m.firstReasoningDeltaMs}`
+    + ` content_deltas=${m.contentDeltas} content_chars=${m.contentChars}`
+    + ` reasoning_deltas=${m.reasoningDeltas} reasoning_chars=${m.reasoningChars}`
+    + ` finish_kind=${m.finishKind} attempts=${m.attempts}`
+    + ` effort_requested=${m.effortRequested} effort_rejected=${m.effortRejected ? 1 : 0}`
+    + ` outcome=${m.outcome}`;
+}
+
 
 /** 建议生成指令：只预测用户下一条提示词，禁止生成内容或元文本。 */
 export function systemPrompt(maxSuggestionChars: number, language: string): string {
@@ -474,6 +694,9 @@ async function backoff(signal: AbortSignal, ms: number): Promise<void> {
  * EMPTY_RESPONSE/RATE_LIMIT/SERVER/TIMEOUT/TRANSPORT 类瞬时错误有 5 次重试，
  * 而建议调用是单发——不稳定窗口里会整轮静默失败（实测发生过）。被外部
  * 中止（新回合取代/卸载）时不重试。
+ *
+ * 返回的 `metrics` 只用于留痕（#39），不参与任何判据：调用方拿到它就打一行
+ * `suggestion generated/dropped …`。
  */
 export async function generateSuggestion(
   ctx: Context,
@@ -485,7 +708,11 @@ export async function generateSuggestion(
   languageMode?: string,
   uiLocaleWeight?: number,
   lastLanguage?: string,
-): Promise<{ suggestion: SuggestGhostSuggested | undefined; language: string }> {
+): Promise<{
+  suggestion: SuggestGhostSuggested | undefined;
+  language: string;
+  metrics: StreamMetrics;
+}> {
   signal.throwIfAborted();
   const startedAt = Date.now();
   // buildTranscript 已按 maxInputBytes 做 UTF-8 字节兜底截断，这里不再需要
@@ -525,7 +752,24 @@ export async function generateSuggestion(
   // rc.7 禁止未标记 ignorable 的自定义事件落日志，且建议经 settings `_push` 实时送达 client。
 
   const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  // #35 请求档位。`undefined` = 配置留空 = **不往请求上写 `reasoningEffort`**
+  // （继承语义，判据与 {@link routeOf} 的 provider/model 同套）。
+  //
+  // **默认必须是留空**：档位是**按 provider 按 model** 声明的，实测 qoder-route 的
+  // 18 个模型里 9 个没有 `reasoningEfforts`（efficient :456 / fast :468 / lite :427，
+  // probe-llm 2026-10-21）。给这类模型带任何档位，适配器在**发请求之前**就返回
+  // UNSUPPORTED_REASONING_EFFORT（实测 0-20ms 失败），而终止帧的 error 会被下面当成
+  // 真实失败抛出 —— 一个非空默认值等于把整条建议路径配成「白等三轮退避、必然失败」。
+  // 同理也不实现「传 off/none 关思考」：qfmodel 连 off 都被拒（profile 只声明
+  // low/medium/xhigh，:487-490），只有显式声明了 off 的路由才行（如 :270 的 atria）。
+  let effort = effortOf(config.suggestionReasoningEffort);
+  /** 本次生成里档位是否被拒过（拒过 = 已退一档、不带档位重发）。 */
+  let effortRejected = false;
+  // 用 while 而不是 for：档位被拒后的那次重发**不占用常规重试预算**（下面那处
+  // `attempt -= 1`），它不是瞬时故障的再一次尝试，而是同一次调用的退一档重发。
+  let attempt = 0;
+  while (attempt < maxAttempts) {
+    attempt += 1;
     // 每次尝试独立截止时间：timeoutMs 是「单次调用」预算而非三次总和。
     using callDeadline = deadline(signal, config.timeoutMs, SUGGEST_TIMEOUT_CODE);
     const options: GenerateOptions = deepFreeze({
@@ -536,12 +780,23 @@ export async function generateSuggestion(
       maxTokens: config.maxOutputTokens,
       sessionId: session.id,
       signal: callDeadline.signal,
+      // 条件展开而不是写 `reasoningEffort: effort`：不传时这个键必须**不存在**。
+      // 留一个 `undefined` 在对象上，下游 `callConfigEquals` 与适配器看到的仍是「带档位」。
+      ...(effort === undefined ? {} : { reasoningEffort: effort }),
     });
+    // 每次尝试一份新画像：首块延迟的起点是**本次尝试**，重试不把第一次的慢首块
+    // 记到第二次头上；`attempts` 记的是第几次**外层**尝试收的口（路由内部自己重放
+    // 的那一次观测不到，也不算在这里）。
+    const metrics = createStreamMetrics(effortLabel(effort));
+    metrics.attempts = attempt;
+    metrics.effortRejected = effortRejected;
+    const attemptStartedAt = Date.now();
     try {
       callDeadline.signal.throwIfAborted();
       const assembler = new BlockAssembler();
       for await (const chunk of ctx.llm.stream(options)) {
         callDeadline.signal.throwIfAborted();
+        observeChunk(metrics, chunk, attemptStartedAt, Date.now());
         assembler.push(chunk);
       }
       callDeadline.signal.throwIfAborted();
@@ -557,8 +812,12 @@ export async function generateSuggestion(
         .join(' ');
       const cleaned = cleanSuggestion(text);
       if (cleaned.length === 0 || shouldFilterSuggestion(cleaned)) {
-        // 空回复或不合格回复 = 正常「无建议」。归因日志：帮助诊断「这轮怎么没建议」。
-        return { suggestion: undefined, language };
+        // 无建议 = 正常态，不是失败（所以不走 traceFault，走常规耗时行的 outcome）。
+        // 归因就在这里分叉：模型一个字没吐 = `empty`（指向提示词/档位/路由）；
+        // 吐了但净化/过滤链丢掉 = `filtered`（指向 sanitize 那一侧）。原注释声称
+        // 这里有「归因日志」而代码里一个字都没有，#39 就是把它兑现。
+        metrics.outcome = text.trim().length === 0 ? 'empty' : 'filtered';
+        return { suggestion: undefined, language, metrics };
       }
       const { text: suggestion, truncated } = sanitizeSuggestion(cleaned, config.maxSuggestionChars);
       const suggested: SuggestGhostSuggested = {
@@ -568,11 +827,27 @@ export async function generateSuggestion(
         text: suggestion,
         truncated,
         acceptKey: config.acceptKey ?? 'Tab',
+        // 帧语义：本期宿主一次生成只出一帧，即终帧（frame 从 1 起，见 domain.ts）。
+        frame: 1,
+        final: true,
       };
-      return { suggestion: suggested, language };
+      metrics.outcome = 'ok';
+      return { suggestion: suggested, language, metrics };
     } catch (error) {
-      // 外部中止（新回合取代 / 卸载）不重试；最后一次尝试失败则原样抛出。
-      if (signal.aborted || attempt >= maxAttempts) throw error;
+      // 外部中止（新回合取代 / 卸载）不重试。
+      if (signal.aborted) throw error;
+      // **失败即降级一次**（lead 在 #35 上定的判据）：档位不被这个模型支持时，
+      // 当场撤掉档位、立刻重发一次不带档位的请求，不退避、不进常规重试链
+      // （`attempt -= 1` 把刚才那次还回去）。插件无法预知模型声明了哪些档位，
+      // 所以这条路只能靠「试了再说」，但只试一档、只多一次请求。
+      if (isUnsupportedEffort(error) && effort !== undefined) {
+        effort = undefined;
+        effortRejected = true;
+        attempt -= 1;
+        continue;
+      }
+      // 最后一次尝试失败则原样抛出。
+      if (attempt >= maxAttempts) throw error;
       await backoff(signal, 1200 * attempt);
     }
   }
@@ -600,7 +875,7 @@ export async function generateCompletion(
   languageMode?: string,
   uiLocaleWeight?: number,
   lastLanguage?: string,
-): Promise<{ text: string | undefined; language: string }> {
+): Promise<{ text: string | undefined; language: string; metrics: StreamMetrics }> {
   signal.throwIfAborted();
   const startedAt = Date.now();
   const route = routeOf(session, config);
@@ -638,7 +913,13 @@ export async function generateCompletion(
   })];
 
   const maxAttempts = 2;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  // 档位通路同 generateSuggestion（默认留空 = 不传；被拒则退一档重发、不占重试预算），
+  // 只是读的是 completionReasoningEffort——续写在用户停手等待的路径上，更慢不起。
+  let effort = effortOf(config.completionReasoningEffort);
+  let effortRejected = false;
+  let attempt = 0;
+  while (attempt < maxAttempts) {
+    attempt += 1;
     using callDeadline = deadline(signal, config.timeoutMs, SUGGEST_TIMEOUT_CODE);
     const options: GenerateOptions = deepFreeze({
       provider: route.provider,
@@ -648,12 +929,18 @@ export async function generateCompletion(
       maxTokens: config.maxOutputTokens,
       sessionId: session.id,
       signal: callDeadline.signal,
+      ...(effort === undefined ? {} : { reasoningEffort: effort }),
     });
+    const metrics = createStreamMetrics(effortLabel(effort));
+    metrics.attempts = attempt;
+    metrics.effortRejected = effortRejected;
+    const attemptStartedAt = Date.now();
     try {
       callDeadline.signal.throwIfAborted();
       const assembler = new BlockAssembler();
       for await (const chunk of ctx.llm.stream(options)) {
         callDeadline.signal.throwIfAborted();
+        observeChunk(metrics, chunk, attemptStartedAt, Date.now());
         assembler.push(chunk);
       }
       callDeadline.signal.throwIfAborted();
@@ -669,11 +956,25 @@ export async function generateCompletion(
         .join(' ');
       const text = sanitizeCompletion(raw, draft, inlineMaxChars);
       if (text === undefined) {
-        return { text: undefined, language };
+        // 同 generateSuggestion：空回复与「被净化链丢掉」必须分成两种 outcome。
+        // 判据是**送进净化链之前的原文**：原文就没有字 = empty；有字而净化后没了
+        // （stripDraftEcho 裁空、形态兜底拦下）= filtered。`sanitizeCompletion` 本身
+        // 不区分这两者，也不该区分——区分它是留痕层的职责。
+        metrics.outcome = raw.trim().length === 0 ? 'empty' : 'filtered';
+        return { text: undefined, language, metrics };
       }
-      return { text, language };
+      metrics.outcome = 'ok';
+      return { text, language, metrics };
     } catch (error) {
-      if (signal.aborted || attempt >= maxAttempts) throw error;
+      if (signal.aborted) throw error;
+      // 失败即降级一次：撤档位、立刻重发，不退避、不占重试预算。
+      if (isUnsupportedEffort(error) && effort !== undefined) {
+        effort = undefined;
+        effortRejected = true;
+        attempt -= 1;
+        continue;
+      }
+      if (attempt >= maxAttempts) throw error;
       await backoff(signal, 800 * attempt);
     }
   }

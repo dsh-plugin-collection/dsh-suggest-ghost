@@ -44,6 +44,13 @@ export interface GhostPushPayload {
         readonly text: string;
         readonly truncated: boolean;
         readonly acceptKey: string;
+        /**
+         * 单次生成内的帧号（>=1，单调；见 domain.ts 的 SuggestGhostSuggested）。
+         * host 侧由 `pushToClient` 统一补齐（缺省 1），所以这个键在载荷里**恒在**。
+         */
+        readonly frame: number;
+        /** 是否终帧（本期恒 true）。 */
+        readonly final: boolean;
     } | null;
     /** 建议所属会话（null = 无有效建议）。 */
     readonly suggestionSessionId: string | null;

@@ -43,6 +43,7 @@ export interface PluginConfigValues {
     provider: Volatile<string>;
     model: Volatile<string>;
     llmEnabled: Volatile<boolean>;
+    suggestionReasoningEffort: Volatile<string>;
     historyEnabled: Volatile<boolean>;
     historyCrossSession: Volatile<boolean>;
     historyMaxEntries: Volatile<number>;
@@ -51,6 +52,7 @@ export interface PluginConfigValues {
     inlineDelayMs: Volatile<number>;
     inlineMinChars: Volatile<number>;
     inlineMaxChars: Volatile<number>;
+    completionReasoningEffort: Volatile<string>;
     wordAccept: Volatile<boolean>;
     acceptKey: Volatile<string>;
     languageMode: Volatile<string>;
@@ -92,6 +94,21 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
     model: z<string, string, "volatile-defined">;
     /** LLM 下一条建议开关（默认开）；关闭后每回合不再调用建议模型。 */
     llmEnabled: z<boolean, boolean, "volatile-defined">;
+    /**
+     * 「下一条建议」这次辅助调用的推理档位（#35）。
+     *
+     * **默认空串 = 不传 = 沿用路由自己的默认档位**，不是 `low`。理由实测过：
+     * 档位是**按 provider 按 model** 声明的，本机 qoder-route 的 18 个模型里有 9 个
+     * 根本没有 `reasoningEfforts` 段（efficient / fast / lite …）——给它们带任何档位，
+     * 适配器在发请求之前就返回 UNSUPPORTED_REASONING_EFFORT（0-20ms 失败），
+     * 一个非空默认值等于把整条建议路径配成必然失败。
+     * 判据与 provider/model 同套（见 generate.ts 的 `effortOf`），所以这里同样不能用
+     * `min(1)`；档位 id 由适配器定义，本插件不校验，被拒时生成侧**退一档重发一次**
+     * 并在留痕里打 `effort_rejected=1`。
+     * 也别拿它当「关思考」的开关：qfmodel 连 `off` 都拒（profile 只声明
+     * low/medium/xhigh），只有显式声明了 off 的路由才接受。
+     */
+    suggestionReasoningEffort: z<string, string, "volatile-defined">;
     /** 是否启用历史前缀补全。 */
     historyEnabled: z<boolean, boolean, "volatile-defined">;
     /** 是否跨会话搜索历史（false = 仅当前会话）。 */
@@ -108,6 +125,13 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
     inlineMinChars: z<number, number, "volatile-defined">;
     /** 续写可见字符上限。 */
     inlineMaxChars: z<number, number, "volatile-defined">;
+    /**
+     * 停顿续写这次辅助调用的推理档位（#35）。语义与 `suggestionReasoningEffort`
+     * 完全一致（**默认空串 = 不传 = 继承**，被拒则退一档重发一次），单列一项是因为
+     * 续写与建议的延迟预算根本不同：续写在用户停手等待的路径上，建议藏在回合边界
+     * 之后没人等。想压续写的首块延迟，先在这里填一个**该模型声明过**的档位。
+     */
+    completionReasoningEffort: z<string, string, "volatile-defined">;
     /** 幽灵显示时允许 → 逐词采纳。 */
     wordAccept: z<boolean, boolean, "volatile-defined">;
     /** 采纳建议的输入框快捷键（默认 Tab）。 */
@@ -164,6 +188,21 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
     model: z<string, string, "volatile-defined">;
     /** LLM 下一条建议开关（默认开）；关闭后每回合不再调用建议模型。 */
     llmEnabled: z<boolean, boolean, "volatile-defined">;
+    /**
+     * 「下一条建议」这次辅助调用的推理档位（#35）。
+     *
+     * **默认空串 = 不传 = 沿用路由自己的默认档位**，不是 `low`。理由实测过：
+     * 档位是**按 provider 按 model** 声明的，本机 qoder-route 的 18 个模型里有 9 个
+     * 根本没有 `reasoningEfforts` 段（efficient / fast / lite …）——给它们带任何档位，
+     * 适配器在发请求之前就返回 UNSUPPORTED_REASONING_EFFORT（0-20ms 失败），
+     * 一个非空默认值等于把整条建议路径配成必然失败。
+     * 判据与 provider/model 同套（见 generate.ts 的 `effortOf`），所以这里同样不能用
+     * `min(1)`；档位 id 由适配器定义，本插件不校验，被拒时生成侧**退一档重发一次**
+     * 并在留痕里打 `effort_rejected=1`。
+     * 也别拿它当「关思考」的开关：qfmodel 连 `off` 都拒（profile 只声明
+     * low/medium/xhigh），只有显式声明了 off 的路由才接受。
+     */
+    suggestionReasoningEffort: z<string, string, "volatile-defined">;
     /** 是否启用历史前缀补全。 */
     historyEnabled: z<boolean, boolean, "volatile-defined">;
     /** 是否跨会话搜索历史（false = 仅当前会话）。 */
@@ -180,6 +219,13 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
     inlineMinChars: z<number, number, "volatile-defined">;
     /** 续写可见字符上限。 */
     inlineMaxChars: z<number, number, "volatile-defined">;
+    /**
+     * 停顿续写这次辅助调用的推理档位（#35）。语义与 `suggestionReasoningEffort`
+     * 完全一致（**默认空串 = 不传 = 继承**，被拒则退一档重发一次），单列一项是因为
+     * 续写与建议的延迟预算根本不同：续写在用户停手等待的路径上，建议藏在回合边界
+     * 之后没人等。想压续写的首块延迟，先在这里填一个**该模型声明过**的档位。
+     */
+    completionReasoningEffort: z<string, string, "volatile-defined">;
     /** 幽灵显示时允许 → 逐词采纳。 */
     wordAccept: z<boolean, boolean, "volatile-defined">;
     /** 采纳建议的输入框快捷键（默认 Tab）。 */

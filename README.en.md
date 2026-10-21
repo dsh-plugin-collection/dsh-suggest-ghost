@@ -67,9 +67,14 @@ card copy (field labels/hints, buttons, badges) follows the host DSH UI language
 
 | Group | Fields |
 |---|---|
-| LLM next-suggestion | enable toggle, max output tokens, max suggestion chars, reference turns, transcript char budget, timeout (ms), accept key, provider / model route (leave empty to inherit the main request) |
+| LLM next-suggestion | enable toggle, max output tokens, max suggestion chars, reference turns, transcript char budget, timeout (ms), accept key, provider / model route (leave empty to inherit the main request), **suggestion reasoning effort `suggestionReasoningEffort` (empty by default = not sent)** |
+| Pause completion | enable toggle, pause duration (default 100ms), min input chars, completion length cap, **completion reasoning effort `completionReasoningEffort` (empty by default = not sent)** |
 | History prefix completion | enable toggle, cross-session search, max history entries, min input chars, word-by-word accept |
 | Hotness management | frequent cross-session phrases list: pin (exempt from eviction, always leads candidates), delete, manual add (pinned by default), clear all — takes effect immediately, no save needed |
+
+**Why the effort defaults to empty**: `reasoningEffort` is declared **per provider and per model**, it is not a global switch. 9 of the 18 models in this profile declare no `reasoningEfforts` at all (efficient / fast / lite, …), and sending any effort to those is rejected by the adapter **before the request goes out** (`UNSUPPORTED_REASONING_EFFORT`, measured 0-20ms). So an empty string means the plugin does not write the key and the route keeps its own default. An effort the model does not declare still does not cost you the suggestion: the host retries once without it and logs `effort_rejected=1`. Do not use it as a "thinking off" switch either — only routes that explicitly declare `off` / `none` accept those values (qfmodel rejects even `off`; its profile declares low/medium/xhigh).
+
+> How much time an effort saves depends on the model: measured in one sandbox, `qfmodel` took 1468ms by default and 828ms with `low` (≈1.8x), while `efficient` takes 6238ms by default. **Switching the model is the bigger lever (≈4x).** First-delta latency, delta counts and the requested effort are now on the trace lines (`suggestion generated …` / `completion generated …`, carrying `first_text_delta_ms` / `first_reasoning_delta_ms` / `outcome=empty|filtered`).
 
 You can also override by id in cordis.patch.yml (as initial values for the above):
 
@@ -84,6 +89,8 @@ You can also override by id in cordis.patch.yml (as initial values for the above
     maxSuggestionChars: 240    # visible suggestion char cap
     acceptKey: Tab             # accept shortcut
     llmEnabled: true           # LLM suggestion toggle
+    suggestionReasoningEffort: ''  # effort for the suggestion call (empty = do not send)
+    completionReasoningEffort: ''  # effort for the completion call (same semantics)
 ```
 
 

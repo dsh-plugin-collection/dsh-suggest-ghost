@@ -170,6 +170,20 @@ export const GHOST_FIELDS: ReadonlyArray<{
     writable: true,
   },
   {
+    key: 'suggestionReasoningEffort',
+    label: { zh: '建议推理档位', en: 'Suggestion reasoning effort' },
+    hint: {
+      zh: '「下一条建议」这次调用的推理档位。**默认为空 = 不传 = 沿用该模型自己的默认档位**——档位是按 provider、按 model 声明的，同一份 profile 里 18 个模型有 9 个没声明，给它们带档位会在请求发出之前就被拒。填了当前模型不支持的档位不会让这一轮失败：宿主会退一档（不带档位）重发一次，日志里记 effort_rejected=1。可选值以该模型声明的为准（常见 low / medium / high / xhigh）',
+      en: 'Reasoning effort for the next-prompt suggestion call. EMPTY BY DEFAULT = do not send it = keep whatever default this model has. Efforts are declared per provider and per model — 9 of the 18 models in this profile declare none, and sending one to those is rejected before the request goes out. An effort the model rejects does not lose the turn: the host retries once without it and logs effort_rejected=1. Use the ids this model declares (commonly low / medium / high / xhigh)',
+    },
+    // 文本框而不是 select：档位 id 是**适配器私有**的（本机 profile 里同一份
+    // models[] 下同时有 low/medium/high/xhigh/max/none/off 六种集合），任何硬编码
+    // 下拉都会把「换个模型/换个 adapter 的合法档位」变成选不出来的值。
+    kind: 'text',
+    section: 'llm',
+    writable: true,
+  },
+  {
     key: 'provider',
     label: { zh: 'Provider', en: 'Provider' },
     hint: {
@@ -289,6 +303,17 @@ export const GHOST_FIELDS: ReadonlyArray<{
       en: 'Max visible characters of the completion (truncated at word boundary)',
     },
     kind: 'number',
+    section: 'inline',
+    writable: true,
+  },
+  {
+    key: 'completionReasoningEffort',
+    label: { zh: '续写推理档位', en: 'Completion reasoning effort' },
+    hint: {
+      zh: '停顿续写这次调用的推理档位。**默认为空 = 不传 = 沿用该模型自己的默认档位**。续写在用户停手等待的路径上，比建议更慢不起，所以这里更值得试低档位；填了模型没声明的档位会退一档重发一次，日志记 effort_rejected=1',
+      en: 'Reasoning effort for the pause-completion call. EMPTY BY DEFAULT = do not send it = keep this model\'s own default. Completion sits on the path the user is waiting on, so it is the better candidate for a lower effort; an effort the model does not declare triggers one retry without it, logged as effort_rejected=1',
+    },
+    kind: 'text',
     section: 'inline',
     writable: true,
   },

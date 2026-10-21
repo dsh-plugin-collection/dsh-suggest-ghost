@@ -68,9 +68,24 @@ dsh plugin --profile web add .
 
 | 分组 | 字段 |
 |---|---|
-| LLM 下一条建议 | 启用开关、输出令牌上限、建议字符上限、参考回合数、转录字符预算、超时（毫秒）、采纳快捷键、provider / model 路由（留空继承主请求） |
+| LLM 下一条建议 | 启用开关、输出令牌上限、建议字符上限、参考回合数、转录字符预算、超时（毫秒）、采纳快捷键、provider / model 路由（留空继承主请求）、**建议推理档位 `suggestionReasoningEffort`（默认为空 = 不传）** |
+| 停顿续写 | 启用开关、停顿时长（默认 100ms）、最少输入字符、续写长度上限、**续写推理档位 `completionReasoningEffort`（默认为空 = 不传）** |
 | 历史前缀补全 | 启用开关、跨会话搜索、最大历史条目、最少输入字符、逐词采纳 |
 | 热度管理 | 跨会话高频短语列表：固定（不参与淘汰、候选恒置顶）、删除、手工新增（默认固定）、清空全部——即时生效，无需保存 |
+
+**推理档位为什么默认留空**：`reasoningEffort` 是**按 provider、按 model** 声明的，不是全局开关。
+本机 profile 的 18 个模型里有 9 个根本没声明 `reasoningEfforts`（efficient / fast / lite 等），
+给它们带任何档位都会在**请求发出之前**被适配器拒掉（`UNSUPPORTED_REASONING_EFFORT`，
+实测 0-20ms 失败）。所以默认空串 = 插件不写这个键 = 沿用该路由自己的默认档位。
+填了模型没声明的档位也不会让这一轮没有建议：宿主会退一档（不带档位）重发一次，
+宿主日志里记 `effort_rejected=1`。也别拿它当「关思考」用——只有显式声明了 `off` / `none`
+的路由才接受这类值（qfmodel 连 `off` 都拒，profile 只声明 low/medium/xhigh）。
+
+> 档位能省多少时间取决于模型：同一沙箱内测得 `qfmodel` 缺省 1468ms、带 `low` 828ms
+> （约 1.8x），而 `efficient` 缺省就要 6238ms。**换模型比调档位是更大的杠杆（约 4x）**。
+> 辅助调用的首块延迟、增量数与请求档位现在都写在留痕行里
+> （`suggestion generated …` / `completion generated …`，含
+> `first_text_delta_ms` / `first_reasoning_delta_ms` / `outcome=empty|filtered`）。
 
 也可以在 cordis.patch.yml 按 id 覆盖（作为上述项的初始值）：
 
@@ -87,6 +102,8 @@ dsh plugin --profile web add .
     maxSuggestionChars: 240    # 建议可见字符上限
     acceptKey: Tab             # 采纳快捷键
     llmEnabled: true           # LLM 建议开关
+    suggestionReasoningEffort: ''  # 建议调用的推理档位（默认为空 = 不传 = 沿用路由默认）
+    completionReasoningEffort: ''  # 续写调用的推理档位（同上）
 ```
 
 

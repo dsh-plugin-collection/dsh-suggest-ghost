@@ -134,6 +134,17 @@ export function parsePersistedPush(raw: string | undefined): {
   if (typeof s.text !== 'string' || s.text === '') return noSuggestion(sessionId);
   if (typeof s.truncated !== 'boolean') return noSuggestion(sessionId);
   if (typeof s.acceptKey !== 'string' || s.acceptKey === '') return noSuggestion(sessionId);
+  // 帧语义（#39）：这里的重建是**逐字段白名单**，不写下面两行就等于把 frame/final
+  // 在重启的那一刻悄悄丢掉——客户端随后按「旧载荷」兜底（frame=0），表现为判据
+  // 时灵时不灵。缺省取值定的是 **frame=1 / final=true**：本期宿主每个回合只出
+  // 一帧，所以盘上那一份必然就是它的第 1 帧、也是终帧；`0` 留给「载荷里根本没有
+  // 帧字段」那种旧版本情况，由客户端自己兜底，宿主这边不主动伪造 0。
+  // 类型上做**结构校验后再回落**（与上面几个字段同一个偏保守的味道：宁可按默认
+  // 重建，也不因为盘上一个手改坏的键就整条丢弃仍然有效的建议）。
+  const frame = typeof s.frame === 'number' && Number.isInteger(s.frame) && s.frame >= 1
+    ? s.frame
+    : 1;
+  const final = typeof s.final === 'boolean' ? s.final : true;
   return {
     suggestion: {
       version: 1,
@@ -142,6 +153,8 @@ export function parsePersistedPush(raw: string | undefined): {
       text: s.text,
       truncated: s.truncated,
       acceptKey: s.acceptKey,
+      frame,
+      final,
     },
     sessionId,
   };

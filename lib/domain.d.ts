@@ -3,7 +3,19 @@
  * 事件/投影键通过 module augmentation 并入 DSH 官方类型图。
  * @module dsh-suggest-ghost/domain
  */
-/** `suggest-ghost/suggested` 事件的载荷——一条可用的下一条建议（whole-value）。 */
+/**
+ * `suggest-ghost/suggested` 事件的载荷——一条可用的下一条建议（whole-value）。
+ *
+ * 帧语义（#39 的第一块地基，与客户端判定链同源）：
+ *  - `frame` 是**单次生成内**单调递增的帧号，从 1 起。宿主目前一次生成只出
+ *    终帧，所以恒为 1；把它写成字段而不是让客户端猜，是为了让「多帧化」
+ *    这件后续改动只碰宿主一侧。
+ *  - `final` 标记终帧：只有终帧上的文本才是可采纳的完整内容。
+ *  - 两个字段**允许缺省**（`version` 仍是 1，不做破坏性升版）：缺省时客户端
+ *    按 `frame=0 / final=true` 兜底，等于沿用旧行为。因此任何「重建载荷」的
+ *    地方（重启对账、投影 fold）都必须把它们**原样带上**，凭空丢掉会让同一
+ *    条建议在重启后看起来像旧载荷。
+ */
 export interface SuggestGhostSuggested {
     /** 载荷结构版本。 */
     readonly version: 1;
@@ -17,6 +29,10 @@ export interface SuggestGhostSuggested {
     readonly truncated: boolean;
     /** 采纳快捷键（默认 "Tab"）。 */
     readonly acceptKey: string;
+    /** 单次生成内的帧号（>=1，单调）；缺省 = 旧载荷，客户端按 0 兜底。 */
+    readonly frame?: number;
+    /** 是否终帧（终帧才可采纳）；缺省 = 旧载荷，客户端按 true 兜底。 */
+    readonly final?: boolean;
 }
 /** `suggest-ghost/request` 事件的载荷——辅助 LLM 调用前的记录（模型可见 ⟺ 日志可重建）。 */
 export interface SuggestGhostRequested {
