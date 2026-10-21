@@ -600,9 +600,13 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         if (verdict.action === 'restore') {
           trackSuggestion(verdict.sessionId, verdict.suggestion);
           tracePersistedPush('restored', 'startup', { suggestion: verdict.suggestion });
-        } else if (verdict.reason !== 'session-unavailable') {
-          // 'session-unavailable' = 会话还没进店 ⇒ 判不了，留给该会话第一次 pull 补判
-          // （此刻既不恢复、也不清盘、更不推残留）。
+        } else if (verdict.reason === 'session-unavailable') {
+          // 'session-unavailable' = 会话还没进店 ⇒ **判不了**（不是「判废」），留给该
+          // 会话第一次 pull 补判。此刻既不恢复、也不清盘、更不推残留。留一行 'deferred'
+          // 是因为「读到了却判不了」不能只靠那行 'read' 撑着——否则它在日志里看起来
+          // 像「读到了、然后什么也没发生」。
+          tracePersistedPush('deferred', 'startup', { reason: verdict.reason, suggestion: verdict.suggestion });
+        } else {
           tracePersistedPush('skipped', 'startup', { reason: verdict.reason, suggestion: verdict.suggestion });
         }
       } else {
@@ -750,6 +754,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   let persistedPushVerdict: PersistedPushVerdict | null = null;
   /** 已记过「会话不匹配」的会话（同一会话反复 pull 不重复刷同一条留痕）。 */
   const persistedMismatchLogged = new Set<string>();
+  /** 「判不了」的留痕只打一次（避免每次 pull 都刷同一条）。 */
+  let persistedDeferredTraced = false;
 
   /**
    * 启动回读的留痕（读 / 恢复 / 未恢复各一行）。
@@ -759,7 +765,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
    * 会话 id 是可回推的标识，这里**不写**。
    */
   const tracePersistedPush = (
-    line: 'read' | 'restored' | 'skipped',
+    line: 'read' | 'restored' | 'skipped' | 'deferred',
     source: 'startup' | 'pull',
     detail: { present?: boolean; reason?: string; suggestion?: SuggestGhostSuggested | null },
   ): void => {
@@ -817,7 +823,15 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     if (startupVerdict !== null && startupVerdict.reason !== 'session-unavailable') return;
     const verdict = judgePersistedPush('pull', sessionId);
     if (verdict.action === 'skip') {
-      if (verdict.reason === 'session-unavailable') return; // 还不判得了 → 留给下一次 pull
+      if (verdict.reason === 'session-unavailable') {
+        // 还不判得了 → 留给下一次 pull。这条也留一行（与启动期同一措辞），否则
+        // 「会话一直不进店」这件事在日志里完全不可见。
+        if (!persistedDeferredTraced) {
+          persistedDeferredTraced = true;
+          tracePersistedPush('deferred', 'pull', { reason: verdict.reason, suggestion: verdict.suggestion });
+        }
+        return;
+      }
       if (verdict.reason === 'session-mismatch') {
         // 残留属于别的会话：不动盘、也不改判定状态（它对那个会话仍然有效）。
         if (!persistedMismatchLogged.has(sessionId)) {
