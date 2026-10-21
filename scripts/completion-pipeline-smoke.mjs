@@ -317,7 +317,7 @@ run('上界按真宿主实测分布取值，不是按快样本的算术', () => 
   );
 });
 
-run('本次修复不新增 volatile 配置字段（上界是常量）', () => {
+run('设置页字段集合与基线一致（#35 之后共 27 项，含两个推理档位）', () => {
   const hostSource = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta.url)), 'utf8');
   // 只截 `const EditableFields = {` 这个对象字面量本身：从起始 brace 找到它自己的
   // `};`。上一版在这里用 indexOf('/** 配置 schema') 取右边界，而源码里那句写在
@@ -333,16 +333,19 @@ run('本次修复不新增 volatile 配置字段（上界是常量）', () => {
   // 而不是「注释里有没有出现过 deadline 这个词」。
   const fieldPattern = /^[ \t]*(\w+)[ \t]*:[ \t]*z\./gm;
   const editableFields = [...editableBlock.matchAll(fieldPattern)].map((m) => m[1]);
-  // 基线：main=7e4fe13 的 EditableFields 共 25 个字段（含 _ops/_push 两个传输载体），
-  // 逐字段 .volatile()。顺序按源码声明顺序断言，改顺序也会红——那是设置页的呈现顺序。
-  // 这条断言是「不许新增」的正身：新增任何一个字段（不管叫什么）都会让这里红，
-  // 而按名字猜（deadline/budget/timeout）会漏掉别名，也会误伤本来就存在的 timeoutMs。
+  // 基线：main=7e4fe13 的 25 个字段（含 _ops/_push 两个传输载体）+ #35 明确新增的两个
+  // 推理档位（`suggestionReasoningEffort` / `completionReasoningEffort`）= 27 项。
+  // 顺序按源码声明顺序断言，改顺序也会红——那是设置页的呈现顺序。
+  // 这条断言的用途没变：**新增任何一个字段都必须先登记到这里**，而登记这一步会逼着你
+  // 去看下面那半段（live-settings 键表）——#35 的改动正是同时动了 schema、WebUI 表单、
+  // live-settings 键表与 generate 的两处 readVolatile，四处漏一处就是「设置页改了不生效」。
   const BASELINE_FIELDS = [
     'maxInputBytes', 'maxOutputTokens', 'timeoutMs', 'maxRecentTurns', 'maxTranscriptChars',
     'contextSummaryEnabled', 'contextSummaryChars', 'maxSuggestionChars', 'provider', 'model',
-    'llmEnabled', 'historyEnabled', 'historyCrossSession', 'historyMaxEntries', 'historyMinChars',
-    'inlineEnabled', 'inlineDelayMs', 'inlineMinChars', 'inlineMaxChars', 'wordAccept',
-    'acceptKey', 'languageMode', 'uiLocaleWeight', '_ops', '_push',
+    'llmEnabled', 'suggestionReasoningEffort', 'historyEnabled', 'historyCrossSession',
+    'historyMaxEntries', 'historyMinChars',
+    'inlineEnabled', 'inlineDelayMs', 'inlineMinChars', 'inlineMaxChars', 'completionReasoningEffort',
+    'wordAccept', 'acceptKey', 'languageMode', 'uiLocaleWeight', '_ops', '_push',
   ];
   assert.deepEqual(
     editableFields,
@@ -350,7 +353,8 @@ run('本次修复不新增 volatile 配置字段（上界是常量）', () => {
     `设置项字段与基线不一致（多出来的就是本次新增的 volatile 配置——那要同时牵动 schema、WebUI 表单与 live-settings 键表）：现 ${editableFields.join(',')} / 基线 ${BASELINE_FIELDS.join(',')}`,
   );
   assert.ok(hostSource.includes('COMPLETION_DEADLINE_MS'), '接线处没引用那个常量');
-  // 上界必须是常量：如果它改从 cfg 读，上一条字段断言会先红，这条再钉一次反向证据。
+  // 上界必须是常量：档位可以配，但**续写的墙钟上界不行**——它一旦可配，`deadlineMs`
+  // 的注入面就从「冒烟传几十毫秒」变成「用户可以把辅助调用配成永不超时」。
   assert.match(hostSource, /export const COMPLETION_DEADLINE_MS|COMPLETION_DEADLINE_MS/);
   assert.ok(!/cfg\.(deadline|budget)/.test(hostSource), '上界改成了从配置读：那必须连带动 schema/表单/键表，本次明确不做');
 

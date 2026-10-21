@@ -48,7 +48,7 @@ import {
 } from './deferred-writes.js';
 import type { DeferredItem, DeferredKind, DeferredPushItem } from './deferred-writes.js';
 import { faultSignature } from './fault-signature.js';
-import { flattenConfig, resolveConfig } from './generate.js';
+import { flattenConfig, formatStreamMetrics, resolveConfig } from './generate.js';
 import type { Config as GenerateConfig, FlatConfig, ResolvedPluginConfig } from './generate.js';
 import { generateSuggestion, generateCompletion, sessionEvents } from './generate.js';
 import { sanitizeCompletion } from './inline.js';
@@ -109,6 +109,21 @@ const EditableFields = {
   model: z.string().default('').volatile(),
   /** LLM 下一条建议开关（默认开）；关闭后每回合不再调用建议模型。 */
   llmEnabled: z.boolean().default(true).volatile(),
+  /**
+   * 「下一条建议」这次辅助调用的推理档位（#35）。
+   *
+   * **默认空串 = 不传 = 沿用路由自己的默认档位**，不是 `low`。理由实测过：
+   * 档位是**按 provider 按 model** 声明的，本机 qoder-route 的 18 个模型里有 9 个
+   * 根本没有 `reasoningEfforts` 段（efficient / fast / lite …）——给它们带任何档位，
+   * 适配器在发请求之前就返回 UNSUPPORTED_REASONING_EFFORT（0-20ms 失败），
+   * 一个非空默认值等于把整条建议路径配成必然失败。
+   * 判据与 provider/model 同套（见 generate.ts 的 `effortOf`），所以这里同样不能用
+   * `min(1)`；档位 id 由适配器定义，本插件不校验，被拒时生成侧**退一档重发一次**
+   * 并在留痕里打 `effort_rejected=1`。
+   * 也别拿它当「关思考」的开关：qfmodel 连 `off` 都拒（profile 只声明
+   * low/medium/xhigh），只有显式声明了 off 的路由才接受。
+   */
+  suggestionReasoningEffort: z.string().default('').volatile(),
   /** 是否启用历史前缀补全。 */
   historyEnabled: z.boolean().default(true).volatile(),
   /** 是否跨会话搜索历史（false = 仅当前会话）。 */
@@ -125,6 +140,13 @@ const EditableFields = {
   inlineMinChars: z.natural().min(1).default(4).volatile(),
   /** 续写可见字符上限。 */
   inlineMaxChars: z.natural().min(1).default(160).volatile(),
+  /**
+   * 停顿续写这次辅助调用的推理档位（#35）。语义与 `suggestionReasoningEffort`
+   * 完全一致（**默认空串 = 不传 = 继承**，被拒则退一档重发一次），单列一项是因为
+   * 续写与建议的延迟预算根本不同：续写在用户停手等待的路径上，建议藏在回合边界
+   * 之后没人等。想压续写的首块延迟，先在这里填一个**该模型声明过**的档位。
+   */
+  completionReasoningEffort: z.string().default('').volatile(),
   /** 幽灵显示时允许 → 逐词采纳。 */
   wordAccept: z.boolean().default(true).volatile(),
   /** 采纳建议的输入框快捷键（默认 Tab）。 */
@@ -183,6 +205,7 @@ export interface PluginConfigValues {
   provider: Volatile<string>;
   model: Volatile<string>;
   llmEnabled: Volatile<boolean>;
+  suggestionReasoningEffort: Volatile<string>;
   historyEnabled: Volatile<boolean>;
   historyCrossSession: Volatile<boolean>;
   historyMaxEntries: Volatile<number>;
@@ -191,6 +214,7 @@ export interface PluginConfigValues {
   inlineDelayMs: Volatile<number>;
   inlineMinChars: Volatile<number>;
   inlineMaxChars: Volatile<number>;
+  completionReasoningEffort: Volatile<string>;
   wordAccept: Volatile<boolean>;
   acceptKey: Volatile<string>;
   languageMode: Volatile<string>;
@@ -753,10 +777,14 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         // 「这条链有界、界是常量 COMPLETION_DEADLINE_MS」这件事。
         deadlineMs: COMPLETION_DEADLINE_MS,
         deliver: ({ value, elapsedMs }) => {
+          // 增量画像（#39）。既有前缀与既有键**一个字不动**（package.json 的
+          // sandbox.greps 与 scripts/dev-sandbox.mjs 靠它们抓行），新键一律**行尾追加**。
+          const stream = formatStreamMetrics(value.metrics);
           if (value.text === undefined) {
             // 空/不合格：过去是 `return` 静默，于是「宿主生成了但被净化链丢弃」与
             // 「根本没生成」在观测上完全同形（#17 的教训正在这一支上被重新违反）。
-            traceOps(`completion dropped (empty or filtered) session=${sessionId} draftChars=${draftChars} in ${elapsedMs}ms`);
+            // outcome= 把这两种终于分开（empty → 看提示词/档位；filtered → 看净化链）。
+            traceOps(`completion dropped (empty or filtered) session=${sessionId} draftChars=${draftChars} in ${elapsedMs}ms ${stream} at=${Date.now()}`);
             return;
           }
           cacheCompletion(sessionId, draft, value.text);
@@ -766,7 +794,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
             completionSessionId: sessionId,
           });
           // 只打字符数：续写正文是模型对用户草稿的模仿，抄进 tee 日志等于把用户输入的第二份副本落到盘上。
-          traceOps(`completion generated session=${sessionId} draftChars=${draftChars} chars=${value.text.length} in ${elapsedMs}ms`);
+          traceOps(`completion generated session=${sessionId} draftChars=${draftChars} chars=${value.text.length} in ${elapsedMs}ms ${stream} at=${Date.now()}`);
         },
       },
       {
@@ -884,6 +912,13 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         text: p.suggestion.text,
         truncated: p.suggestion.truncated,
         acceptKey: p.suggestion.acceptKey,
+        // 帧语义（#39 契约）：**这一层是载荷的唯一出口**，所以缺省在这里补齐，
+        // 而不是让每个重建建议的地方（生成、重启对账、投影）都必须记得带。
+        // `?? 1`/`?? true` 的落点是「旧载荷回读」：本期宿主一次生成只出终帧，
+        // 盘上那一份必然是第 1 帧且是终帧。客户端的兜底是 frame=0/final=true，
+        // 所以这里补 1 之后，重启前后推出去的帧号是同一个值（不会因为重启而倒退）。
+        frame: p.suggestion.frame ?? 1,
+        final: p.suggestion.final ?? true,
       },
       suggestionSessionId: p.suggestionSessionId,
       hot: p.hot !== null && p.hot.length > 0 ? [...p.hot] : null,
@@ -894,7 +929,10 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       ...(p.completion === null
         ? { completion: null, completionSessionId: null }
         : p.completion !== undefined
-          ? { completion: { draft: p.completion.draft, text: p.completion.text }, completionSessionId: p.completionSessionId ?? null }
+          // 续写载荷**只带 final、不带 frame**：一次续写的「代次」只能靠 draft 全等
+          // 判定（#33 之后草稿允许继续变长，帧号会把「同一代次 grew」误判成换代）。
+          // 本期宿主同样只出终帧，所以 final 恒 true。
+          ? { completion: { draft: p.completion.draft, text: p.completion.text, final: true }, completionSessionId: p.completionSessionId ?? null }
           : {}),
       ...(p.error !== undefined ? { error: p.error } : {}),
     };
@@ -918,6 +956,10 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     pendingCarriesCompletion = false;
     if (payload === null) return;
     const rev = pushRev;
+    // 写实耗（#39 的尾延迟分解）。量在 `settings.update` 这一对上，不是量在「进入
+    // pushToClient」那一对上：后者会把合并缓冲的排队也算进来，就分不出
+    // 「等泵」与「写本身」——而这两个数决定的是完全不同的两件事（降泵间隔 vs 换通道）。
+    const writeStartedAt = Date.now();
     pushInFlight = settingsSvc.update(SUGGEST_GHOST_NAMESPACE, { _push: payload })
       .then(
         () => {
@@ -925,7 +967,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           // 这条通道只留下 372 次 nested-transaction 拒绝、**一次成功都没记过**，
           // 于是「从没写」和「写了就失败」在日志里长得一模一样。
           lastLandedPushPayload = payload;
-          traceOps(`push landed rev=${rev} bytes=${payload.length}${carriesCompletion ? ' withCompletion=1' : ''}`);
+          // 既有键（rev / bytes / withCompletion）不动，`writeMs` 追加在行尾。
+          traceOps(`push landed rev=${rev} bytes=${payload.length}${carriesCompletion ? ' withCompletion=1' : ''} writeMs=${Date.now() - writeStartedAt} at=${Date.now()}`);
         },
         (error: unknown) => {
           const text = error instanceof Error ? error.message : String(error);
@@ -1052,13 +1095,17 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         if (decision.reason !== 'already-landed') releaseDeferredPushFingerprint(item);
         return;
       }
+      const drainWriteStartedAt = Date.now();
       void svc.update(SUGGEST_GHOST_NAMESPACE, { _push: item.payload }).then(
         () => {
           lastLandedPushPayload = item.payload;
           // 验收就看这条：`deferred ` 前缀把它和正常即时写路径（`push landed rev=…`）
           // 分开，二者同时出现才说明「即时被拒 → 事务外补写成功」这条链真的走通了。
+          // 行尾两个新键是 #39 的尾延迟分解：`after` 是**入队到落盘**（等泵 + 写），
+          // `writeMs` 只是那一次 `settings.update` 自己。两者一减就是「等 500ms 泵」
+          // 占了多少——这个差决定该降泵间隔还是该换通道，光看 after 分不出来。
           traceOps(
-            `deferred push landed rev=${item.rev ?? 'n/a'} carriedCompletion=${item.carriesCompletion ? 1 : 0} after=${Date.now() - queuedAt}ms attempts=${item.attempts + 1}`,
+            `deferred push landed rev=${item.rev ?? 'n/a'} carriedCompletion=${item.carriesCompletion ? 1 : 0} after=${Date.now() - queuedAt}ms attempts=${item.attempts + 1} writeMs=${Date.now() - drainWriteStartedAt} at=${Date.now()}`,
           );
         },
         (error: unknown) => retryDeferred(item, error),
@@ -1280,6 +1327,12 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     }
     const controller = new AbortController();
     state.pending = { turn, controller };
+    /**
+     * 本次建议生成的起点。#39 之前这条路径**一个字都不打**：耗时留痕只有续写有
+     * （`completion generated` / `completion dropped`），于是「建议怎么这么慢」
+     * 与「这轮为什么没建议」在 tee 日志里都是零证据，只能靠猜。
+     */
+    const genStartedAt = Date.now();
     void Promise.resolve()
       .then(() => {
         const cfg = effective();
@@ -1309,12 +1362,25 @@ export function apply(ctx: Context, config: GenerateConfig): void {
             history: (ringFor(session.id) ?? []).slice(-HISTORY_PUSH_CAP),
             historySessionId: session.id,
           });
+          // 耗时留痕，与续写那两行同构：前缀自成一条（`suggestion generated` /
+          // `suggestion dropped`），正文只打字符数，档位与增量在行尾。
+          // 走 `traceOps` 而不是 `ctx.logger`——通道选择的依据见 `traceOps` 上方那段。
+          const stream = formatStreamMetrics(result.metrics);
+          if (result.suggestion === undefined) {
+            traceOps(`suggestion dropped (empty or filtered) session=${session.id} turn=${turn} in ${Date.now() - genStartedAt}ms ${stream} at=${Date.now()}`);
+          } else {
+            traceOps(`suggestion generated session=${session.id} turn=${turn} chars=${result.suggestion.text.length} frame=${String(result.suggestion.frame ?? 1)} in ${Date.now() - genStartedAt}ms ${stream} at=${Date.now()}`);
+          }
         },
         (error: unknown) => {
           if (state?.pending?.controller === controller) state.pending = undefined;
           if (controller.signal.aborted) return; // 被新回合取代，失败符合预期
           const message = error instanceof Error ? error.message : String(error);
           ctx.logger.warn(`dsh-suggest-ghost: suggestion generation failed: ${message}`);
+          // 同一条事实再走一遍**运行期可见**的通道：`ctx.logger` 在健康进程里不落地
+          // （唯一的 exporter 只收 warn/error，且 startupLogs 只在启动失败时写盘，
+          // 见 `traceOps` 上方那段）。失败也留一行，带已知的增量画像与耗时。
+          traceOps(`suggestion failed session=${session.id} turn=${turn} in ${Date.now() - genStartedAt}ms ${message.slice(0, 200)} at=${Date.now()}`);
           // 失败也推送：清掉残留幽灵 + 把错误摘要带给 client/设置页（可诊断）。
           trackSuggestion(session.id, null);
           const hot = hotness.snapshot(historySnapshotCap());

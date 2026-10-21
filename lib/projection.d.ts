@@ -18,6 +18,8 @@ export declare const suggestGhostSchema: z.ZodObject<{
         text: z.ZodString;
         truncated: z.ZodBoolean;
         acceptKey: z.ZodString;
+        frame: z.ZodOptional<z.ZodNumber>;
+        final: z.ZodOptional<z.ZodBoolean>;
     }, z.core.$strip>>;
     hot: z.ZodNullable<z.ZodArray<z.ZodObject<{
         text: z.ZodString;

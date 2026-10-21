@@ -92,8 +92,24 @@ const suggestion = (turn, text = '跑一下测试') => ({
 // —— 5. parsePersistedPush：结构校验（盘上内容不可信）——
 {
   const good = JSON.stringify({ rev: 7, suggestion: suggestion(2), suggestionSessionId: 'session-a' });
-  assert.deepEqual(parsePersistedPush(good), { suggestion: suggestion(2), sessionId: 'session-a' });
+  // 帧字段（#39）：这里的重建是逐字段白名单，**必须带上 frame/final**。
+  // 期望值写成显式的 frame:1 / final:true 而不是 `...suggestion(2)`，因为这条断言
+  // 的存在意义就是钉住「盘上没有帧语义时补什么」：补 1/true（本期一次生成只出一帧），
+  // 而 0 是留给客户端识别「旧载荷」的哨兵值，宿主不主动伪造 0。
+  assert.deepEqual(parsePersistedPush(good), {
+    suggestion: { ...suggestion(2), frame: 1, final: true },
+    sessionId: 'session-a',
+  });
   assert.equal(parsePersistedPush(good).suggestion.version, 1, '回读时补齐 version');
+  // 盘上已有帧语义：原样带回，不能被重置成 1/true（否则「第 2 帧」在重启后变成「第 1 帧」，
+  // 客户端的单调丢弃会把随后真正的第 2 帧误判成陈旧）。
+  const carried = JSON.stringify({
+    rev: 8,
+    suggestion: { ...suggestion(2), frame: 2, final: false },
+    suggestionSessionId: 'session-a',
+  });
+  assert.equal(parsePersistedPush(carried).suggestion.frame, 2, '盘上的 frame 原样带回');
+  assert.equal(parsePersistedPush(carried).suggestion.final, false, 'final:false 不许被翻案成 true');
 
   assert.deepEqual(parsePersistedPush(undefined), { suggestion: null, sessionId: null });
   assert.deepEqual(parsePersistedPush(''), { suggestion: null, sessionId: null });
@@ -222,7 +238,9 @@ const suggestion = (turn, text = '跑一下测试') => ({
 
   // 于是「打开页面」这一拍就能给出完整的 pull 应答
   const fields = suggestionFieldsFor(tracked, 's', tracked.suggestion);
-  assert.deepEqual(fields, { suggestion: suggestion(2), sessionId: 's' });
+  // 期望值带上 frame/final：对账恢复出来的是**同一个对象**，帧语义一路透传到应答，
+  // 中间任何一环把它摘掉都会在这里红（#39 的重启即失效场景）。
+  assert.deepEqual(fields, { suggestion: { ...suggestion(2), frame: 1, final: true }, sessionId: 's' });
 }
 
 console.log('✅ coldstart 冒烟测试通过（结构校验/语义校验/按需物化/增量维护/跨会话追踪）');
