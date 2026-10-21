@@ -782,6 +782,6 @@ if ((counts[STATUS.NC] ?? 0) > 0) {
   console.log('三种状态各自的含义：产物没构建 → NOT-COVERED；判据算错/打点丢失 → FAIL；');
   console.log('  需要一次真实回合才能观测的东西 → NOT-COVERED（本脚本按 lead 的口径不去补那一层）。');
   console.log('  需要 DOM/接线层才能观测的东西（如空正文建议的实际渲染）→ 同样标 NOT-COVERED。');
-  console.log('单独跑：node scripts/ghost-frame-e2e.mjs（整条 test:e2e 在 coldstart-e2e 小节 2 处会停住，那是 #50，见文件头）');
+  console.log('单独跑：node scripts/ghost-frame-e2e.mjs（整条 test:e2e 现在是全绿的：coldstart-e2e 小节 2「重启对账」已由 #50 修好）');
 }
 process.exit((counts[STATUS.FAIL] ?? 0) > 0 ? 1 : 0);

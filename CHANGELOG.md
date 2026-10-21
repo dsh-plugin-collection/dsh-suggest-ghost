@@ -100,11 +100,11 @@ All notable changes to this project will be documented in this file.
     不留痕、未知 op 必须 `kind='schema'`），口径与 `ops-schema-coverage-smoke` 第 5/6/7 段一致
   - 链首 `pnpm build` 换成 `./node_modules/.bin/tsc -p tsconfig.json && node build.mjs`（worktree 里
     node_modules 是软链，pnpm 的依赖一致性检查会让整条 e2e 起不来），同一口径写进两条脚本文件头
-  - **这条链现在是红的，红得有意义**：`coldstart-e2e` 小节 2「重启对账：盘上残留的上一条建议应被恢复」
+  - **这条链当时是红的，红得有意义**：`coldstart-e2e` 小节 2「重启对账：盘上残留的上一条建议应被恢复」
     失败，根因是 `parsePersistedPush`（`src/coldstart.ts:109`）**全仓零生产调用点**（`e853d1e` 加、
     `c3b6a80` 删、之后没接回来），且客户端第一次 pull 会把还能救的残留盖掉（#50）。断言**没有放宽**、
-    没有报成 NOT-COVERED：红的小节要跟着产品语义走，不能用放宽换绿。脚本末尾还提醒一句：小节 3 现在
-    是绿的，但它绿的原因是「压根没恢复」而不是「恢复后被回合语义判废」，#50 修好后它必须仍然是绿的
+    没有报成 NOT-COVERED：红的小节要跟着产品语义走，不能用放宽换绿。**#50 已由 PR #55 修好，整条链现在
+    全绿**（见下面「重启恢复盘上残留建议」一条）
 
 - **辅助调用的推理档位可配**（#35）。新增 `suggestionReasoningEffort` / `completionReasoningEffort` 两个
   volatile 设置项，**默认空串 = 不往请求上写 `reasoningEffort` = 沿用该模型自己的默认档位**。默认值不是
@@ -184,6 +184,28 @@ All notable changes to this project will be documented in this file.
   那个 `outcome=empty` 只代表「这层不拥有这个判定」，不代表「模型一个字没吐」。变异测试验过 FAIL 路真会红
   （把放行与扣住各写反 ⇒ FAIL 2、退出码 1）。脚本现状 **PASS 11 · FAIL 0 · NOT-COVERED 2**，两条 NOT-COVERED
   分别是「缺真实回合」与「缺 DOM/接线层」，都不是原因不明
+
+- **重启后盘上残留的建议恢复回来了**（#50）。此前这条语义**在实现里没有**：`parsePersistedPush`
+  （`src/coldstart.ts:109`）是 `e853d1e` 加的、`c3b6a80`（0.1.7 volatile 适配）删掉的，之后再没接回来 ——
+  有定义、有单测，但**全仓零生产调用点**。实测后果比「不恢复」更糟：boot 后残留没被清盘（安全约束还在），
+  但**也没被恢复**；随后客户端第一次 pull 用内存里的空把它盖掉（`fingerprintOf` 对「空建议」与「有建议」是
+  两个指纹，空载荷被当成新值写下去）。现在：
+  - 新增纯判定 `decidePersistedPush(raw, ctx)`（`src/coldstart.ts`，零 runtime import、可离线驱动），四档
+    处置分得清：`restore` / `stale-turn`（回合已过时）/ `session-unavailable`（会话还没进店，判不了，留给
+    该会话第一次 pull 补判）/ `session-mismatch`（归属不上）/ `corrupt-payload`（载荷坏了）
+  - **启动期回读**（只读不写不推）：回读时把盘上那份的**指纹与 rev 一并并进本进程状态** ⇒ 恢复之后
+    **第一次 pull 零写**（应答被指纹判重跳过，盘上 `_push` 的内容与 rev 都不变，e2e 直接断言
+    `after === before`）。启动期推一次则 client 可能收到两份内容相同、rev 不同的载荷
+  - **该会话第一次 pull 时补判**：启动那一刻会话常常还没进店（懒恢复）判不了新旧，pull 时它一定在店了
+    才判；判出可恢复就接回追踪态 ⇒ **这次 pull 的应答自然带上它**，不需要额外推一次
+  - 三个不变量各有断言：旧载荷不得盖掉更新的载荷（本会话已有建议 ⇒ reason=superseded，不接回）／归属
+    未确认时不得清盘或推残留（会话未进店 ⇒ 盘上残留原样保留 + 启动期零写）／不得因为回读多推一次
+  - 留痕 `persisted push read|restored|skipped source=startup|pull … turn= baseSeq= chars=`，**不打正文、
+    不打会话 id**（会话 id 属可回推的标识）
+  - 顺带修了一个被掩盖的问题：cordis 4.0.1 的 `Context` **没有** dispose/stop/`Symbol.asyncDispose` 面 ⇒
+    e2e 脚本里的 `root[Symbol.asyncDispose]?.()` 是空操作 ⇒ 插件的排水定时器一直 ref 着、进程退不出去。
+    此前只因「小节 2 红 ⇒ `process.exit(1)`」才看起来正常，#50 修好后成功路径第一次被走到就挂住了
+    （timeout 124）⇒ 成功路径补 `process.exit(0)`
 
 ### 修复
 
