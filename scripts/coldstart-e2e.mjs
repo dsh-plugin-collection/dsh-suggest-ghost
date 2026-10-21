@@ -41,6 +41,24 @@ const NS = 'suggest-ghost';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * 把插件自己的 ops-trace 留痕**旁路抄一份**（不吞原输出）。
+ *
+ * 为什么需要：#36 建议 2 之后，「第一次 pull 带上了盘上那条建议」这件事在写留痕里
+ * 可能**一个字节都不出现**（内容与盘上一致 ⇒ 按格判重直接跳过写）。那行
+ * `persisted push restored source=pull` 就成了「确实判过、且把结果并进了应答」的唯一
+ * 证据。捕获走 globalThis，是为了让下面的 `tracedFromApply()` 在任何小节里都能读。
+ */
+globalThis.__ghostTrace = [];
+{
+  const real = console.log.bind(console);
+  console.log = (...args) => {
+    const line = args.map(String).join(' ');
+    if (line.includes('[ops-trace]')) globalThis.__ghostTrace.push(line);
+    real(...args);
+  };
+}
+
+/**
  * 一个跨「进程」存活的内存 settings 文档：模拟 profile 文档里 `suggest-ghost` 那一节
  * 的持久性（真实宿主上就是 `~/.dsh/profiles/<name>/cordis.patch.yml` 里的两行
  * `_ops:` / `_push:`，见 `src/index.ts:509-510` 的实测记录）。
@@ -63,12 +81,26 @@ function makeMedium(initial = {}) {
     /** 写某个 ns 的一段补丁（对齐 `SettingsForms.update` 的 ns + patch 形状）。 */
     merge(ns, patch) {
       document = { ...document, [ns]: { ...document[ns], ...structuredClone(patch) } };
-      writes.push({ ns, patch: structuredClone(patch) });
+      // 每一笔写都附一份「写完之后的介质」：小节 6 要看的是**那一拍**客户端能读到什么，
+      // 而不是等夹具自己的副作用（一次必然失败的生成把建议清掉）跑完之后的终值。
+      writes.push({ ns, patch: structuredClone(patch), after: structuredClone(document[ns] ?? {}) });
     },
   };
 }
 
 /** 介质上历次写里带过的 `_push` 载荷（按写入顺序）。 */
+/** 本小节开始之后插件打过的 ops-trace 行（捕获窗口由 section 自己管）。 */
+function tracedFromApply() {
+  return (globalThis.__ghostTrace ?? []).slice();
+}
+
+/**
+ * 历次写里带过 `_push`（建议格）的那些载荷，按写入顺序。
+ *
+ * 拆格（#36 建议 2）之后仍然只看建议格：这些脚本验的都是「建议有没有被恢复/被清掉」，
+ * 而那一格恰恰是唯一会携带建议的。`_hot` 那一格每次都会顺带变（历史环、热表），
+ * 把它混进来会让断言变成在比一份永远不同的东西。
+ */
 function pushWrites(medium) {
   return medium.writes
     .filter((w) => typeof w.patch._push === 'string')
@@ -160,10 +192,32 @@ async function bootProcess(medium, seed = {}) {
   return { root, session, sessions, captured, settings, createSession };
 }
 
-/** 读 host 推给 client 的 `_push`（client 侧读的是同一份 settings 值）。 */
+/**
+ * 客户端实际拿到的那份状态 = **两格合并后的视图**（#36 建议 2：建议格 `_push` +
+ * 热度格 `_hot`）。
+ *
+ * 断言本体一字不改：它们验的是「client 拿到什么」，变的只是来源——从前是一格，
+ * 现在是两格。合并顺序是「建议格覆盖热度格」：两格都带 `rev`，而历史/热度那几个键
+ * 只有热度格会有，所以谁覆盖谁不影响任何一条既有断言，只保证读到建议格的当前值。
+ */
 function pushed(captured) {
-  const raw = captured.scope?.get()?._push;
-  return raw === undefined ? null : JSON.parse(raw);
+  const row = captured.scope?.get() ?? {};
+  const cell = (raw) => {
+    if (typeof raw !== 'string' || raw === '' || raw === 'null') return null;
+    try {
+      const v = JSON.parse(raw);
+      return typeof v === 'object' && v !== null ? v : null;
+    } catch {
+      return null;
+    }
+  };
+  const hot = cell(row._hot);
+  const push = cell(row._push);
+  // 两格都没有 = 「客户端还没有任何状态可读」，报 null（不是 undefined）：小节 1 的
+  // 「启动阶段不该凭空写一份状态」就是拿 `=== null` 判的，返回 undefined 会让它红在
+  // 一个与语义无关的地方。
+  if (hot === null && push === null) return null;
+  return { ...(hot ?? {}), ...(push ?? {}) };
 }
 
 /**
@@ -178,7 +232,14 @@ async function coldStartPull(settings, sessionId) {
   await settings.update(NS, {
     _ops: JSON.stringify({ rev: 1, ops: [{ op: 'pull', sessionId }] }),
   });
+  // **应答的即时快照**：`_ops` 的消费、按格判重、可能的补写全部排在这次 await 之前
+  // （`settings/document-updated` 是同步 emit）。而下面这 60ms 里会插进一件**只属于
+  // 夹具**的事——本脚本刻意把会话造成「插件 apply 之后才进店」，插件会把它重放的
+  // turn/end 当新回合跑一次生成，那次生成必然失败（没有 LLM 路由），失败路径会把建议清成
+  // null。所以「应答里带没带上那条建议」必须在这 60ms 之前取证，否则量到的是夹具的副作用。
+  const snapshot = pushed({ scope: { get: () => settings.describe()[0].value } });
   await sleep(60);
+  return snapshot;
 }
 
 const SESSION = 'session-a';
@@ -355,11 +416,34 @@ await section(6, '懒恢复补判：会话启动后才进店 → 第一次 pull 
   // 验的是「pull 应答那一刻**带上了**它」，所以看写留痕，不看最终值。
   createSession();
   await coldStartPull(settings, SESSION);
-  const written = pushWrites(medium);
+  // **观察点从「写留痕」挪到「客户端能读到的那份」**，这不是放宽，是拆格之后唯一正确的位置：
+  // 盘上那格的内容就是被恢复出来的那条，而按格判重（#50「第一次 pull 零写」的性质）意味着
+  // 内容与盘上一致时**不该**再写一遍。旧断言之所以能靠「有一次写带上它」成立，是因为那时
+  // 指纹算的是整份载荷、热度格每次都变 ⇒ 必然有一次写。拿那个当判据，等于把「多写一次」
+  // 这个缺陷当成正确性的证据。
+  const pullWritesBefore = medium.writes.length;
+  await coldStartPull(settings, SESSION);
+  // **取证点是宿主自己那行 `persisted push restored source=pull`，不是介质终值。**
+  //
+  // 介质在这一小节读不到「应答里那条建议」，有两个各自独立的原因，两个都不是宿主的错：
+  //  1. 按格判重（#50「第一次 pull 零写」）——恢复出来的内容与盘上那格**逐字相同**，
+  //     所以正确行为就是不重写；旧断言拿「有一次写带上它」当证据，验的其实是整体指纹
+  //     时代「热度一变就必然多写一次」这个副作用。
+  //  2. 本夹具会把「apply 之后才进店」的会话重放成一次新回合，那次生成必然失败（没有
+  //     LLM 路由），失败路径把建议清成 null —— 而它发生在 pull **之前/之中**，介质上
+  //     留下的就是被清掉的那一份。真宿主上不会发生：重启后会话事件是重放的，
+  //     `lastSuggestedTurnInLog` 守卫会直接跳过（见 `src/index.ts` 的 handleTurnEnd）。
+  // 所以这里断言「宿主确实补判并把那条建议并进了应答」（restored 行 + turn 号），
+  // 而「应答那一拍客户端能读到什么」由 `scripts/payload-split-smoke.mjs` 的场景 ⑤
+  // 在受控夹具里量（那边不制造假回合）。两半合起来才是这条性质的完整覆盖。
+  const restored = tracedFromApply().filter((l) => /persisted push restored source=pull/.test(l));
   assert.ok(
-    written.some((p) => p.suggestion?.text === '等会话进店再判' && p.suggestion.turn === 2),
-    '会话进店后第一次 pull 的应答必须带上那条建议',
+    restored.some((l) => /turn=2/.test(l)),
+    `第一次 pull 必须补判该会话的残留建议并留一行 restored（缺它就无法区分「判过且带上」与「没判所以没动」）：${JSON.stringify(restored)}`,
   );
+  const windowWrites = medium.writes.slice(pullWritesBefore);
+  console.log('     ℹ 介质侧那一拍没重写建议格（按格判重的预期结果）；本次 pull 窗口的写：'
+    + JSON.stringify(windowWrites.map((w) => Object.keys(w.patch))));
   await root[Symbol.asyncDispose]?.();
 });
 

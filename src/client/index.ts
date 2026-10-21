@@ -216,6 +216,12 @@ function unwrapSettingsDoc(response: unknown): SettingsDoc | undefined {
  */
 type PushedPayload = {
   suggestion?: { turn?: unknown; frame?: unknown; final?: unknown } | null;
+  /**
+   * `hot` / `history` / `historySessionId` 自 #36 建议 2 起住在**另一格** `_hot`
+   * 里（见 {@link HotPushedPayload}）。这里仍留着这三个键只为一个理由：滚动升级期间
+   * 新客户端可能连着旧宿主（旧宿主的 `_push` 里带着它们）。读到就照用，读不到就走
+   * 「保留现值」——两格都不在时决不能把热度清空。
+   */
   hot?: unknown;
   history?: unknown;
   historySessionId?: unknown;
@@ -225,6 +231,20 @@ type PushedPayload = {
   final?: unknown;
   completion?: { draft?: unknown; text?: unknown; final?: unknown } | null;
   completionSessionId?: unknown;
+};
+
+/**
+ * `_hot` 载荷解析出的结构（#36 建议 2 拆出的**热度格**）。
+ *
+ * 缺省语义与建议格同规，但**按格成立**：整格缺省（旧宿主从没写过 `_hot`）= 这一格
+ * 没说话 = 保留现值，绝不是「热度清空」。这一条是拆分不伤人的前提——否则旧宿主 +
+ * 新客户端会因为读不到 `_hot` 而把热度列表与历史环一起清掉。
+ */
+type HotPushedPayload = {
+  hot?: unknown;
+  total?: unknown;
+  history?: unknown;
+  historySessionId?: unknown;
 };
 
 /** 投影键（与 host 端 PROJECTION_KEY 一致）。 */
@@ -1775,6 +1795,19 @@ function applyBody(ctx: Context): void {
   if (remote?.settings !== undefined) {
     let lastRevision = -1;
     let describeInFlight = false;
+    /**
+     * 上一次**解析过的 `_push` 原文**与它的解析产物（#36 建议 2 的读侧收益）。
+     *
+     * 为什么存原文而不是对象：宿主拆格之后，一次纯热度变化只动 `_hot`，`_push` 那串
+     * 字节**逐字不变**。拿原文当判据就能整段跳过建议格的重复工作——重复 `JSON.parse`、
+     * 重复走一遍帧判据（`resolvePayloadFrames` 会读写台账），以及由此产生的
+     * 「建议对象换了一个新引用」。三者都是一次纯热度变化**不该**触发的。
+     *
+     * 陈旧帧被拒时同样先把原文记下来：处理它 = 丢弃它，重复投递不该再处理一遍。
+     */
+    let lastPushRaw = '\u0000'; // 哨兵：保证第一次必然解析
+    let lastPushed: PushedPayload | null = null;
+    let lastFrames: ReturnType<typeof resolvePayloadFrames> | null = null;
     const applySettings = (): void => {
       void (async () => {
         if (describeInFlight) return;
@@ -1789,14 +1822,38 @@ function applyBody(ctx: Context): void {
           if (rev === lastRevision) return;
           lastRevision = rev;
           const v = (entry.value ?? {}) as Record<string, unknown>;
-          let pushed: PushedPayload | null = null;
-          if (typeof v._push === 'string' && v._push !== '') {
+          const pushRaw = typeof v._push === 'string' ? v._push : '';
+          const pushCellChanged = pushRaw !== lastPushRaw;
+          let pushed: PushedPayload | null;
+          if (pushCellChanged) {
+            lastPushRaw = pushRaw;
+            pushed = null;
+            if (pushRaw !== '') {
+              try {
+                pushed = JSON.parse(pushRaw) as PushedPayload;
+              } catch {
+                pushed = null;
+              }
+            }
+            lastPushed = pushed;
+          } else {
+            // 建议格逐字未变 ⇒ 连 parse 都不做，直接沿用上次的产物（对象引用也不换）。
+            pushed = lastPushed;
+          }
+          // 热度格（`_hot`）：与 `_push` **各自解析、各自判变**。解析失败/整格缺省都
+          // 按「这一格没说话」处理（下面每个字段都回落到 `settings.x` 现值），
+          // 绝不落到「清空」——那是把宿主的读失败放大成用户数据丢失。
+          let hotPushed: HotPushedPayload | null = null;
+          if (typeof v._hot === 'string' && v._hot !== '') {
             try {
-              pushed = JSON.parse(v._push) as PushedPayload;
+              hotPushed = JSON.parse(v._hot) as HotPushedPayload;
             } catch {
-              pushed = null;
+              hotPushed = null;
             }
           }
+          // 一格一个来源：新宿主写 `_hot`，旧宿主把热度塞在 `_push` 里。两处的键
+          // 都读，优先用新格（新宿主两格都写时不会互相覆盖）。
+          const hotSource: HotPushedPayload = hotPushed ?? pushed ?? {};
           // ── #38：帧号与终态判据（载荷解析处，越靠前越好：陈旧帧根本不该进入状态）──
           //
           // 判据本体在 `accept-guard.ts` 的 {@link resolvePayloadFrames}（纯函数，可被
@@ -1809,12 +1866,19 @@ function applyBody(ctx: Context): void {
           // 台账 `frameLedger` **独立于文档 revision**：上面 `rev === lastRevision` 是文档级
           // 相等早退（载荷自带的 `rev` 客户端从不读），两者不共用判据，否则宿主一次自写就会
           // 把终帧判成「没变化」而丢掉。
-          const frames = resolvePayloadFrames({
-            ledger: frameLedger,
-            pushed,
-            prevCompletionFrame: settings.completionFrame,
-          });
-          frameLedger = frames.ledger;
+          let frames: ReturnType<typeof resolvePayloadFrames>;
+          if (pushCellChanged || lastFrames === null) {
+            frames = resolvePayloadFrames({
+              ledger: frameLedger,
+              pushed,
+              prevCompletionFrame: settings.completionFrame,
+            });
+            frameLedger = frames.ledger;
+            lastFrames = frames;
+          } else {
+            // 建议格没变 ⇒ 帧判据一行都不重跑（台账不动、对象引用不换、`traceClear` 不触发）。
+            frames = lastFrames;
+          }
           if (!frames.accept) {
             traceOnce('stale-frame', frames.outcome,
               ` bucket=${String(frames.bucket)} ${frameHintFields(frames.suggestionFrame)}`
@@ -1837,17 +1901,19 @@ function applyBody(ctx: Context): void {
               : (pushed.suggestion as typeof settings.suggestion),
             // 归一化后的帧提示（#38）：作废/缺省都由判据本身回 {@link LEGACY_FRAME_HINT}。
             suggestionFrame: frames.suggestionFrame,
-            hot: pushed?.hot === null || pushed?.hot === undefined
-              ? null
-              : (pushed.hot as typeof settings.hot),
+            // 热度快照：显式 null = 宿主说「没有热度」；缺省 = 这一格没说话 ⇒ 保留现值。
+            // （旧实现里缺省会被判成 null，两格拆开之后这个区别第一次变得可观测。）
+            hot: hotSource.hot === null || hotSource.hot === undefined
+              ? (hotPushed === null && pushed?.hot === undefined ? settings.hot : null)
+              : (hotSource.hot as typeof settings.hot),
             // history 省略 = host 本次推送不携带历史（保留现值）。启动对账推送正是
             // 这种形态：它只负责恢复建议，历史留给紧随其后的 pull 应答，此时若把
             // 本地历史清成 [] 会把「切回会话仍有历史」的体验一起清掉。
-            history: Array.isArray(pushed?.history)
-              ? (pushed?.history as unknown[]).filter((t): t is string => typeof t === 'string')
+            history: Array.isArray(hotSource.history)
+              ? (hotSource.history as unknown[]).filter((t): t is string => typeof t === 'string')
               : settings.history,
-            historySessionId: Array.isArray(pushed?.history)
-              ? (typeof pushed?.historySessionId === 'string' ? pushed.historySessionId : null)
+            historySessionId: Array.isArray(hotSource.history)
+              ? (typeof hotSource.historySessionId === 'string' ? hotSource.historySessionId : null)
               : settings.historySessionId,
             suggestionSessionId: typeof pushed?.suggestionSessionId === 'string' ? pushed.suggestionSessionId : null,
             // 续写：载荷省略 = host 未更新（保留现值，显示时仍以 draft 全等校验兜底）；
