@@ -36,21 +36,38 @@ import {
   buildFullAccept,
   buildWordAccept,
   commitDraftIfPristine,
+  emptyFrameLedger,
+  resolvePayloadFrames,
+  frameHintFields,
+  gateAccept,
+  LEGACY_FRAME_HINT,
   readDraftSnapshot,
   wordAcceptSettled,
   wordMatchBase,
   type DraftSnapshot,
+  type FrameHint,
+  type FrameLedger,
 } from './accept-guard.ts';
-import { alignCompletion } from './completion-align.ts';
+import { alignCompletion, decideInlineForm } from './completion-align.ts';
 import { buildOpsPayload, createSeqSource } from './ops-envelope.ts';
 import { nextAcceptChunk } from './chunk.ts';
 import {
+  anchorMovedBeyond,
   configValuesEqual,
   decideInlineArm,
+  decideOverlayPaint,
   initialInlineArmState,
+  initialTallyState,
+  OPS_TRACE_PREFIX,
   settleInlineTimer,
+  shouldSkipDeferredRepaint,
+  stepReasonGate,
+  stepTally,
+  type AnchorPoint,
   type InlineArmGhostKind,
   type InlineArmState,
+  type OverlayShape,
+  type TallyState,
 } from './inline-arm-policy.ts';
 import { keyCodeOf } from './keyspec.ts';
 /**
@@ -188,6 +205,28 @@ function unwrapSettingsDoc(response: unknown): SettingsDoc | undefined {
   return undefined;
 }
 
+/**
+ * `_push` 载荷解析出的结构（#38 后新增 `frame`/`final` 两个可选帧字段）。
+ *
+ * 必须写成**具名类型**：原先这里是 `let pushed: {…} | null = null` 配
+ * `JSON.parse(...) as typeof pushed`，而 `typeof pushed` 取到的是该处**已窄化**的
+ * 类型（`= null` 的初始化把它的值类型收成了 `null`），于是 `pushed` 在整个 `next`
+ * 字面量里都是 `never`，每一个 `pushed?.x` 都报 TS2339——#34 那 41 条里有 18 条
+ * 就是这一处派生的（诊断配置没接进构建，所以长期没人看见）。
+ */
+type PushedPayload = {
+  suggestion?: { turn?: unknown; frame?: unknown; final?: unknown } | null;
+  hot?: unknown;
+  history?: unknown;
+  historySessionId?: unknown;
+  suggestionSessionId?: unknown;
+  /** 建议帧字段的兜底载体（宿主若把帧号打在信封顶层）。 */
+  frame?: unknown;
+  final?: unknown;
+  completion?: { draft?: unknown; text?: unknown; final?: unknown } | null;
+  completionSessionId?: unknown;
+};
+
 /** 投影键（与 host 端 PROJECTION_KEY 一致）。 */
 const PROJECTION_KEY = 'suggestGhost';
 /** 幽灵文本的 DOM 标记，用于定位/清理。 */
@@ -286,12 +325,32 @@ function parseAcceptKey(spec: string): ((event: KeyboardEvent) => boolean) | und
     && event.shiftKey === mods.has('shift');
 }
 
-/** 当前应显示的幽灵内容：LLM 建议（完整文本）或历史补全（已输入前缀 + 剩余后缀）。 */
+/**
+ * 当前应显示的幽灵内容：LLM 建议（完整文本）或历史补全（已输入前缀 + 剩余后缀）。
+ *
+ * 每个形态都带一份 **归一化后的帧提示** `frame`（#38）：
+ *  - `llm` ← `_push.suggestion` 的 `frame`/`final`；
+ *  - `inline` ← `_push.completion` 的 `final`（本期宿主不给续写出帧号，见 accept-guard.ts 末段帧判据）；
+ *  - `history` ← 本地候选，不是一次「生成」，恒为 {@link LEGACY_FRAME_HINT}。
+ * 采纳链（Tab / `→`）据此拒绝 provisional 帧；缺省即旧载荷行为不变。
+ */
 type GhostContent =
-  | { kind: 'llm'; text: string; acceptKey: string }
-  | { kind: 'history'; prefix: string; suffix: string; full: string }
+  | { kind: 'llm'; text: string; acceptKey: string; frame: FrameHint }
+  | { kind: 'history'; prefix: string; suffix: string; full: string; frame: FrameHint }
   /** 停顿续写：LLM 生成的草稿延续（prefix=当时草稿，suffix=续写文本，full=prefix+suffix）。 */
-  | { kind: 'inline'; prefix: string; suffix: string; full: string };
+  | { kind: 'inline'; prefix: string; suffix: string; full: string; frame: FrameHint };
+
+/**
+ * overlay 绘制所需的最小形状（{@link decideOverlayPaint} 的入参）。
+ *
+ * `anchorText` 是**几何**意义上的锚定文本（尾巴从哪起画），与形态判据无关：
+ * 它相同只代表「尾巴的起点没变」，因而行尾坐标在没有滚动/尺寸事件时不可能移动。
+ */
+const overlayShapeOf = (content: GhostContent): OverlayShape => ({
+  kind: content.kind,
+  anchorText: content.kind === 'llm' ? '' : content.prefix,
+  suffixText: content.kind === 'llm' ? content.text : content.suffix,
+});
 
 /**
  * 幽灵文本 overlay 管理器：在输入框（textarea / Lexical contenteditable）上
@@ -346,6 +405,24 @@ class GhostOverlay {
   private resizeObserver: ResizeObserver | null = null;
   /** 正在显示的内容（供 ResizeObserver 回调重对齐后重新自检）。 */
   private current: GhostContent | null = null;
+  /**
+   * 上一次**成功绘制**的形状（#38 快路径的输入）。与 `current` 同步更新，
+   * 但 `hide()` / 自检被拦时一并清空——快路径只能在「屏幕上真有幽灵」时走。
+   */
+  private shape: OverlayShape | null = null;
+  /** overlay 当前是否真的在绘制（`display:block` 且 `verify()` 通过、`data-shown="1"`）。 */
+  private painted = false;
+  /**
+   * 锚点脏标记：自上次全量对齐后发生过滚动 / 尺寸变化 / 重新挂载，则行尾坐标**可能**
+   * 已移动，增长帧最多只能轻量重测一次，不能零测量。
+   */
+  private anchorDirty = true;
+  /** 上次全量对齐量到的行尾锚点（null = 没量过 / llm 形态没有行尾锚点）。 */
+  private anchor: AnchorPoint | null = null;
+  /** 最近一次绘制是否走了增长快路径（错峰补渲染据此跳过重复重画）。 */
+  private lastPaintWasGrowth = false;
+  /** 绘制计数（留痕与冒烟外部可观测；只有数字，没有正文）。 */
+  private paintStats = { growth: 0, remeasure: 0, rebuild: 0 };
 
   constructor() {
     this.el = document.createElement('div');
@@ -368,8 +445,8 @@ class GhostOverlay {
       // 与类注释，display 让节点彻底退出渲染，避免任何过渡期双绘。
       'display:none',
     ].join(';');
-    this.onScroll = () => this.alignAndVerify();
-    this.onResize = () => this.alignAndVerify();
+    this.onScroll = () => { this.anchorDirty = true; this.alignAndVerify(); };
+    this.onResize = () => { this.anchorDirty = true; this.alignAndVerify(); };
     // 幽灵激活时隐藏原生 placeholder（二者同位置，避免重叠）。
     // 状态标记打在**我们自己的 overlay 节点**上（data-shown），经 body:has() 关联
     // 占位元素——React/Lexical 重渲染会剥掉编辑器上的外来类（实测发生过），而
@@ -441,7 +518,23 @@ class GhostOverlay {
       if (this.scroller !== null) this.resizeObserver.observe(this.scroller);
       if (parent !== null) this.resizeObserver.observe(parent);
     }
+    // 换了挂载点，坐标系整个变了：锚点必须重测，快路径在此之前不得命中。
+    this.anchorDirty = true;
     this.alignAndVerify();
+  }
+
+  /**
+   * 复位绘制状态（hide / detach / 自检被拦都走这里）。
+   *
+   * 快路径的前提是「屏幕上已经有一枚自检通过的幽灵」，所以任何让 overlay 退出绘制的
+   * 动作都必须把 `painted`/`shape` 一起摘掉，否则下一帧会在没画出来的节点上只改文本。
+   */
+  private resetPaintState(): void {
+    this.painted = false;
+    this.shape = null;
+    this.anchor = null;
+    this.anchorDirty = true;
+    this.lastPaintWasGrowth = false;
   }
 
   private detach(): void {
@@ -456,6 +549,7 @@ class GhostOverlay {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.current = null;
+    this.resetPaintState();
     this.el.dataset.shown = '0';
     this.el.style.display = 'none';
     window.removeEventListener('resize', this.onResize);
@@ -510,6 +604,10 @@ class GhostOverlay {
     const end = this.current !== null && this.current.kind !== 'llm'
       ? this.draftEndRect()
       : null;
+    // 全量对齐即「锚点已知」：记下这次量到的行尾，并清掉脏标记。
+    // 增长快路径据此决定要不要再测（{@link anchorMovedBeyond}）。
+    this.anchor = end === null ? null : { right: end.right, top: end.top };
+    this.anchorDirty = false;
     if (end !== null) {
       left = originLeft + (end.right - originViewportX);
       // `end` 是末字符矩形：其 top 是**文本顶部**（字形墨迹上缘），不是行框顶部。
@@ -690,34 +788,126 @@ class GhostOverlay {
     this.el.style.display = 'block';
     if (!this.verify()) {
       // ③ 自检不合格：两个开关一起回退，避免「幽灵不画但 placeholder 已让位」
-      //    造成占位文案凭空消失。
+      //    造成占位文案凭空消失。绘制状态同步摘掉——**增长快路径的前提就是这一位**，
+      //    不摘就会在没有真的画出来的节点上只改文本（verify 的语义不许改）。
+      this.painted = false;
       this.el.style.display = 'none';
       this.el.dataset.shown = '0';
       return;
     }
+    this.painted = true;
   }
 
-  /** 显示幽灵内容（对齐由滚动/尺寸事件持续维护）；隐藏 placeholder 避免重叠。 */
+  /**
+   * 显示幽灵内容（对齐由滚动/尺寸事件持续维护）；隐藏 placeholder 避免重叠。
+   *
+   * ## 两条路径（#38 第 2 条）
+   *
+   *  - **全量**（现状）：`textContent=''` 重建后缀 span → `align()` → `verify()`，
+   *    两轮强制同步布局。形态变化、首次显示、自检被拦后的重试都走它。
+   *  - **增长快路径**：同一次生成的文本变长（形态与锚定文本都没变、新后缀以旧后缀
+   *    开头）**只改后缀 span 的文本**：
+   *     - 锚点未脏（其间没有滚动/尺寸/重挂载事件）→ 一次测量都不做；
+   *     - 锚点脏了 → 只量一次行尾，位移不超过 {@link ANCHOR_REDRAW_TOLERANCE_PX}
+   *       就不重排，超了才落回全量。
+   *    快路径**不碰** `display` / `data-shown`：进入它的前提是两者已一致且自检刚通过，
+   *    因此上面那两条顺序约束与「verify 失败即不绘制」都原样保持。
+   *
+   * @param content - 本帧要显示的幽灵内容。
+   */
   show(content: GhostContent): void {
-    this.el.textContent = '';
-    if (content.kind === 'llm') {
-      this.el.textContent = content.text;
-    } else {
-      // 只渲染后缀。**不再**用「隐形 prefix 撑出草稿宽度」定位——那要求 overlay
-      // 自己的排版与编辑器逐像素一致，一旦某帧不成立（实测：prefix 撑出 0 宽），
-      // 后缀就从内容原点起画，直接压在用户草稿上。位置改由 align() 用 DOM 量出的
-      // 草稿行尾锚定，与本元素的排版完全解耦。
-      const suffix = document.createElement('span');
-      suffix.textContent = content.suffix;
-      this.el.append(suffix);
+    const next = overlayShapeOf(content);
+    const action = decideOverlayPaint({
+      prev: this.shape,
+      next,
+      painted: this.painted,
+      anchorDirty: this.anchorDirty,
+    });
+    if (action !== 'rebuild' && this.applyGrowthText(content, next)) {
+      this.current = content;
+      this.shape = next;
+      this.lastPaintWasGrowth = true;
+      if (action === 'grow-only') {
+        this.paintStats.growth += 1;
+        return;
+      }
+      // 锚点脏：轻量量一次行尾（一次 Range 测量），没超阈值就不重排。
+      this.paintStats.remeasure += 1;
+      const rect = this.draftEndRect();
+      const point: AnchorPoint | null = rect === null ? null : { right: rect.right, top: rect.top };
+      if (point !== null && !anchorMovedBeyond(this.anchor, point)) {
+        this.anchor = point;
+        this.anchorDirty = false;
+        return;
+      }
+      // 行尾真的移动了（或量不到）：落回全量重排。
     }
+    this.rebuild(content, next);
+  }
+
+  /** 全量重建 + 对齐 + 自检（现状路径）。 */
+  private rebuild(content: GhostContent, next: OverlayShape): void {
+    this.el.textContent = '';
+    this.buildText(content);
     this.current = content;
+    this.shape = next;
+    this.lastPaintWasGrowth = false;
+    this.paintStats.rebuild += 1;
     // 先按当前几何定位，再由自检决定是否真的绘制（防止第一帧就糊在正文上）。
     this.alignAndVerify();
   }
 
+  /** 全量建文本节点：llm 整段文本；其余只渲染后缀（锚定由 align() 负责）。 */
+  private buildText(content: GhostContent): void {
+    if (content.kind === 'llm') {
+      this.el.textContent = content.text;
+      return;
+    }
+    // 只渲染后缀。**不再**用「隐形 prefix 撑出草稿宽度」定位——那要求 overlay
+    // 自己的排版与编辑器逐像素一致，一旦某帧不成立（实测：prefix 撑出 0 宽），
+    // 后缀就从内容原点起画，直接压在用户草稿上。位置改由 align() 用 DOM 量出的
+    // 草稿行尾锚定，与本元素的排版完全解耦。
+    const suffix = document.createElement('span');
+    suffix.textContent = content.suffix;
+    this.el.append(suffix);
+  }
+
+  /**
+   * 增长帧的文本写入：后缀 span **只改文本**，不重建节点。
+   *
+   * @returns false = 结构对不上（节点被外来者摘走 / 形态与节点形状不符），调用方落回全量。
+   */
+  private applyGrowthText(content: GhostContent, next: OverlayShape): boolean {
+    if (content.kind === 'llm') {
+      // llm 形态是裸文本，没有 span 结构可依赖；只要节点仍是 overlay 自己即可整段替换。
+      this.el.textContent = next.suffixText;
+      return true;
+    }
+    const holder = this.el.firstElementChild;
+    if (holder === null || holder.textContent === undefined) return false;
+    // 长度单调已由判据保证（同一次生成的文本只会长），这里直接改尾巴那一个节点。
+    holder.textContent = next.suffixText;
+    return true;
+  }
+
+  /** 屏幕上是否正有一枚「靠增长快路径维持」的幽灵（错峰补渲染据此让路）。 */
+  get growing(): boolean {
+    return this.painted && this.lastPaintWasGrowth;
+  }
+
+  /** 是否已绘制（自检通过）。 */
+  get isPainted(): boolean {
+    return this.painted;
+  }
+
+  /** 绘制计数（只有数字；留痕用，见 `renderTraced` 的 tally 出口）。 */
+  get paints(): Readonly<{ growth: number; remeasure: number; rebuild: number }> {
+    return this.paintStats;
+  }
+
   hide(): void {
     this.current = null;
+    this.resetPaintState();
     this.el.style.display = 'none';
     this.el.textContent = '';
     this.el.dataset.shown = '0';
@@ -791,6 +981,8 @@ function applyBody(ctx: Context): void {
     history?: readonly string[];
     historySessionId?: string | null;
     suggestion?: typeof settings.suggestion;
+    /** 帧提示（#38）。旧缓存没有这一项 → 读回时按 {@link LEGACY_FRAME_HINT} 兜底。 */
+    suggestionFrame?: FrameHint;
     suggestionSessionId?: string | null;
   };
   const loadFromCache = (): CachedData => {
@@ -820,6 +1012,45 @@ function applyBody(ctx: Context): void {
    * 会叠在同一位置，必须抑制幽灵显示（Cursor/VSCode 同款处理）。 */
   /** 上一次「续写不显示」的理由，用于把每帧都要跑的判定压成状态变化时一行。 */
   let lastCompletionSkip = '';
+  /**
+   * 帧台账（#38）：按 `(会话, turn)` 记下已见过的最大帧号，比它小的载荷整条丢弃。
+   * 只在 `applySettings` 解析 `_push` 时读写，页面级、不持久化（重开页面由宿主
+   * 对账推送重建，同帧重发本来就必须放行）。
+   */
+  let frameLedger: FrameLedger = emptyFrameLedger();
+  /**
+   * #39：各处「判据在跑」的留痕闸口——**按理由变化才打**。
+   *
+   * 每帧都跑判定是这些分支的共同点（`scheduleInlineTrigger` 由 render 首行调用、
+   * 采纳闸在每次按键上评估），逐次记录就又造出 #21 那 1127 行。键名即分支名，
+   * 值是该分支上一次打印过的理由（null = 闸门已重新打开）。
+   */
+  const traceGates: Record<string, string | null> = {
+    'inline-arm-cancel': null,
+    'tab-abandon': null,
+    'word-abandon': null,
+    'accept-gate-tab': null,
+    'accept-gate-word': null,
+    'stale-frame': null,
+    'form-hold': null,
+    'deferred-repaint': null,
+  };
+  /**
+   * 打一行留痕（同一理由连续到达只打第一行）。
+   *
+   * 隐私口径与 `completion not shown` 那行一致（index.ts 里既有的写法）：
+   * **只打字符数与原因，不打正文**，故调用方传进来的 `fields` 不得含草稿/建议文本。
+   */
+  const traceOnce = (slot: string, reason: string, fields: string): void => {
+    const step = stepReasonGate(traceGates[slot] ?? null, reason);
+    traceGates[slot] = step.last;
+    if (!step.print) return;
+    console.warn(`${OPS_TRACE_PREFIX} ${slot}: reason=${reason}${fields === '' ? '' : ` ${fields}`}`);
+  };
+  /** 判据通过 / 状态解除时重新开门（静默）。 */
+  const traceClear = (slot: string, reason: string | null): void => {
+    traceGates[slot] = stepReasonGate(traceGates[slot] ?? null, reason).last;
+  };
   let composing = false;
 
   /** live 设置值（来自 suggest-ghost 命名空间；缺失时用默认）。 */
@@ -844,8 +1075,16 @@ function applyBody(ctx: Context): void {
       truncated: boolean;
       acceptKey: string;
     } | null;
+    /**
+     * `suggestion` 的归一化帧提示（#38）。**不**挂在 suggestion 对象上，因为
+     * 冷启动缓存里那份旧 suggestion 没有这两个字段，混在一个对象里会让「缺省」与
+     * 「显式 false」难以区分。缺省 = {@link LEGACY_FRAME_HINT}。
+     */
+    suggestionFrame: FrameHint;
     /** host 实时推送：停顿续写结果（draft=生成时的草稿，文本不符则不显示）。 */
     completion: { draft: string; text: string } | null;
+    /** `completion` 的归一化帧提示（本期宿主不出帧号，只可能带 `final`）。 */
+    completionFrame: FrameHint;
     /** completion 所属会话；与当前会话不符时不显示。 */
     completionSessionId: string | null;
     /** host 实时推送：跨会话热度快照。 */
@@ -866,7 +1105,11 @@ function applyBody(ctx: Context): void {
     inlineMinChars: 4,
     wordAccept: true,
     suggestion: cached.suggestion ?? null,
+    // 缓存里的建议可能来自上一进程；帧提示一起持久化，避免把 provisional 帧的
+    // 建议冷启动后当成终帧采纳（读不到时按旧载荷兜底）。
+    suggestionFrame: cached.suggestionFrame ?? LEGACY_FRAME_HINT,
     completion: null,
+    completionFrame: LEGACY_FRAME_HINT,
     completionSessionId: null,
     hot: cached.hot ?? null,
     history: cached.history ?? [],
@@ -1026,11 +1269,38 @@ function applyBody(ctx: Context): void {
         lastCompletionSkip = '';
       }
       if (aligned !== null && aligned.ok) {
-        return { kind: 'inline', prefix: draft, suffix: aligned.suffix, full: aligned.full };
+        return { kind: 'inline', prefix: draft, suffix: aligned.suffix, full: aligned.full, frame: settings.completionFrame };
       }
+      // #38 第 4 条：**同一次生成内形态不得翻转**。`alignCompletion` 的裁空一支
+      // （载荷仍然拥有这份草稿，只是你已经把整段续写打完了，completion-align.ts:87）
+      // 本身不是错误，但按本函数的分支顺序会让这一帧继续往下落到历史补全——用户看到的
+      // 是「灰色尾巴无声换成另一段不相干的文字」。判据见 completion-align.ts 末段 `decideInlineForm`：它靠
+      // `alignCompletion` 的归属前缀关系（#33 的「边打边等」主路径因此不受影响），
+      // 不靠草稿逐字相同。
+      const form = decideInlineForm({
+        inlineEnabled: settings.inlineEnabled,
+        draft,
+        payload: completion,
+        payloadBelongsToCurrentSession: settings.completionSessionId !== null
+          && settings.completionSessionId === currentId,
+        alignedOk: false, // 上面已就地的 `aligned.ok` 分支返回，能走到这里必然没显示成
+        alignedReason: aligned === null || aligned.ok ? null : aligned.reason,
+      });
+      if (form.hold !== null) {
+        traceOnce('form-hold', form.hold,
+          ` draftChars=${draft.length} payloadDraftChars=${completion?.draft?.length ?? -1}`
+          + ` completionChars=${completion?.text?.length ?? -1} wouldBe=history`
+          + ` ${frameHintFields(settings.completionFrame)}`);
+        // 宁可不显示，也不在这一帧换成 history：下一次宿主出新载荷、或用户把草稿改成
+        // 「不再拥有」（删字/改中间），历史补全自然回来。
+        return null;
+      }
+      traceClear('form-hold', null);
     }
     // 模式 1：草稿非空 → 历史前缀补全（打分制：新近度为主、频次/热度为辅）。
     if (settings.historyEnabled && draft.trim() !== '') {
+      // 能落到这里说明「续写这一路」没有把形态扣住（见上面的 form.hold），闸门重新打开。
+      traceClear('form-hold', null);
       // 草稿是斜杠命令整行时（如 `/later +3m 我重新部署了…`），用命令名之后
       // 的「内容」部分去匹配历史。`/later` `recordInput:false`，历史里只有
       // 到点注入的内容部分；保留时间参数只会让所有候选 startsWith 失败。
@@ -1065,7 +1335,9 @@ function applyBody(ctx: Context): void {
       // 对斜杠命令场景，prefix=draft 让幽灵对齐到已输入字符（含命令前缀），
       // suffix 从 contentDraft 与 full 的归一化匹配段截尾——见 historySuggestion。
       const common = commonPrefixLength(contentDraft, full);
-      return { kind: 'history', prefix: draft, suffix: full.slice(common), full };
+      // 历史补全是**本地即时**算出的候选，不是一次「生成」，没有帧的概念：
+      // 恒按终帧处理（采纳闸因此对这一形态逐字保持现状）。
+      return { kind: 'history', prefix: draft, suffix: full.slice(common), full, frame: LEGACY_FRAME_HINT };
     }
 
     // 模式 2：草稿为空 → LLM 建议（host 实时推送）。过期判据（0.1.2 形态）：
@@ -1077,7 +1349,8 @@ function applyBody(ctx: Context): void {
     const stale = snapshot.running
       || (settings.suggestionSessionId !== null && settings.suggestionSessionId !== currentId);
     if (stale) return null;
-    return { kind: 'llm', text: suggestion.text, acceptKey: suggestion.acceptKey };
+    // 帧提示随内容一起交给采纳链（#38）：provisional 帧可以显示，但不许采纳。
+    return { kind: 'llm', text: suggestion.text, acceptKey: suggestion.acceptKey, frame: settings.suggestionFrame };
   };
 
   /** 缓存的上一次输入框查询结果（React 可能重建节点；isConnected 校验兜底）。 */
@@ -1306,20 +1579,33 @@ function applyBody(ctx: Context): void {
   };
   /** armed 策略状态（纯函数状态机的当前值，见 inline-arm-policy.ts）。 */
   let armState: InlineArmState = initialInlineArmState();
-  /** 上一次打印过的 skip 形态；只在形态变化时打印，避免既有的 skip 诊断跟着风暴刷。 */
-  let lastSkipReason: string | null = null;
   /**
    * #21 待查项 1 的定位探针：按**来源**统计 render 被调用的次数。
    *
    * 风暴的直接成因已确认是「每个来源都调 render × 每次 render 都重置计时器」，前半句
-   * 到底是哪个来源在刷还需要运行时计数才能定论，故这里按来源分别累加，只在 armed 那一行
-   * 汇总打印（armed 现在每份草稿至多一次，不会刷屏）。`other` = 错峰补渲染 / 会话列表 /
-   * 设置事件 / IME 组合等零散来源。
+   * 到底是哪个来源在刷还需要运行时计数才能定论，故这里按来源分别累加。
+   * `other` = 会话列表 / 设置事件 / IME 组合等零散来源（错峰补渲染现在被增长快路径
+   * 让路，跳过次数单独计数）。
+   *
+   * ⚠️ 这组计数此前**只累加、从不打印**——注释里写的「只在 armed 那一行汇总打印」指的
+   * 是早已摘空的日志（#39 的典型形态：判据在跑、留痕被摘空）。现在由
+   * {@link stepTally} 给一个**按归因理由变化才打**的出口：占大头的来源变了、
+   * 且距上次打印已累计 ≥ {@link TALLY_MIN_INTERVAL_RENDERS} 次 render，才出一行。
    */
   const renderHits = { session: 0, input: 0, face: 0, other: 0 };
-  /** 计一次来源并渲染（所有 render 调用都走这里，armed 日志据此归因）。 */
+  /** tally 打印状态（理由 + 上次打印时的总数）。 */
+  let tallyState: TallyState = initialTallyState();
+  /** 被增长快路径让路、没有执行的错峰补渲染次数。 */
+  let deferredRepaintSkips = 0;
+  /** 计一次来源、必要时打一行 tally，然后渲染（所有 render 调用都走这里）。 */
   const renderTraced = (source: keyof typeof renderHits): void => {
     renderHits[source] += 1;
+    const tally = stepTally(tallyState, renderHits);
+    if (tally.print) {
+      tallyState = tally.state;
+      console.warn(`${OPS_TRACE_PREFIX} render-source: reason=${tally.state.reason ?? 'none'}`
+        + ` ${tally.line.replace('render tally: ', '')} deferredSkipped=${deferredRepaintSkips}`);
+    }
     render();
   };
   /**
@@ -1374,21 +1660,21 @@ function applyBody(ctx: Context): void {
       // 两条既有的 `inline skip` 诊断保留，但**只在形态变化时**打印：它们在风暴里会
       // 长期成立，逐次记录就又变成 #21 的那 1127 行。`below-min-chars` 等旧实现本就静默，
       // 继续静默。
+      // #39：这两支曾经「判据在跑、留痕被摘空」——只剩两个空 if 块，于是「续写开关被
+      // 关了」与「没有绑定会话」与「一切正常只是没到阈值」在观测上完全同形。
+      // 现在补回一行，走统一的 reason-change 闸门（`lastSkipReason` 那套手写门因此退役，
+      // 判定本身没动，只是留痕有了出口）。
       if (decision.reason === 'disabled' || decision.reason === 'no-session') {
-        if (lastSkipReason !== decision.reason) {
-          if (decision.reason === 'disabled') {
-
-          } else {
-
-          }
-          lastSkipReason = decision.reason;
-        }
+        traceOnce('inline-arm-cancel', decision.reason,
+          ` draftChars=${obs.draft.length} minChars=${obs.minChars}`
+          + ` bound=${String(bound !== null)} enabled=${String(obs.enabled)}`);
       } else {
-        lastSkipReason = null;
+        // `below-min-chars` / `composing` / `already-inline` 旧实现本就静默，继续静默。
+        traceClear('inline-arm-cancel', null);
       }
       return;
     }
-    lastSkipReason = null;
+    traceClear('inline-arm-cancel', null);
     const armedSessionId = decision.sessionId as string;
 
     inlineTriggerTimer = setTimeout(() => {
@@ -1503,22 +1789,40 @@ function applyBody(ctx: Context): void {
           if (rev === lastRevision) return;
           lastRevision = rev;
           const v = (entry.value ?? {}) as Record<string, unknown>;
-          let pushed: {
-            suggestion?: unknown;
-            hot?: unknown;
-            history?: unknown;
-            historySessionId?: unknown;
-            suggestionSessionId?: unknown;
-            completion?: unknown;
-            completionSessionId?: unknown;
-          } | null = null;
+          let pushed: PushedPayload | null = null;
           if (typeof v._push === 'string' && v._push !== '') {
             try {
-              pushed = JSON.parse(v._push) as typeof pushed;
+              pushed = JSON.parse(v._push) as PushedPayload;
             } catch {
               pushed = null;
             }
           }
+          // ── #38：帧号与终态判据（载荷解析处，越靠前越好：陈旧帧根本不该进入状态）──
+          //
+          // 判据本体在 `accept-guard.ts` 的 {@link resolvePayloadFrames}（纯函数，可被
+          // `scripts/frame-monotonic-smoke.mjs` / `scripts/legacy-payload-smoke.mjs` 离线
+          // 驱动）。这里只接线，三条结论：
+          //  - `accept === false` → 陈旧帧，整条载荷作废（不改 settings、不刷缓存、不 render）；
+          //  - `suggestionFrame` → 交给采纳链（Tab / `→` 只认终帧）；
+          //  - `completionFrame` → 省略=保留现值、显式 null=归回缺省，与 completion 本体同款。
+          //
+          // 台账 `frameLedger` **独立于文档 revision**：上面 `rev === lastRevision` 是文档级
+          // 相等早退（载荷自带的 `rev` 客户端从不读），两者不共用判据，否则宿主一次自写就会
+          // 把终帧判成「没变化」而丢掉。
+          const frames = resolvePayloadFrames({
+            ledger: frameLedger,
+            pushed,
+            prevCompletionFrame: settings.completionFrame,
+          });
+          frameLedger = frames.ledger;
+          if (!frames.accept) {
+            traceOnce('stale-frame', frames.outcome,
+              ` bucket=${String(frames.bucket)} ${frameHintFields(frames.suggestionFrame)}`
+              + ` seen=${String(frames.seen)} dropped=${frames.ledger.dropped}`);
+            return;
+          }
+          // 建议在场且不是旧载荷、或建议被显式作废：都是「判据在正常跑」的证据，闸门重新开门。
+          if (frames.outcome !== 'legacy') traceClear('stale-frame', null);
           const next: typeof settings = {
             historyEnabled: typeof v.historyEnabled === 'boolean' ? v.historyEnabled : true,
             historyCrossSession: typeof v.historyCrossSession === 'boolean' ? v.historyCrossSession : false,
@@ -1531,6 +1835,8 @@ function applyBody(ctx: Context): void {
             suggestion: pushed?.suggestion === null || pushed?.suggestion === undefined
               ? null
               : (pushed.suggestion as typeof settings.suggestion),
+            // 归一化后的帧提示（#38）：作废/缺省都由判据本身回 {@link LEGACY_FRAME_HINT}。
+            suggestionFrame: frames.suggestionFrame,
             hot: pushed?.hot === null || pushed?.hot === undefined
               ? null
               : (pushed.hot as typeof settings.hot),
@@ -1549,6 +1855,8 @@ function applyBody(ctx: Context): void {
             completion: pushed?.completion === undefined
               ? settings.completion
               : (pushed.completion as typeof settings.completion),
+            // 续写的帧提示（#38）：本期宿主不出帧号，这里只可能带 `final`。
+            completionFrame: frames.completionFrame,
             completionSessionId: pushed?.completion === undefined
               ? settings.completionSessionId
               : (typeof pushed.completionSessionId === 'string' ? pushed.completionSessionId : null),
@@ -1572,6 +1880,8 @@ function applyBody(ctx: Context): void {
             history: settings.history,
             historySessionId: settings.historySessionId,
             suggestion: settings.suggestion,
+            // 帧提示一起持久化：冷启动恢复出的建议不能是「provisional 却被当成终帧采纳」。
+            suggestionFrame: settings.suggestionFrame,
             suggestionSessionId: settings.suggestionSessionId,
           });
           renderTraced('other');
@@ -1623,6 +1933,19 @@ function applyBody(ctx: Context): void {
     const acceptKey = content.kind === 'llm' ? content.acceptKey : DEFAULT_ACCEPT_KEY;
     const matcher = parseAcceptKey(acceptKey);
     if (matcher !== undefined && matcher(event)) {
+      // ── #38 采纳闸（整条）：只认终帧 ─────────────────────────────────────────
+      // provisional 帧（宿主显式带 `final: false`）上**直接放弃**：不写一个字符。
+      // 也**不吞按键**（不 preventDefault）——这一支等价于「此刻没有可采纳的幽灵」，
+      // Tab 就此回到浏览器原生行为（插入制表符/移焦点），比「按了没反应」诚实。
+      // 缺字段一律视为终帧（旧载荷行为逐字不变），判据见 accept-guard.ts 的 `gateAccept`。
+      const gate = gateAccept(content.frame);
+      if (!gate.allow) {
+        traceOnce('accept-gate-tab', gate.reason,
+          ` kind=${content.kind} ${frameHintFields(content.frame)}`
+          + ` ghostChars=${acceptTarget(content).length} draftChars=${base.draft.length}`);
+        return;
+      }
+      traceClear('accept-gate-tab', null);
       event.preventDefault();
       event.stopPropagation();
       if (bound !== null) {
@@ -1645,7 +1968,16 @@ function applyBody(ctx: Context): void {
           () => { input.setDraft(accepted); },
         );
         if (!outcome.committed) {
-
+          // #39：这条分支「判据在跑、留痕被摘空」了很久——CAS 放弃与采纳成功在观测上
+          // 同形，用户报「按了 Tab 我打的字没了/没反应」时客户端无从分辨。补回一行，
+          // 依旧**按理由变化才打**（同一次风暴里 rev 反复漂移不会刷屏）。
+          // 只打字符数：采纳目标文本、草稿正文都不进日志。
+          traceOnce('tab-abandon', outcome.reason ?? 'unknown',
+            ` kind=${content.kind} acceptedChars=${accepted.length}`
+            + ` baseDraftChars=${base.draft.length} baseRev=${String(base.rev)}`
+            + ` ${frameHintFields(content.frame)}`);
+        } else {
+          traceClear('tab-abandon', null);
         }
       }
       overlay.hide();
@@ -1663,6 +1995,17 @@ function applyBody(ctx: Context): void {
       && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
       const ta = focused;
       const full = acceptTarget(content);
+      // ── #38 采纳闸（逐词）：只认终帧 ─────────────────────────────────────────
+      // 与整条采纳同一条判据，放在所有会吞按键的动作**之前**：provisional 帧上
+      // `→` 回到原生的光标移动，一个字符都不写。
+      const wordGate = gateAccept(content.frame);
+      if (!wordGate.allow) {
+        traceOnce('accept-gate-word', wordGate.reason,
+          ` kind=${content.kind} ${frameHintFields(content.frame)}`
+          + ` ghostChars=${full.length} draftChars=${base.draft.length}`);
+        return;
+      }
+      traceClear('accept-gate-word', null);
       // 光标必须在草稿末尾：textarea 用 selectionStart/End，contenteditable
       // 用 Selection API（caretAtComposerEnd 统一两代）。
       if (!caretAtComposerEnd(ta)) return;
@@ -1683,11 +2026,16 @@ function applyBody(ctx: Context): void {
           () => { input.setDraft(accepted); },
         );
         if (!outcome.committed) {
-
+          // #39：与整条采纳同款留痕（此前这里也是一支空块——判据在跑、输出被摘空）。
+          traceOnce('word-abandon', outcome.reason ?? 'unknown',
+            ` kind=${content.kind} chunkChars=${chunk.length} acceptedChars=${accepted.length}`
+            + ` baseDraftChars=${base.draft.length} baseRev=${String(base.rev)}`
+            + ` ${frameHintFields(content.frame)}`);
           overlay.hide();
           shown = null;
           return;
         }
+        traceClear('word-abandon', null);
       }
       if (wordAcceptSettled(content, accepted)) {
         overlay.hide();
@@ -1705,7 +2053,22 @@ function applyBody(ctx: Context): void {
       // React 提交会话视图晚于 list store 更新：rebind 时 composer 可能尚未
       // 挂载，show() 会找不到编辑器；错峰补渲染覆盖这个竞态（幽灵显示后
       // 幂等，重复渲染无副作用）。
-      deferredRenders = [60, 300, 900].map((ms) => setTimeout(() => renderTraced('other'), ms));
+      //
+      // #38：增长期间让路。这三个定时器的职责只有「覆盖挂载竞态」；幽灵既然已经画在
+      // 屏幕上、又正处在一枚同代增长的帧流里，补渲染就只是把同一段文本再重画一遍
+      // （顺带把 ghostContent 缓存之外的 render 全链跑一次）。判据在
+      // {@link shouldSkipDeferredRepaint}，跳过次数进 tally。
+      deferredRenders = [60, 300, 900].map((ms) => setTimeout(() => {
+        if (shouldSkipDeferredRepaint({ painted: overlay.isPainted, growing: overlay.growing })) {
+          deferredRepaintSkips += 1;
+          traceOnce('deferred-repaint', 'growth-streak',
+            ` skipped=${deferredRepaintSkips} paints=growth:${overlay.paints.growth}`
+            + `/remeasure:${overlay.paints.remeasure}/rebuild:${overlay.paints.rebuild}`);
+          return;
+        }
+        traceClear('deferred-repaint', null);
+        renderTraced('other');
+      }, ms));
     };
     /**
      * 退订当前 `bound` 的三条 store 订阅并按当前 `bound` 重新订阅。
@@ -1774,7 +2137,11 @@ function applyBody(ctx: Context): void {
       // 计时器句柄已清，策略状态必须同步归零：留着旧 ticket 会让重绑后的第一帧
       // 把「同键观察」判成 skip，于是再也不 armed。
       armState = initialInlineArmState();
-      lastSkipReason = null;
+      // 留痕闸门同样归零：重绑后第一条 cancel 必须能再打出一行（否则跨会话的同理由
+      // 会被上一轮的 last 吃掉，现场看不到）。
+      traceClear('inline-arm-cancel', null);
+      traceClear('form-hold', null);
+      traceClear('deferred-repaint', null);
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('compositionstart', onCompositionStart, true);
       window.removeEventListener('compositionend', onCompositionEnd, true);
