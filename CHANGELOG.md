@@ -56,6 +56,36 @@ All notable changes to this project will be documented in this file.
   `text`、`finish.reason` 必须是对象 `{kind:'stop'}`（写字符串会抛 unsupported finish reason，现象与
   「模型没话说」同形）、assistant/message 数据形状是 `{turn,step,message,stream}` 且带 `surfaceOp`
 
+- **写失败不再是「一种」**（#36 复核产物）。此前只按 `/cannot be nested/i` 一条正则分诊，于是另一类失败
+  ——**写锁等待超时**（`atomic-write: timed out waiting for the writer lock`，上限 2000ms，
+  `dsh-config-editor` 取锁不传 options 所以调用方改不了）——落到 `push-failed` 分支被判成**终局丢弃**：
+  载荷不入补写队列，客户端收不到幽灵，只留一条被节流的留痕。现在按三类分诊（`src/deferred-writes.ts`
+  新增纯函数 `triageWriteFailure(error, channel)`，零 runtime import，可离线驱动）：
+  - `structural-refusal`（nested）→ 进补写队列，kind 沿用 `push-nested` / `ops-clear-nested` /
+    `deferred-*-nested`
+  - `retryable-contention`（锁超时）→ **也进补写队列**，新增 kind `push-lock-timeout` /
+    `ops-clear-lock-timeout` / `deferred-*-lock-timeout`
+  - `unknown` → 丢弃但留痕带「unknown failure class」，kind `push-failed` / `ops-clear-failed` /
+    `deferred-*-failed`
+
+  三类 kind 两两不同 ⇒「哪种失败吃掉了几次」可统计，不再靠一条正则兜着。顺带修了 `errorText` 在
+  「抛的不是 Error 实例」时退化成 `[object Object]` 的老坑
+
+- **三类写不再自己争同一把锁**（#36 复核产物）。补写泵、即时写 `_push`、消费后 `_ops` 清空共用一把
+  profile 锁，此前没有互斥：补写泵在有写在途时也会取槽抢锁，于是自己把自己的写卡到超时。现在补写泵在
+  `anyWriteInFlight()` 时**不取槽、不抢锁**（留痕 `deferred-wait … waitedMs=N`，按 kind 分桶、第一条
+  必报、之后每 50 次一条带计数、不带正文）；即时写在补写/清空占锁时排队等落地，排队期间**不放指纹**
+  （载荷一直挂在 pending 上，落地后由 `retryFlushAfterWrite` 唤醒）
+
+- **两处依据订正**（#36 复核产物）：`dsh-hmr` 的行号补上代次锚点（0.2.0-rc.2 `:271`/`:280`/`:283` ↔
+  0.2.1-rc.2 `:736`/`:749`/`:752`，两代逐条核对过；原文的 `:270`/`:284` 是错的），`dsh-settings` 的
+  `:510` → `:509`；内嵌的两处 PROBE 五行换成复核评论的 A/B 实测表（原文「差别在上下文在哪儿建立」只
+  覆盖了两种成因里的一种）；补写泵 500ms 间隔的依据注释改成实测值（单次写 191-332ms、首笔 2.2-2.5s ⇒
+  「500ms ≈ 生成耗时 1/4~1/3」不成立）。**泵间隔本轮未动**：间隔变小会加剧本仓锁竞争，等互斥修完、
+  有新失败率数据再定
+
+- **新冒烟 `scripts/push-failure-triage-smoke.mjs`（25 组）**，`test:smoke` 链现 35 项
+
 ### 修复
 
 - **客户端类型检查基线里 18 条是同一个 bug 的产物**（#34）。`src/client/index.ts` 里 `_push` 的解析
