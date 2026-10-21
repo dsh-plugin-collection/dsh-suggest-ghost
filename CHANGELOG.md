@@ -121,7 +121,7 @@ All notable changes to this project will be documented in this file.
 - **辅助调用的留痕补全**（#39）。`first_text_delta_ms` 与 `first_reasoning_delta_ms` **分开报**：推理模型
   先出 reasoning、很久之后才出正文，合成一个「首块」会把「用户在干等」记成正常（实测 qfmodel 带 medium：
   推理 2072ms、正文 4235ms；efficient 缺省：推理 1443ms、**正文到死都没出**）。另加 `content_deltas` /
-  `content_chars` / `reasoning_deltas` / `reasoning_chars` / `finish_kind` / `attempts`（只算外层）/
+  `content_chars` / `reasoning_deltas` / `reasoning_chars` / `finish_kind` / `attempts_outer`（只算外层重试；路由内部自重放不可观测、不计入）/
   `effort_requested` / `effort_rejected` / `outcome`。无产出的两种病因终于是分开的：模型一个字没吐 =
   `outcome=empty`（指向提示词/档位/路由），吐了字但被净化链丢掉 = `outcome=filtered`（指向 sanitize 那
   一侧）。`src/generate.ts` 那条注释早就声称有「归因日志」而代码里一个字都没有，这次兑现。「下一条建议」
