@@ -72,6 +72,7 @@ import { fileURLToPath } from 'node:url';
 import { Context } from '@deepseek-ai/cordis';
 import { SessionStore } from '@deepseek-ai/dsh-session';
 
+import { alignCompletion, decideInlineForm } from '../src/client/completion-align.ts';
 import {
   emptyFrameLedger,
   frameBucketKey,
@@ -687,6 +688,89 @@ try {
   record('(c) 客户端解析入口判定（#38/#44）', STATUS.FAIL, `判据代码抛错：${String(error).slice(0, 200)}`);
 }
 
+// ── 5. (c-empty) 没有正文的终帧：真实使用里比「有正文」更常见 ────────────────
+//
+// 为什么要单独钉这一组：沙箱实测 `efficient` 路由两次都是
+// `first_text_delta_ms=-1 content_deltas=0 reasoning_chars=8354 outcome=empty`（29771ms / 15557ms）
+// ——模型只出推理、一个正文都没有。也就是说**「终帧不带正文」在真实环境里是常走的那一半**，
+// 而本脚本的假流永远有正文 ⇒ 只覆盖了较少见的那一半。
+//
+// 判据归属先钉死：`outcome` 是**调用方在净化之后**写的（`src/generate.ts:819/834/963/966`），
+// 所以纯函数层渲染出的 `outcome=empty` 只代表「这层不拥有这个判定」，**不代表**「模型一个字没吐」。
+// 本组要断言的是**客户端拿到一份没有正文的终帧时的行为**，不是断言模型的行为。
+{
+  const emptyFinal = { frame: 1, final: true };
+
+  // 5.1 续写形态：空正文载荷 = 不显示 inline，且**允许**回落历史（不扣形态）
+  //     —— 这两条都是真判据：`alignCompletion`（`completion-align.ts`）与
+  //     `decideInlineForm`（同文件末段，#38 第 4 条）都是纯函数。
+  const emptyCompletion = { draft: '这个插件怎么构建', text: '' };
+  const alignedEmpty = alignCompletion('这个插件怎么构建', emptyCompletion.draft, emptyCompletion.text);
+  const verdictEmpty = decideInlineForm({
+    inlineEnabled: true,
+    draft: '这个插件怎么构建',
+    payload: emptyCompletion,
+    payloadBelongsToCurrentSession: true,
+    alignedOk: alignedEmpty.ok,
+    alignedReason: alignedEmpty.ok ? null : alignedEmpty.reason,
+  });
+  const noInlineShown = verdictEmpty.showInline === false;
+  const historyAllowed = verdictEmpty.allowHistory === true;
+  const notHeld = verdictEmpty.hold === null;
+  record('(c-empty) 空正文**续写**终帧：不显示 inline、允许回落历史、不被形态判据扣住',
+    alignedEmpty.ok === false && alignedEmpty.reason === 'empty-text' && noInlineShown && historyAllowed && notHeld
+      ? STATUS.PASS : STATUS.FAIL,
+    `alignCompletion → ${JSON.stringify(alignedEmpty)}；decideInlineForm → ${JSON.stringify(verdictEmpty)}\n`
+    + '期望：ok=false / reason=empty-text、showInline=false、allowHistory=true、hold=null\n'
+    + '（宿主推空续写**不是一次生成**，没有形态可保护，所以这里必须放行历史补全；'
+    + '与「同一次生成内被裁空」的 consumed 形态是两条不同判据，见下面那条对照）');
+
+  // 5.2 对照：同一次生成内「被裁空」（用户把整段续写打完了）必须**扣住**，不许掉成 history。
+  //     这一条与 5.1 一起才构成「空正文 = 放行 / 裁空 = 扣住」的分界，单独任一条都能被写反。
+  const consumedVerdict = decideInlineForm({
+    inlineEnabled: true,
+    draft: '这个插件怎么构建 node build.mjs',
+    payload: { draft: '这个插件怎么构建', text: ' node build.mjs' },
+    payloadBelongsToCurrentSession: true,
+    alignedOk: false,
+    alignedReason: 'empty-text',
+  });
+  record('(c-empty 对照) 同一次生成内被裁空：扣住，不回落 history',
+    consumedVerdict.hold === 'inline-consumed' && consumedVerdict.allowHistory === false
+      ? STATUS.PASS : STATUS.FAIL,
+    `decideInlineForm → ${JSON.stringify(consumedVerdict)}；`
+    + '期望 hold=inline-consumed、allowHistory=false');
+
+  // 5.3 建议形态：帧判据**不看正文长度**——空正文的终帧照样过闸。
+  //     这是一条**事实断言**（闸门的输入只有 final），不是「空正文该被采纳」的价值判断；
+  //     也不等于「空正文一定会被渲染出来」——那是接线层与 DOM 的事，见下面 5.4。
+  const gateEmpty = gateAccept(emptyFinal);
+  const ledgerEmpty = resolvePayloadFrames({
+    ledger: emptyFrameLedger(),
+    pushed: { suggestion: { turn: 7, text: '', frame: 1, final: true }, suggestionSessionId: 'ghost-frame-e2e' },
+    prevCompletionFrame: LEGACY_FRAME_HINT,
+  });
+  record('(c-empty) 空正文**建议**终帧：帧判据只看 final，不看正文长度（事实断言）',
+    gateEmpty.allow === true && ledgerEmpty.accept === true && ledgerEmpty.suggestionFrame.frame === 1
+      ? STATUS.PASS : STATUS.FAIL,
+    `gateAccept({frame:1,final:true}) → allow=${String(gateEmpty.allow)}；`
+    + `resolvePayloadFrames(正文 0 字符) → accept=${String(ledgerEmpty.accept)} `
+    + `frame=${ledgerEmpty.suggestionFrame.frame} final=${String(ledgerEmpty.suggestionFrame.final)}\n`
+    + '⚠️ 这条只说明「帧闸门不会因为正文为空而拒绝」，**不**主张空正文应当被采纳或被渲染；'
+    + '空正文最终画成什么，见下面那条 NOT-COVERED。');
+
+  // 5.4 真正「客户端拿到空正文后画成什么」不在本脚本的可观测范围内。
+  record('(c-empty) 空正文建议的实际渲染结果（画一枚空幽灵？会不会把 placeholder 让位规则带起来？）',
+    STATUS.NC,
+    '缺前置：这一支的判定在 `src/client/index.ts` 的 `computeGhostContent` / `GhostOverlay.show()` 里，'
+    + '需要 DOM 与接线层在场，本脚本只跑纯函数层，拿不到它的真实行为。\n'
+    + '为什么值得单独看：overlay 的让位规则挂在 `data-shown="1"` 上（`body:has(...) [data-composer-placeholder]{display:none}`），'
+    + '若一份空正文被当成幽灵显示，就会出现「幽灵什么都没画、原生占位文案却被藏掉」的空白输入框——'
+    + '这正是本仓反复踩过的「开关与绘制不一致」那一类。\n'
+    + '现场怎么验：主仓 `lib/client.js` 已在产物里，用浏览器打开宿主、把 `suggestGhost` 投影塞一份 '
+    + '`text: ""` 的终帧，看 overlay 的 `display` / `data-shown` 与 placeholder 的 computed display。');
+}
+
 // ── 汇总 ────────────────────────────────────────────────────────────────
 const counts = results.reduce((acc, r) => { acc[r.status] = (acc[r.status] ?? 0) + 1; return acc; }, {});
 console.log('');
@@ -697,6 +781,7 @@ if ((counts[STATUS.NC] ?? 0) > 0) {
   console.log('未覆盖 ≠ 不通过：上面每一项 NOT-COVERED 都写了缺哪个前置与现场实测证据。');
   console.log('三种状态各自的含义：产物没构建 → NOT-COVERED；判据算错/打点丢失 → FAIL；');
   console.log('  需要一次真实回合才能观测的东西 → NOT-COVERED（本脚本按 lead 的口径不去补那一层）。');
+  console.log('  需要 DOM/接线层才能观测的东西（如空正文建议的实际渲染）→ 同样标 NOT-COVERED。');
   console.log('单独跑：node scripts/ghost-frame-e2e.mjs（整条 test:e2e 在 coldstart-e2e 小节 2 处会停住，那是 #50，见文件头）');
 }
 process.exit((counts[STATUS.FAIL] ?? 0) > 0 ? 1 : 0);
