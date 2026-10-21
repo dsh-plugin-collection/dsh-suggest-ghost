@@ -43,7 +43,25 @@ export declare function inlinePrompt(maxChars: number, language: string): string
  * 过滤这一环走 `shouldFilterCompletionFor(out, draft)`（而非单参的
  * `shouldFilterCompletion`）：后者在续写场景**刻意放行**问句/助手口吻，
  * 而「续写变成回答」正是从这个口子漏出去的。新判据 = 原语义过滤 + 一道形态兜底
- * （输出 ≥40 字且 > 草稿 ×5 → 判为对话式回答）。详见 `src/sanitize.ts`。
+ * （输出 ≥40 字且 > 草稿 ×3 → 判为对话式回答）。详见 `src/sanitize.ts`。
  * 调用顺序与签名 `(raw, draft, maxChars)` 未动。
  */
 export declare function sanitizeCompletion(raw: string, draft: string, maxChars: number): string | undefined;
+/**
+ * 续写净化的**流式前缀安全入口**（#37）。
+ *
+ * 签名为前端展示提供“每帧都是终态前缀”的保证：对同一份 raw 的所有前缀 k，
+ *   prefixSafeClean(raw.slice(0,k), draft, maxChars) ⊑ sanitizeCompletion(raw, draft, maxChars)
+ * （终态存在时）。这条性质由 `scripts/sanitize-monotonic-smoke.mjs` 钉住。
+ *
+ * 区别於 `sanitizeCompletion()`：
+ *   - 使用 `prefixSafeClean()` 而不是 `cleanSuggestion()` → 剥围栏头行但不剥尾行、
+ *     折叠已闭合空白但不碰尾空白、扣住可疑尾巴再晚一帧显示。
+ *   - 不做最终过滤器（`shouldFilterCompletionFor()` 不在帧上跑）——它是
+ *     **finalOnly**（表 B #6/#7），中途帧的比值门限必然偏小导致误放行。
+ *   - 长度截断按终态下界保守裁剪（floor(max·0.6)+1），保证输出的前缀关系不受词边界回退影响。
+ *
+ * 用途：需要实时显示增量文本的场景；宿主目前仍用 `sanitizeCompletion()`，本出口为将来
+ * 的流式渲染预留。
+ */
+export declare function sanitizeCompletionFrame(frameText: string, draft: string, maxChars: number): string | undefined;
