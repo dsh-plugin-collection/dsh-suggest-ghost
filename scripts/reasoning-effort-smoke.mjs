@@ -261,7 +261,7 @@ run('反向验证：留痕里 outcome 与两个首块延迟恒存在', () => {
   const line = formatStreamMetrics(m);
   for (const key of [
     'first_text_delta_ms=', 'first_reasoning_delta_ms=', 'content_deltas=', 'content_chars=',
-    'reasoning_deltas=', 'reasoning_chars=', 'finish_kind=', 'attempts=',
+    'reasoning_deltas=', 'reasoning_chars=', 'finish_kind=', 'attempts_outer=',
     'effort_requested=', 'effort_rejected=', 'outcome=',
   ]) {
     assert.ok(line.includes(key), `留痕后缀缺键 ${key}：${line}`);
