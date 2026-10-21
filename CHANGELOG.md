@@ -148,6 +148,27 @@ All notable changes to this project will be documented in this file.
   不在」实际靠的是客户端 localStorage；`src/index.ts:529` 一带「`_push` 是建议唯一的持久载体」那段自述
   与实现对不上。已在 #50 立号，修法排在 host 侧回读那条线上
 
+- **端到端脚本把「留痕对不对」拆成四条独立断言**（#39 收口）。原来那项「留痕键与数值」是 NOT-COVERED，根因是
+  harness 直接调 `generateSuggestion` / `generateCompletion`，而留痕行由**接线层**（`src/index.ts`）打印，
+  `apply()` 不在场 ⇒ 捕获 0 行是必然。现在四条断言各有独立证据源：
+  - (a1) **数值层**：直接导入 `createStreamMetrics` / `observeChunk` / `formatStreamMetrics` 三个纯函数
+    （产物里已存在：`lib/generate.js:302`/`:326`/`:359`），喂脚本写死的假流形状与假时钟 ⇒ 11 个键全在场 +
+    5 个数值精确相等
+  - (a1b) **同源旁证**：`generateCompletion` 返回体的 metrics 必须与 (a1) 计数一致（证明真流循环确实调了
+    `observeChunk`，不是格式化函数自己算对）
+  - (a2) **接线层在场**：静态断言 `lib/index.js` 里 4 个 `traceOps` 打点齐备、每条模板带 `${stream}`、且有
+    `const stream = formatStreamMetrics(...)`
+  - (a3) **本次运行是否真的打出这一行**：需要一次真实回合，本轮标 NOT-COVERED 并写明原因，另立 issue
+
+  ⇒ 三种状态结构上就分得开了：**产物没构建 → NOT-COVERED / 判据算错或打点丢失 → FAIL / 需要真实回合 →
+  NOT-COVERED**。变异测试验过 FAIL 路真会红（改坏期望值 + 改坏一个打点前缀 ⇒ FAIL 3、退出码 1）。(a1)/(a2)
+  的输出里都明写「这不等于本次运行打出了这一行」
+
+- **端到端链的顺序修了**：`ghost-frame-e2e` 原先排在 `coldstart-e2e` 后面，而后者因 #50 故意留红 ⇒ 整条链
+  里 ghost-frame **一行都不跑**。现在挪到紧跟构建之后（`tsc && build && ghost-frame && hotness && coldstart`），
+  其余两条顺序原样、coldstart 的断言一字未放宽；链仍会在 coldstart 小节 2 停住（设计如此，见 #50），脚本
+  文件头写明单独跑的方式
+
 ### 修复
 
 - **客户端类型检查基线里 18 条是同一个 bug 的产物**（#34）。`src/client/index.ts` 里 `_push` 的解析
