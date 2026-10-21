@@ -106,6 +106,48 @@ All notable changes to this project will be documented in this file.
     没有报成 NOT-COVERED：红的小节要跟着产品语义走，不能用放宽换绿。脚本末尾还提醒一句：小节 3 现在
     是绿的，但它绿的原因是「压根没恢复」而不是「恢复后被回合语义判废」，#50 修好后它必须仍然是绿的
 
+- **辅助调用的推理档位可配**（#35）。新增 `suggestionReasoningEffort` / `completionReasoningEffort` 两个
+  volatile 设置项，**默认空串 = 不往请求上写 `reasoningEffort` = 沿用该模型自己的默认档位**。默认值不是
+  `low` 而是空串：档位按 provider、按 model 声明，本机 qoder-route 18 个模型里有 9 个没声明
+  （efficient `:456` / fast `:468` / lite `:427`），给它们带任何档位会在**请求发出之前**被拒
+  （`UNSUPPORTED_REASONING_EFFORT`，实测 0-20ms），非空默认值等于把整条建议路径配成必然失败。也不提供
+  「传 off/none 关思考」的语义（qfmodel 连 `off` 都拒）。档位 id 不由本插件校验（插件无法预知模型声明了
+  哪些档位），所以改成**失败即降级一次**：第一次带档位发，被拒则当场撤掉档位、不退避地重发一次，不占
+  常规重试预算（`attempts` 仍是 1），留痕记 `effort_rejected=1`。留痕里的键叫 `effort_requested`（**请求**的
+  档位）而不是「生效档位」：终值由宿主决定，插件侧不可观测。档位是 1.8x 量级的杠杆（同沙箱实测 qfmodel
+  缺省 1468ms → 带 low 828ms），而**换模型/换路由是 4x 量级**（efficient 缺省 6238ms），所以它的定位是
+  「可选的下调手段」，默认一律不动
+
+- **辅助调用的留痕补全**（#39）。`first_text_delta_ms` 与 `first_reasoning_delta_ms` **分开报**：推理模型
+  先出 reasoning、很久之后才出正文，合成一个「首块」会把「用户在干等」记成正常（实测 qfmodel 带 medium：
+  推理 2072ms、正文 4235ms；efficient 缺省：推理 1443ms、**正文到死都没出**）。另加 `content_deltas` /
+  `content_chars` / `reasoning_deltas` / `reasoning_chars` / `finish_kind` / `attempts`（只算外层）/
+  `effort_requested` / `effort_rejected` / `outcome`。无产出的两种病因终于是分开的：模型一个字没吐 =
+  `outcome=empty`（指向提示词/档位/路由），吐了字但被净化链丢掉 = `outcome=filtered`（指向 sanitize 那
+  一侧）。`src/generate.ts` 那条注释早就声称有「归因日志」而代码里一个字都没有，这次兑现。「下一条建议」
+  路径此前**一条耗时留痕都没有**（只有续写有），现在补了三行新前缀：`suggestion generated` /
+  `suggestion dropped (empty or filtered)` / `suggestion failed`。续写两条既有留痕行的前缀与既有键
+  **逐字未动**，新键一律追加在行尾
+
+- **`push landed` / `deferred push landed` 行尾新增 `writeMs=`**：`after=` 是「入队到落盘」（等泵 + 写），
+  `writeMs=` 只是那一次 `settings.update` 自己，两者一减才是「等 500ms 泵」占了多少。没有这个数就分不出
+  该降泵间隔、该用 `hmr.executing.exit`、还是该换通道
+
+- **实测：投递尾延迟的大头是「写本身」，不是「等泵」**。隔离沙箱 5 个 `writeMs` 样本：**361 / 389 / 626 /
+  776 / 2260ms**；两条 deferred 的 `after − writeMs` = **3ms 与 1ms**。排在槽里的载荷几乎没等泵，落那一次
+  盘自己要 0.36-2.26s。三段拆开：① 事务内即时写被拒→入队 = 同步（`after=1ms`）；② 泵等待 = 上界 500ms 的
+  随机量（本次两条恰好只有 1-3ms；对照 `_ops` 清空那几条 `after=501/508/536ms` 那才是等了一整个泵周期）；
+  ③ 写落盘 = **361-2260ms（中位数 626ms）**。落盘之后到客户端可见那一段（`document-updated` 扇出 + 一次
+  describe RTT + 渲染）**本期没测到**，不据此下结论
+
+- **实测：建议路径在 `efficient` 上是「只有推理、没有正文」**（两次 `outcome=empty`，
+  `first_text_delta_ms=-1`，`reasoning_chars=8354/4143`，耗时 29771ms / 15557ms）。这正是 #35 想要的
+  可观测面：不拆两个首块延迟，这轮看起来是「1443ms 出首块，挺快」，实际用户等了 30 秒然后什么都没得到
+
+- **已知缺口**：`parsePersistedPush` 在 `src/` 里**没有任何调用方**（只有冒烟在用），所以「重启后建议还在
+  不在」实际靠的是客户端 localStorage；`src/index.ts:529` 一带「`_push` 是建议唯一的持久载体」那段自述
+  与实现对不上。已在 #50 立号，修法排在 host 侧回读那条线上
+
 ### 修复
 
 - **客户端类型检查基线里 18 条是同一个 bug 的产物**（#34）。`src/client/index.ts` 里 `_push` 的解析
