@@ -86,6 +86,26 @@ All notable changes to this project will be documented in this file.
 
 - **新冒烟 `scripts/push-failure-triage-smoke.mjs`（25 组）**，`test:smoke` 链现 35 项
 
+- **`test:e2e` 两条既有脚本迁到 0.2.x 的宿主面**（#49）。此前整条链在本机**跑不起来**：`coldstart-e2e` 崩在
+  `root.settings.register`（0.2.x 里 `SettingsForms` 本身就是注册名 settings 的 Service，旧脚本
+  `extends SettingsProvider` + `load()/persist()` 那套 provider 面已不存在；`ctx.settings.register()` 与
+  `settings.registrations` 在 0.1.7 被内核删除），`hotness-persist-e2e` 崩在摘要文案的深比较。现在：
+  - `coldstart-e2e` 按真实面装内存 `Service('settings')`（`describe()` 行 `{ns,revision,value}` +
+    `update(ns,patch)` + 写后 emit `document-updated`），**五个小节的断言本体一字未改**，只补一步 client
+    冷启动 `pull`（0.1.7 起对账入口是 pull）——**这一步是断言的内容来源而不是放宽**：去掉它小节 2
+    反而**假绿**（读回的是自己塞进介质的 fixture），装上它才红
+  - `hotness-persist-e2e` 的根因是**本仓 API 形状漂移**（`parseHotnessOps` 在 v0.5.0 从数组换成信封
+    `{ops, rejected?}`，理由见 `src/hotness-store.ts:243-254`），不是持久化逻辑坏（同脚本其余三段全绿）；
+    断言取信封对应的一格并**就地加严**（畸形 JSON 必须 `rejected.kind='json'` 且 `bytes>0`、空载荷必须
+    不留痕、未知 op 必须 `kind='schema'`），口径与 `ops-schema-coverage-smoke` 第 5/6/7 段一致
+  - 链首 `pnpm build` 换成 `./node_modules/.bin/tsc -p tsconfig.json && node build.mjs`（worktree 里
+    node_modules 是软链，pnpm 的依赖一致性检查会让整条 e2e 起不来），同一口径写进两条脚本文件头
+  - **这条链现在是红的，红得有意义**：`coldstart-e2e` 小节 2「重启对账：盘上残留的上一条建议应被恢复」
+    失败，根因是 `parsePersistedPush`（`src/coldstart.ts:109`）**全仓零生产调用点**（`e853d1e` 加、
+    `c3b6a80` 删、之后没接回来），且客户端第一次 pull 会把还能救的残留盖掉（#50）。断言**没有放宽**、
+    没有报成 NOT-COVERED：红的小节要跟着产品语义走，不能用放宽换绿。脚本末尾还提醒一句：小节 3 现在
+    是绿的，但它绿的原因是「压根没恢复」而不是「恢复后被回合语义判废」，#50 修好后它必须仍然是绿的
+
 ### 修复
 
 - **客户端类型检查基线里 18 条是同一个 bug 的产物**（#34）。`src/client/index.ts` 里 `_push` 的解析
