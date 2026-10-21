@@ -4,7 +4,59 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### 新增
+
+- **幽灵文本的「终态帧」契约与客户端判据**（#38 #39）。`_push` 的 suggestion 载荷新增 `frame`
+  （number，`>=1`，单次生成内单调）与 `final`（boolean，终帧为 true）；`completion` 本期**不带帧号**、
+  只带 `final`。两字段缺省按 `frame=0` / `final=true` 处理，旧载荷行为逐字不变。契约与取舍记在
+  #41 的评论里。客户端把这两个字段变成三条能判的判据：
+  - **陈旧帧整条作废**：按 `(会话, turn)` 分桶，帧号**严格小于**已见值才丢；相等必须放行（会话切回
+    时的对账 `pull` 会把同一份建议原样再推一次，丢掉它就没有建议也没有历史环）。台账独立于文档级
+    `rev === lastRevision` 早退（`src/client/index.ts:1502` 那条，载荷自带的 `rev` 客户端从不读），
+    两者若共用判据，宿主一次自写就会把终帧判成「没变化」而丢掉
+  - **采纳只认终帧**：Tab 整条与 `→` 逐词在 `final === false` 的帧上一字符不写、且**不吞按键**
+    （不 `preventDefault`）。显示不归这条判据管：provisional 帧即便显示也只是中间态，**采纳才是
+    不可逆动作**
+  - **幽灵形态在单次生成内不得翻转**：`alignCompletion` 裁空那一支（`src/client/completion-align.ts:87`）
+    原本会让本帧从 `inline` 掉到 `history`，灰色尾巴无声换成另一段不相干的文字。判据用
+    `alignCompletion` 自己的归属前缀关系（`draft === payload.draft || draft.startsWith(payload.draft)`）
+    当「这次生成仍在场」的证据，不靠草稿逐字相同，因此与 #33 的「边打边等」不打架。取舍是
+    `consumed` 时**本帧不显示**而不是回落 history（少一次补全可接受，显错形态不可接受），纯判据、
+    无内部状态，六条出口各有断言
+
+- **overlay 的「同一次生成文本增长」快路径**（#38）。`GhostOverlay.show()` 原本每次都
+  `textContent = ''` 整棵重建后缀 span，再跑两轮强制同步布局（`align()` 的 `getComputedStyle` +
+  `offsetTop/clientWidth` + rect + 约 35 项排版属性复制，`verify()` 的再一次 rect + `querySelector`）。
+  快路径条件是「同形态 + 同锚定文本 + 新后缀以旧后缀开头」：锚点未脏时**一次测量都不做**；锚点脏了
+  只量一次行尾，位移 ≤ 1px 就不重排，越界才落回全量。实测模型：40 帧流式增长从 **80 次强制同步布局
+  降到 0 次**（掺滚动事件时 8 次）。增长期间 `[60,300,900]` 三次错峰补渲染让路（它们的职责只是覆盖
+  rebind 时 composer 尚未挂载的竞态，幽灵已在屏幕上时补渲染只是把同一段文本再画一遍）。两条硬约束
+  一字未动：先标 `data-shown="1"` 再 `display:block`、必须 `display:block` 才能测量；`verify()` 失败
+  即不绘制的语义原样保持
+
+- **客户端留痕的出口补齐**（#39）。三处「判据在跑、输出被摘空」的分支补回留痕槽位：inline armed 的
+  `disabled` / `no-session`（`inline-arm-cancel`）、Tab 采纳被草稿 CAS 放弃（`tab-abandon`）、`→` 逐词
+  采纳被 CAS 放弃（`word-abandon`）；另加本轮新增的 `stale-frame`、`accept-gate-tab` /
+  `accept-gate-word`、`form-hold`。长期只累加不打印的 `renderHits` 有了出口（`render-source`）：两把
+  闸——同一理由 500 次到达只出 1 行；归因来源**切换**且距上次打印已累计 50 次 render 才打一行（纯
+  计数节流、无计时器，离线可测也不受标签页冻结影响）。#21 现场 1127 次 render 回放 = **1 行**。
+  隐私沿用既有口径：只打字符数与原因，不打正文
+
+- **新冒烟 6 条**（`frame-monotonic` 12 / `provisional-accept` 14 / `legacy-payload` 13 / `form-flip` 15
+  / `overlay-growth` 13 / `trace-gate` 10，共 77 项断言），只加在 `test:smoke` 链尾；`ghost-geom` /
+  `accept-cas` / `render-storm` / `completion-align` 四条既有回归预言**一字未改**
+
 ### 修复
+
+- **客户端类型检查基线里 18 条是同一个 bug 的产物**（#34）。`src/client/index.ts` 里 `_push` 的解析
+  结果声明成 `let pushed: {…} | null = null` 再用 `as typeof pushed` 断言，而 `typeof` 在该处取到的是
+  **已被窄化过的 `null`**，于是每个 `pushed?.x` 都报 `TS2339 … on type 'never'`。改成具名
+  `type PushedPayload` 后这 18 条整片消失：`tsc -p tsconfig.client.json --noEmit` 从 **41 条降到 23 条**，
+  本次改动**新增 0 条**。即 #34 正文里的「基线 40 条」应重新表述为「约 23 条真错 + 18 条同源假错」，
+  清零路径因此短了一截。诊断配置仍未开 `allowImportingTsExtensions`（本包 NodeNext 相对导入必须带
+  扩展名，每新增一个 `src/client` 下的文件就多一条 TS5097），所以本轮的客户端判据**折进既有文件**
+  （`accept-guard.ts` / `completion-align.ts` / `inline-arm-policy.ts` 末段）而不是新增 4 个文件；
+  是否开该选项归 #34 定
 
 - **中文会话里蹦出英文建议**（三处修，缺一不可）。根因是一条链：语言推断被喂了「按 UTF-8 输入预算裁剪
   后的转录」→ 回退证据用了**原文** → 推翻先验用的是**绝对阈值**。默认 `maxInputBytes=4096` 下，「长中文
