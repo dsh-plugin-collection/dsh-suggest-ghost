@@ -1,27 +1,45 @@
 /**
  * 事务外补写的槽队列（纯函数模块，零 runtime import，可离线驱动断言）。
  *
- * **它解决的问题**：宿主写 `_push` / `_ops` 会被内核按 `HMR transactions cannot be
- * nested` 拒绝。判据是 `@deepseek-ai/dsh-hmr` 里 `runExclusive` 的
+ * **它解决的问题**：宿主写 `_push` / `_ops` 会被内核拒——**两种模式**：结构性拒绝
+ * （`HMR transactions cannot be nested`）与**可重试的竞争失败**
+ * （`atomic-write: timed out waiting for the writer lock`）。判据是
+ * `@deepseek-ai/dsh-hmr` 里 `runExclusive` 的
  * `if (this.executing.getStore()) return Promise.reject(...)`，而 `executing` 是一个
- * `AsyncLocalStorage`（同文件 :270），事务由 :284 的 `executing.run(true, operation)`
- * 建立。ALS 上下文沿 `await`、microtask、以及**在事务内创建的 timer** 继续传播，所以
+ * `AsyncLocalStorage`（同文件 :271），事务由 :283 的 `executing.run(true, operation)`
+ * 建立。
+ *
+ * ⚠️ **行号按版本代次漂移，引用必须带代次锚点**（否则下一次升级又会写错行号）：
+ *  - `dsh-hmr` **0.2.0-rc.2**：:271 = `executing = new AsyncLocalStorage()`、
+ *    :280 = nested 拒绝、:283 = `executing.run(true, operation)`；
+ *  - `dsh-hmr` **0.2.1-rc.2**：:736 / :749 / :752 —— 那一代的 `runExclusive` 函数体
+ *    **逐字不变**，只是整段位移（实测：`dsh-settings` 与 `dsh-config-editor` 的
+ *    `lib/index.js` 在两代之间逐字节相同、无位移，所以只有 `dsh-hmr` 的行号会漂）。
+ *
+ * ALS 上下文沿 `await`、microtask、以及**在事务内创建的 timer** 继续传播，所以
  * 「排到下一个 tick」根本逃不出去（issue #16 的取证注释就是这个结论）。
  *
- * **为什么定时器能逃出去**：lead 在同一构建上用 `DSH_GHOST_ALSPROBE` 探针在五种上下文
- * 各写一次（被修的就是这套写入），实测五行：
+ * **为什么定时器能逃出去、而事务内的写逃不出去**：timer 捕获的是**建它那一刻**的
+ * `AsyncLocalStorage` 上下文（`apply()` 期建定时器时 store 是 undefined，于是它以后
+ * 每次触发都在事务外）。复核评论 #36 `issuecomment-37810` 在实跑宿主 0.2.1-rc.2 上
+ * 实测的写上下文（节选；「判定」列是「写有没有进盘并 bump revision」，**不是**耗时）：
  *
  * ```
- * PROBE boot-now:              OK  in 1437ms
- * PROBE handler-sync:          OK  in 1463ms
- * PROBE handler-microtask:     OK  in 1722ms
- * PROBE boot-setTimeout-5s:    OK  in  146ms     ← apply() 期建的定时器：能写
- * PROBE boot-setInterval-8s:   OK  in  147ms     ← apply() 期建的 interval：能写
+ * A（事务外建立，store=undefined）
+ * A2 apply() 期建的 setTimeout(5s)      OK    191–299ms    ✓ bump
+ * A3 apply() 期建的 setInterval(8s)     OK    201–283ms    ✓ bump
+ * A9 回调内 await 500ms 后写            OK    1685–1893ms  ✓ bump
+ * A5 回调内直接写                        FAIL  2072–2113ms  ✗ timed out waiting for the writer lock
+ * B（真事务内，store=true）
+ * B1 回调内直接写                        FAIL  23–31ms      ✗ HMR transactions cannot be nested
  * ```
  *
- * 而在 LLM `await` 之后的续体里写（也就是 `completion` 生成完成后那一次推送）实测
- * FAIL = `HMR transactions cannot be nested`。差别不在「等了多久」，在**上下文在哪儿
- * 建立的**：`apply()` 期建定时器时 store 是 undefined，于是它以后每次触发都在事务外。
+ * 两条结论：① **失败有两种互不相同的成因**——nested 由**上下文在哪儿建立**决定（同步
+ * 零副作用拒绝，23~31ms 即拒），锁超时由**争锁**决定（2s 硬上限，与上下文无关）；
+ * ② 早先 PROBE 里 1463/1722ms 那两行「OK」其实撞的是锁窗口，**耗时不是写入耗时**。
+ * 所以本模块排的队要装**两类**被拒写入（见下面的三态分诊），而 pump 还必须**别和
+ * 即时写抢锁**（见 `src/index.ts` 里 `drainDeferred` 的互斥段）。
+ *
  * 本模块就是这个「事务外锚点」要排的队：被拒的写入不再丢，稍后由 `src/index.ts` 里的
  * pump 补写。
  *
@@ -39,9 +57,16 @@
  * pump 间隔：500ms。
  *
  * 依据（两头都要给理由）：
- *  - **上限那头**：续写是用户停下来正等的东西，补写延迟必须显著小于它跟在后面的生成
- *    耗时（`completion generated … in Xms` 常见 1.5~3s）。500ms 的最坏额外等待 ≈
- *    典型生成耗时的 1/4~1/3，用户感知的仍是「模型在想要慢一点」，不是「插件卡住了」。
+ *  - **上限那头**：补写延迟必须小到用户还等得起。⚠️ **原来那条「500ms ≈ 典型生成耗时的
+ *    1/4~1/3（生成常见 1.5~3s）」的依据已失效**：「1.5~3s」是估计而不是实测，而实测
+ *    **单次写耗时 191~332ms**（首笔 2.2~2.5s，复核评论 #36 `issuecomment-37810` 在实跑
+ *    宿主 0.2.1-rc.2 上的 A 组）—— 500ms 反而**大于**一次写，所以「按生成耗时的比例」
+ *    这个论证不成立（生成耗时的分布见 `src/completion-gate.ts` 里的实测，两组样本差得
+ *    很远，不是一个能拿来当分母的常数）。
+ *    现在留 500ms 的理由换成另外两条：**①** 空转成本（见下）；**②** **本轮明确不缩短**
+ *    ——间隔变小会加剧本仓与其它写者的**锁竞争**，而锁竞争正是
+ *    `atomic-write: timed out waiting for the writer lock` 的来源之一；等互斥修完、
+ *    有了新的失败率数据再定这个值（排期在 lead 那边，不在本轮）。
  *    取 2s 以上就等于没修：那时 client 早就在下一次输入了。
  *  - **下限那头**：空转成本。队列空时回调必须立刻 return（一次 `isEmpty()` 布尔判断），
  *    不做 `describe()`、不做读盘，所以 500ms 的代价是每秒 2 次布尔判断。再密下去只换来
@@ -56,8 +81,14 @@ export declare const DEFERRED_PUMP_MS = 500;
  * 陈年续写推进去会在光标位置显示一段不对题的幽灵文本（比「没幽灵」更糟，因为用户会
  * Tab 接受它）。8s 是这么定的：
  *  - 触发一次续写的输入停顿本身在 0.5~1.5s 量级，8s 相当于「用户又往下打了好几轮」；
- *  - 它是 `DEFERRED_PUMP_MS` 的 16 倍，也就是排在槽里的续写至少有 16 次机会落盘，
- *    淘汰不会被当成「根本没试过」；
+ *  - 它是 `DEFERRED_PUMP_MS` 的 16 倍（8000/500），也就是排在槽里的续写至少有 16 次
+ *    机会落盘，淘汰不会被当成「根本没试过」；
+ *  - 按**单次写耗时**（实测 191~332ms，首笔 2.2~2.5s）算是 24~42 倍。这份额外的余量
+ *    覆盖的是**补写与在途写争锁**要走的退避回合：锁等待的硬上限是 2s
+ *    （`dsh-atomic-write` 的 `DEFAULT_LOCK_WAIT_MS = 2e3`，`dsh-config-editor` 取锁
+ *    不传 options ⇒ 调用方改不了），争锁失败就重来，最坏要把一整个 2s 窗口让完才轮得到
+ *    补写 —— 所以 8s 给的是「让完仍有余」，不是「生成时间的几倍」（生成耗时的实测分布
+ *    见 `src/completion-gate.ts`）；
  *  - lead 给的反例（30 秒前的续写推进去是错的）在这个上限之上，本上限比它保守 4 倍。
  *
  * 不带 completion 的 push（纯热度/历史/对账刷新）**不按时间淘汰**：那些载荷是幂等的
@@ -106,6 +137,83 @@ export interface DeferredClearOpsItem {
 }
 /** 槽里可能的任一项。 */
 export type DeferredItem = DeferredPushItem | DeferredClearOpsItem;
+/**
+ * 写失败的**三态分诊**（issue #36 复核评论 `issuecomment-37810` 的产物）。
+ *
+ * **为什么必须三态**：本仓原先只认 `/cannot be nested/i` 一种失败形态，其余一切（含下面
+ * 第二种）都被归进「终局丢弃」那一支。而第二种失败是**可重试的竞争失败**：
+ *
+ * ```
+ * atomic-write: timed out waiting for the writer lock at <path>
+ * ```
+ *
+ * 它抛在 `@deepseek-ai/dsh-atomic-write/lib/index.js`（`DEFAULT_LOCK_WAIT_MS = 2e3`，
+ * 争锁退避到点即抛），而 `dsh-config-editor/lib/index.js` 取锁时**不传 options**，
+ * 调用方改不了那个上限——本仓只能自己不去撞它。撞上它的那次写**没有**「写不进去」的
+ * 结构性理由：只是当时锁被别人占着（**包括被本仓自己的补写泵占着**），过一会儿重试就
+ * 能成。把这种失败当终局丢弃＝载荷凭空消失、client 收不到幽灵，而留痕只剩一条被节流
+ * 的记录——那与 #15/#17/#22「载荷丢了但日志长得一模一样」是同一个病。
+ *
+ * 三态与处置：
+ *  - `structural-refusal`（结构性拒绝）：HMR 事务嵌套 → **进补写队列**（事务外补写）。
+ *  - `retryable-contention`（可重试的竞争失败）：写锁等待超时 → **进补写队列**（重试）。
+ *  - `unknown`（未识别的失败）：保持终局丢弃，但留痕必须**说清是未知**，不许伪装成
+ *    前两者。
+ *
+ * 两类可重试的失败**必须用不同的 kind**，否则「哪种失败吃掉了几次」不可统计——那正是
+ * 只用一条 `/cannot be nested/` 正则兜着的老问题。
+ */
+export type WriteFailureClass = 
+/** 结构性拒绝：HMR 事务嵌套（`HMR transactions cannot be nested`）。 */
+'structural-refusal'
+/** 可重试的竞争失败：写锁等待超时（`atomic-write: timed out waiting for the writer lock`）。 */
+ | 'retryable-contention'
+/** 未识别的失败：不属以上两类（不许猜是哪一类）。 */
+ | 'unknown';
+/** 分诊后的处置：`queue` = 进补写队列重试；`drop` = 终局丢弃。 */
+export type WriteFailureDisposition = 'queue' | 'drop';
+/** 写通道：`_push` 推送 / `_ops` 清空。 */
+export type WriteChannel = 'push' | 'clearOps';
+/** 类别短名（进 kind 的后缀）。 */
+export type WriteFailureSuffix = 'nested' | 'lock-timeout' | 'failed';
+/** 一次分诊的完整结论（**不含**失败正文——正文由调用方另行拼进报文）。 */
+export interface WriteFailureTriage {
+    /** 失败类别。 */
+    readonly cls: WriteFailureClass;
+    /** 处置：`queue` = 进补写队列重试；`drop` = 终局丢弃。 */
+    readonly disposition: WriteFailureDisposition;
+    /** 类别短名（`nested` / `lock-timeout` / `failed`）。 */
+    readonly suffix: WriteFailureSuffix;
+    /** 直接失败路径的 kind（按通道分桶，便于统计「哪条通道、哪类失败吃掉了几次」）。 */
+    readonly kind: string;
+    /** 泵内重试路径的 kind（与直接路径分开，避免两个场景共用一个计数器）。 */
+    readonly deferredKind: string;
+    /** 留痕里的一句话类别说明（**不含正文**，只说这是哪一类）。 */
+    readonly label: string;
+}
+/**
+ * 从任意错误对象里取可读文本。
+ *
+ * `error instanceof Error ? error.message : String(error)` 这个老写法在「抛的不是
+ * Error 实例、但带 `message` 字段」时会退化成 `[object Object]`，于是分诊认不出报文、
+ * 把可重试的竞争失败错判成「未知」。这里补上那一支。
+ */
+export declare function errorText(error: unknown): string;
+/** 是不是结构性拒绝（HMR 事务嵌套）？ */
+export declare function isStructuralRefusal(text: string): boolean;
+/** 是不是可重试的竞争失败（写锁等待超时）？ */
+export declare function isWriterLockTimeout(text: string): boolean;
+/**
+ * 把一次写失败分成三类，并给出处置与留痕 kind。
+ *
+ * 判定顺序有讲究：**先结构性拒绝、再竞争失败**。两者都不含对方的关键字，所以顺序
+ * 只影响「同时命中两份特征」的边角报文；那种报文按更结构性的那一类处理（它更可能是
+ * 真因，竞争失败只是表象）。
+ *
+ * @param error - 写失败的错误对象（`Error` 实例、带 `message` 的对象或字符串都行）。
+ * @param channel - 写通道（决定 kind 的前缀）。
+ */
+export declare function triageWriteFailure(error: unknown, channel: WriteChannel): WriteFailureTriage;
 /** `enqueuePush` 的入参：时刻由调用方给（假时钟可测）。 */
 export interface DeferredPushInput {
     readonly payload: string;

@@ -345,13 +345,16 @@ run('卸载时 clearInterval（跨 apply 不留无人认领的写入源）', () 
 });
 
 run('两个 nested 分支都排队：push → enqueuePush，_ops 清空 → enqueueClearOps', () => {
-  assert.match(hostSource, /deferred\.enqueuePush\(\{ payload, fingerprint, carriesCompletion \}/, 'flushPush 的 nested 分支必须把载荷排进 push 槽');
-  assert.match(hostSource, /deferred\.enqueueClearOps\(consumedPayload/, 'consumeOps 的 nested 分支必须把清空排进 clearOps 槽');
+  assert.match(hostSource, /deferred\.enqueuePush\(\{ payload, fingerprint, carriesCompletion \}/, 'flushPush 的排队分支必须把载荷排进 push 槽');
+  assert.match(hostSource, /deferred\.enqueueClearOps\(consumedPayload/, 'consumeOps 的排队分支必须把清空排进 clearOps 槽');
   // 排队之后不能再无条件放开指纹（那等于把主路径悄悄降级回旧兜底）。
-  const from = hostSource.indexOf('/cannot be nested/i');
-  const nestedPush = hostSource.slice(from, hostSource.indexOf("traceFault('push-failed'"));
-  assert.ok(from >= 0 && nestedPush.length > 0, '找不到 push 的 nested 分支');
-  assert.ok(!/lastPushFingerprint = null;/.test(nestedPush), 'nested 分支里不该再直接清指纹：载荷已在槽里，只有补写最终没成才放开（releaseDeferredPushFingerprint）');
+  // ⚠️ 分诊已从「一条 `/cannot be nested/i` 正则」改成三态函数（`triageWriteFailure`，
+  // 见 `src/deferred-writes.ts`），所以这里的锚点跟着换成**分诊调用**。
+  const from = hostSource.indexOf('triageWriteFailure(error,');
+  const to = hostSource.indexOf('traceFault(triage.kind,');
+  assert.ok(from >= 0 && to > from, '找不到 push 的分诊分支');
+  const nestedPush = hostSource.slice(from, to);
+  assert.ok(!/lastPushFingerprint = null;/.test(nestedPush), '排队分支里不该再直接清指纹：载荷已在槽里，只有补写最终没成才放开（releaseDeferredPushFingerprint）');
 });
 
 run('CAS 依据在 consumeOps 同步段捕获（不能等回调里读会变的 lastOpsPayload）', () => {
