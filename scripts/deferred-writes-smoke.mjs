@@ -331,6 +331,14 @@ run('pump 建在 apply() 的同步续体里（settingsSvc 就位之后，中间�
 });
 
 run('drainDeferred 第一句就是空快路径（空队列且无待补热度时不得 describe / 读盘）', () => {
+  // **这条钉的是形状，而形状在这里就是语义 —— 别把它「改成语义版」，那会变弱。**
+  // 2026-10-22 复核时我准备把它换成「扫描守卫之前的 token（describe/readOps/await/.update/fs）」，
+  // 换了个变异先自证：在 `function drainDeferred(): void {` 之后、守卫之前插入一行
+  // `const probe = readOps();` ⇒ **本条立刻红**（因为正则只允许守卫前出现注释行）。
+  // 也就是说「守卫必须是第一句」已经隐含了「守卫之前不可能有任何 IO」，比 token 扫描更强：
+  // token 扫描会被 `helperThatReadsDisk()` 这类改名绕过，位置约束绕不过。
+  // （另一个会话当时把守卫条件扩成 `isEmpty() && pendingHotPayload === null`，本条的
+  //  正则跟着变了形状 —— 那是**跟着语义走的必要改动**，不是放宽。）
   assert.match(
     hostSource,
     /function drainDeferred\(\): void \{\s*\n(?:\s*\/\/.*\n)*\s*if \(deferred\.isEmpty\(\) && pendingHotPayload === null\) return;/,
