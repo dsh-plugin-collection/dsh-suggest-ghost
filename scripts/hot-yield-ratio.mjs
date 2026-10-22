@@ -80,6 +80,16 @@ const ensureSandbox = async () => {
   t = t.slice(0, i) + block + t.slice(j);
   // inlineDelayMs 压到 60：让「停顿 → complete」尽可能早，抢 1000ms 窗口
   t = t.replace(/^(\s*)inlineDelayMs: \d+$/m, '$1inlineDelayMs: 60');
+  // ⚠️ 关掉沙箱里的 auto-continue：它会**自己往会话里发「继续」**，于是 complete/hot 计数
+  // 混进非本轮动作（实测出现过「分子 3 / 分母 2 = 1.50」这种不可能的比例）。
+  {
+    const i = t.indexOf('- id: auto-continue');
+    if (i >= 0) {
+      const j = t.indexOf('\n- id: ', i + 5); const blk = t.slice(i, j < 0 ? t.length : j);
+      if (/enabled:\s*true/.test(blk)) t = t.slice(0, i) + blk.replace(/enabled:\s*true/, 'enabled: false') + t.slice(j < 0 ? t.length : j);
+      else if (!/enabled:/.test(blk)) t = t.slice(0, i) + blk.replace(/^(- id: auto-continue\n)/, '$1  enabled: false\n') + t.slice(j < 0 ? t.length : j);
+    }
+  }
   writeFileSync(profile, t);
   say('· profile 已打补丁（enabled + inlineDelayMs=60）');
 
@@ -373,25 +383,6 @@ const bootSessions = async (page) => {
     }
   }
 
-  const send = async (text) => {
-    const before = await page.evaluate(`(() => {
-      const c = window.__gy.composer();
-      return c == null ? null : { phase: c.dataset.phase ?? '', len: (c.textContent ?? '').length };
-    })()`);
-    if (before === null) return { step: 'no composer' };
-    const ok = await cdpType(page, `() => window.__gy.composer()`, text, false,
-      `(() => (window.__gy.composer()?.textContent ?? '').length)`);
-    const draftLen = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length)`);
-    if (draftLen === 0) return { step: '打字没进草稿', ok };
-    await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
-    await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
-    await sleep(400);
-    const after = await page.evaluate(`(() => {
-      const c = window.__gy.composer();
-      return c == null ? null : { phase: c.dataset.phase ?? '', len: (c.textContent ?? '').length };
-    })()`);
-    return { ok, before, after };
-  };
 
   const logPath = join(SANDBOX, 'logs', 'sbx.log');
   const countIn = (needle) => {
@@ -406,7 +397,7 @@ const bootSessions = async (page) => {
   };
 
   say('· 会话 1：发第一条消息');
-  say(`  ${JSON.stringify(await send('只回答一个字：好'))}`);
+  say(`  ${JSON.stringify(await composerSend(page, '只回答一个字：好'))}`);
   await waitTurns(1);
   say('· 会话 2：点「新会话」再发一条（切会话才有 pull 可编排）');
   await page.evaluate(`(async () => {
@@ -414,7 +405,7 @@ const bootSessions = async (page) => {
     window.__gy.click(n);
     await window.__gy.wait(900);
   })()`);
-  say(`  ${JSON.stringify(await send('只回答一个字：行'))}`);
+  say(`  ${JSON.stringify(await composerSend(page, '只回答一个字：行'))}`);
   const got = await waitTurns(2);
   say(`· 两个会话各有 completed 回合：${got ? '是' : '否（后续编排可能不成立）'}`);
   return { countIn };
@@ -441,6 +432,114 @@ const oneRound = async (page, index) => {
     `(() => (window.__gy.composer()?.textContent ?? '').length)`);
   const draftLen = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length)`);
   return { ...first, typed, draftLen };
+};
+
+const composerSend = async (page, text) => {
+  const before = await page.evaluate(`(() => {
+    const c = window.__gy.composer();
+    return c == null ? null : { phase: c.dataset.phase ?? '', len: (c.textContent ?? '').length };
+  })()`);
+  if (before === null) return { step: 'no composer' };
+  const ok = await cdpType(page, `() => window.__gy.composer()`, text, false,
+    `(() => (window.__gy.composer()?.textContent ?? '').length)`);
+  const draftLen = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length)`);
+  if (draftLen === 0) return { step: '打字没进草稿', ok };
+  await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+  await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+  await sleep(120);
+  const after = await page.evaluate(`(() => {
+    const c = window.__gy.composer();
+    return c == null ? null : { phase: c.dataset.phase ?? '', len: (c.textContent ?? '').length };
+  })()`);
+  return { ok, before, after };
+};
+
+// 读盘上 `_hot`（**只取条数/总数/末条的长度与计数，绝不取正文**）：
+// 让路那次写出去的内容是不是「当前热表」，就看这份刚落地的小格子有没有把本轮新提交的那条带上。
+const hotSnapshot = () => {
+  try {
+    const t = readFileSync(join(SANDBOX, 'profiles', 'web', 'cordis.patch.yml'), 'utf8');
+    const m = t.match(/^    _hot: '([\s\S]*?)'\n(?=    [a-z_-]+:|- id:|  config:)/m);
+    if (m === null) return null;
+    const j = JSON.parse(m[1].replace(/\n\s+/g, ' '));
+    const list = Array.isArray(j.hot) ? j.hot : [];
+    const last = list.length > 0 ? list[list.length - 1] : null;
+    return { entries: list.length, total: j.total ?? null,
+      lastLen: last === null ? null : (last.text ?? '').length, lastCount: last === null ? null : last.count };
+  } catch { return null; }
+};
+
+// ── 连发模式（#63 让路的第一次现场执行）────────────────────────────────────
+//
+// 触发条件读码更正（重要）：让路**不要求**先有「被窗口推迟的 pending 快照」，
+// 它要求的是 `windowWasOpen`（窗口开着、且这一拍本可推迟）**且这次 flush 真的带走热度格**
+// （即此刻热表相对上次写是脏的）。⇒ 单轮形状：
+//   改热表(卡片 add，走 _ops，宿主 applyOps 之后不 push) → 打字+停顿(complete #1：写热度、开窗口)
+//   → 再改热表 → 打字+停顿(complete #2：窗口开着 + 脏 ⇒ 让路)
+// 全程 ~600ms，且**不花 agent 回合**（只花两次便宜的续写调用）。
+const HOT_INPUT = '手工新增一条候选短语';
+
+const openCard = async (page) => {
+  const step = await page.evaluate(`(async () => {
+    const G = window.__gy;
+    const found = () => [...document.querySelectorAll('input')].find((i) =>
+      ((i.getAttribute('aria-label') ?? '') + (i.placeholder ?? '')).includes(${JSON.stringify(HOT_INPUT)})) ?? null;
+    if (found() !== null) return { open: true, direct: true, composer: G.composer() !== null };
+    // 卡片在插件详情页：先点侧栏「插件」，再点本插件那一行
+    const nav = G.byText('插件');
+    if (nav === null) return { open: false, step: 'no 插件 nav' };
+    nav.click();
+    await G.wait(700);
+    const row = G.byText('ghost') ?? G.byText('Suggest') ?? G.byText('建议');
+    if (row !== null) { row.click(); await G.wait(900); }
+    return {
+      open: found() !== null, clickedRow: row !== null, composer: G.composer() !== null,
+      inputs: [...document.querySelectorAll('input')].map((i) => ((i.getAttribute('aria-label') ?? i.placeholder ?? i.type) || '').slice(0, 22)).slice(0, 14),
+      buttons: [...document.querySelectorAll('button')].map((b) => G.name(b).slice(0, 14)).filter(Boolean).slice(0, 24),
+    };
+  })()`);
+  return step;
+};
+
+const hotAdd = (page, text) => page.evaluate(`(async () => {
+  const G = window.__gy;
+  const input = [...document.querySelectorAll('input')].find((i) =>
+    ((i.getAttribute('aria-label') ?? '') + (i.placeholder ?? '')).includes(${JSON.stringify(HOT_INPUT)})) ?? null;
+  if (input === null) return { ok: false, step: '热表输入框不在' };
+  input.focus();
+  return { ok: true, focused: document.activeElement === input };
+})()`).then(async (r) => {
+  if (!r.ok) return r;
+  await cdpType(page, `() => [...document.querySelectorAll('input')].find((i) => ((i.getAttribute('aria-label') ?? '') + (i.placeholder ?? '')).includes(${JSON.stringify(HOT_INPUT)}))`, text, false,
+    `(() => { const i = [...document.querySelectorAll('input')].find((x) => ((x.getAttribute('aria-label') ?? '') + (x.placeholder ?? '')).includes(${JSON.stringify(HOT_INPUT)})); return (i?.value ?? '').length; })()`);
+  const clicked = await page.evaluate(`(() => {
+    const G = window.__gy;
+    const b = G.btnIn(null, '新增') ?? G.btnIn(null, '添加') ?? G.btnIn(null, 'Add');
+    if (b === null) return { ok: false, buttons: [...document.querySelectorAll('button')].map((x) => G.name(x).slice(0, 12)).filter(Boolean).slice(0, 20) };
+    b.click(); return { ok: true };
+  })()`);
+  return { ...r, ...clicked };
+});
+
+const burstRound = async (page, index, tally) => {
+  const before = tally();
+  const t0 = Date.now();
+  await hotAdd(page, `burst${index}ab`);
+  await cdpType(page, `() => window.__gy.composer()`, 'abab', false,
+    `(() => (window.__gy.composer()?.textContent ?? '').length)`);
+  await sleep(260);
+  await hotAdd(page, `burst${index}cd`);
+  await cdpType(page, `() => window.__gy.composer()`, 'cd', false,
+    `(() => (window.__gy.composer()?.textContent ?? '').length)`);
+  await sleep(1400);
+  const after = tally();
+  return {
+    ms: Date.now() - t0,
+    complete: after.complete - before.complete,
+    yielded: after.yielded - before.yielded,
+    coalesced: after.coalesced - before.coalesced,
+    hotWrites: after.hot - before.hot,
+  };
 };
 
 // ── 主流程 ─────────────────────────────────────────────────────────────────
@@ -484,6 +583,129 @@ try {
   const logPath = join(SANDBOX, 'logs', 'sbx.log');
   const read = () => readFileSync(logPath, 'utf8').split('\n');
   const countWhere = (pred) => read().filter(pred).length;
+
+  const tally = () => {
+    const lines = read();
+    return {
+      complete: lines.filter((l) => l.includes('ops consumed: complete')).length,
+      yielded: lines.filter((l) => l.includes('hot push yielded on input')).length,
+      coalesced: lines.filter((l) => l.includes('hot push coalesced')).length,
+      hot: lines.filter((l) => /ops-trace\] (hot push landed|push landed)/.test(l)).length,
+      pull: lines.filter((l) => l.includes('ops consumed: pull')).length,
+    };
+  };
+  if (flag('burst')) {
+    // ⚠️ 上一轮两次 60s 超时的真因：页面被留在**插件详情页**，那里 composer 元素虽然还在
+    // （phase=plain）但**没有被 attach** ⇒ 打字与回车根本进不了宿主。先把主视图拉回来，
+    // 再用「提交冒烟」确认这条通道真的通，别拿超时当数据。
+    const view = await page.evaluate(`(async () => {
+      const G = window.__gy;
+      const b = G.byText('新会话') ?? G.byText('新建会话');
+      if (b != null) { b.click(); await G.wait(1300); }
+      const c = G.composer();
+      return { clicked: b != null, composer: c === null ? null : (c.getAttribute('aria-label') ?? '').slice(0, 18), phase: c?.dataset.phase ?? '' };
+    })()`);
+    say('· 主视图：' + JSON.stringify(view));
+    const pullBase = tally().pull;
+    const smoke = await composerSend(page, '答一个字：冒');
+    let arrived = false; const t9 = Date.now();
+    while (Date.now() - t9 < 25000) {
+      if (tally().pull > pullBase || tally().hot > tally().hot) { arrived = true; break; }
+      await sleep(200);
+    }
+    say(`· 提交冒烟：${arrived ? '到达宿主 ✓' : '**没到达**（这条编排在此环境下不成立，如实报）'}，结果=${JSON.stringify(smoke)}`);
+    if (!arrived) { await cleanup(); process.exit(1); }
+    const tallyNow = tally;
+    const base = tallyNow();
+    say('· 起点计数：' + JSON.stringify(base));
+    const rows = [];
+    for (let k = 1; k <= ROUNDS; k += 1) {
+      const before = tallyNow();
+      // ① 第一次提交：它的 turn/end 会把热度写出去 ⇒ 那一刻窗口被打开
+      const token = `甲${k}${Date.now().toString(36).slice(-6)}`;
+      await composerSend(page, `答 ${token}`);
+      // 轮询等「热度写落地」这一拍，拿到它的时刻 ⇒ 后续动作全部以它为原点压进 1000ms
+      let armed = false; let waitMs = 0;
+      const t0 = Date.now();
+      while (Date.now() - t0 < 60000) {
+        if (tallyNow().hot > before.hot) { armed = true; break; }
+        await sleep(80); waitMs = Date.now() - t0;
+      }
+      if (!armed) { rows.push({ round: k, fail: `等热度写超时 ${waitMs}ms` }); say(`轮 ${k}：${rows.at(-1).fail}`); continue; }
+      const armAt = Date.now();
+      // ② 立刻第二次提交：热表在**提交那一刻**变脏，宿主不推 ⇒ 这就是「有对象可带」
+      const token2 = `乙${k}${Date.now().toString(36).slice(-6)}`;
+      await composerSend(page, `答 ${token2}`);
+      const commitGap = Date.now() - armAt;
+      // ③ 立刻打字 + 停顿 ⇒ 客户端发 complete
+      await cdpType(page, `() => window.__gy.composer()`, 'ababab', false,
+        `(() => (window.__gy.composer()?.textContent ?? '').length)`);
+      const typeGap = Date.now() - armAt;
+      // 归因有效性：complete 必须落在 armAt 之后 1000ms 内，否则这轮的让路不能算作本编排造成的
+      //（上一批 4 轮的 typeGap 全是 ~1400ms ⇒ 超窗 ⇒ 那几次 yielded 的**来源不可归因**，已如实记）
+      if (typeGap > 1000) say(`   ⚠️ 本轮 complete 落在 ${typeGap}ms > 窗口 1000ms ⇒ 不可归因于本编排`);
+      const hotBefore = hotSnapshot();
+      await sleep(1600);
+      const hotAfter = hotSnapshot();
+      const after = tallyNow();
+      // 「放出去的是不是当前热表」= 让路那次写的 `_hot` 里，**有没有本轮那两个独有 token**
+      const cellsContainTokens = () => {
+        try {
+          const t = readFileSync(join(SANDBOX, 'profiles', 'web', 'cordis.patch.yml'), 'utf8');
+          const m = t.match(/^    _hot: '([\s\S]*?)'\n(?=    [a-z_-]+:|- id:|  config:)/m);
+          if (m === null) return { inHot: false, present: false };
+          const has = (tok) => m[1].includes(tok);
+          return { inHot: has(token), present: has(token2) };
+        } catch { return { inHot: false, present: false }; }
+      };
+      const tok = cellsContainTokens();
+      const landedCurrent = tok.inHot || tok.present;
+      const row = {
+        round: k, commitGap, typeGap, landedCurrent, hotBefore, hotAfter,
+        complete: after.complete - before.complete,
+        yielded: after.yielded - before.yielded,
+        coalesced: after.coalesced - before.coalesced,
+        hotWrites: after.hot - before.hot,
+      };
+      rows.push(row);
+      say(`轮 ${String(k).padStart(2)}：二提交@${commitGap}ms 打字@${typeGap}ms `
+        + `complete+${row.complete} 让路+${row.yielded} coalesce+${row.coalesced} 热度写+${row.hotWrites} `
+        + `落地=当前热表 ${row.landedCurrent === true ? '✓' : '✗ ' + JSON.stringify({ b: row.hotBefore, a: row.hotAfter, expectedLen })}`);
+      if (row.yielded > 0 && flag('firstdump')) {
+        const hot = await page.evaluate(`(() => 'noop')()`); void hot;
+        say('   ↑ 第一次真实触发 ⇒ 落地内容核对见汇总后的 _hot 读回');
+      }
+    }
+    const now = tallyNow();
+    const eligible = rows.filter((r) => !r.fail && r.complete > 0).length;
+    const yields = rows.reduce((a, r) => a + (r.yielded ?? 0), 0);
+    say('\n=== 连发汇总 ===');
+    say(`轮数 N = ${rows.length}；失败/超时轮 = ${rows.filter((r) => r.fail).length}；`
+      + `其中 complete 落在窗口内（可归因）的轮 = ${attributable}`);
+    say(`分母 = 整段连发期间到达宿主的 complete op 总数 = ${eligible}`);
+    say(`分子 = 同一期间真的打出让路（hot push yielded on input）的次数 = ${yields}`);
+    say(`（每轮 complete 增量 = ${JSON.stringify(rows.map((r) => r.complete ?? '超时'))}；`
+      + `每轮让路增量 = ${JSON.stringify(rows.map((r) => r.yielded ?? '超时'))}）`);
+    say(`比例 = ${eligible === 0 ? 'n/a（分母 0）' : `${yields}/${eligible} = ${(yields / eligible).toFixed(2)}`}`
+      + `；coalesce 增量 = ${tallyNow().coalesced - base.coalesced}`);
+    say(`落地=当前热表（本轮独有 token 出现在 _hot 里）的轮数 = `
+      + `${rows.filter((r) => r.landedCurrent === true).length}/${rows.filter((r) => !r.fail).length}`);
+    say(`全量计数：${JSON.stringify(now)}`);
+    say('性质核对（让路写次数 ≤ 待写变化数）：让路 = ' + `${yields}，热度写增量 = ${now.hot - base.hot}`
+      + ` ⇒ ${yields <= now.hot - base.hot ? '成立' : '不成立（要报）'}`);
+    const diskHot = (() => {
+      try {
+        const t = readFileSync(join(SANDBOX, 'profiles', 'web', 'cordis.patch.yml'), 'utf8');
+        const m = t.match(/^    _hot: '([\s\S]*?)'\n(?=    [a-z_-]+:|- id:|  config:)/m);
+        if (m === null) return null;
+        const j = JSON.parse(m[1].replace(/\n\s+/g, ' '));
+        return { entries: (j.hot ?? []).length, total: j.total, sample: (j.hot ?? []).slice(0, 3).map((e) => e.text.length) };
+      } catch (e) { return { error: String(e).slice(0, 60) }; }
+    })();
+    say('落地内容核对（盘上 `_hot` 的 entries/total，长度不打印正文）：' + JSON.stringify(diskHot));
+    await cleanup();
+    process.exit(0);
+  }
 
   say(`\n=== 开始编排：${ROUNDS} 轮 ===`);
   const rounds = [];
