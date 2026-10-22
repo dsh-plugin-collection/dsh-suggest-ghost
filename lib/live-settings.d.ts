@@ -37,6 +37,10 @@ import type { FlatConfig } from './generate.js';
  * volatile 载体里**不属于设置项**的传输字段。见模块头「`_ops` / `_push` 不是设置项」。
  * `readOps` 继续按它自己的路径读这两个字段；本模块只保证它们不进 effective()。
  *
+ * `_residual`（#56 的**残留格**）同样登记在这里：它是宿主自用格，客户端不读、设置页也不该
+ * 看见；漏登记的后果是它会被当配置值读进 `effective()`（本模块加载期有不变量会直接抛，
+ * 所以漏了会红在测试里，不会静默）。
+ *
  * `_hot`（#36 建议 2 拆出的**热度格**）必须一起登记在这里：它和 `_push` 一样是
  * host→client 的 JSON 载荷、同样标了 `.volatile()`，所以 `describe()` 的 `row.value`
  * 里必然混着它。漏登记的后果不是「读不到」而是**读错**——整段 JSON 会被

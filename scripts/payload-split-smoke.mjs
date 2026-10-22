@@ -361,18 +361,29 @@ if (!BASELINE) {
   });
   console.log('  ⚪ ⑤b 热度格在重启后写了一次 —— 夹具里没有 storageDomain 可恢复热表，'
     + `与盘上那份必然不等：${JSON.stringify(p5.filter((c) => c.hot !== null))}（NOT-COVERED，不计通过）`);
-  run('补写泵的那一笔永远**只带一格**（多键补丁无法原子回滚，不塞给它）', () => {
+  run('补写泵的那一笔永远**不带热度格**（多键补丁无法原子回滚，不塞给它）', () => {
     // `drainDeferred` 的 push 分支里，判重/CAS（`decidePushDrain`）只认 `_push` 那一份
     // 字节。若让它顺手带上 `_hot`，「push 判定跳过」这条分支就会把同一笔里的热度格
     // 一起静默丢掉，而内核没有「回滚半笔写」的概念。所以即时写合并、补写不合并。
+    //
+    // 判据范围在 #56 之后收窄成「不带 `_hot`」而不是「只带一格」：`_residual` 是**必须**
+    // 跟着 `_push` 一起走的（不变式：任何一次 `_push` 写之后残留仍在盘上），漏了它
+    // 「第一次写被拒 → 入队 → 泵 flush」这一串会把 `_push` 与 `_residual` 同时丢没。
+    // 两者性质不同：`_hot` 每帧都被下一帧覆盖（丢了自愈），残留**丢了不可再生**。
     const from = hostSource.indexOf('function drainDeferred(): void {');
     const to = hostSource.indexOf('/** 补写被拒后的统一处置', from);
     const body = hostSource.slice(from, to > from ? to : from + 6000);
-    const updates = [...body.matchAll(/\.update\(SUGGEST_GHOST_NAMESPACE, \{([^}]*)\}/g)].map((m) => m[1].trim());
+    const updates = [...body.matchAll(/\.update\(SUGGEST_GHOST_NAMESPACE, (?:\{([^}]*)\}|(\w+))/g)]
+      .map((m) => (m[1] !== undefined ? m[1] : m[2]).trim());
     assert.ok(updates.length >= 2, `泵里应当能看到补写的 update 调用，实得 ${JSON.stringify(updates)}`);
     for (const u of updates) {
       assert.ok(!u.includes('_hot'), `补写带上了热度格（无法原子回滚）：{ ${u} }`);
     }
+    // #56 那条「泵写 `_push` 必须同批带上 `_residual`」**不在这里钉**：源码形状断言太脆
+    // （实现换个写法就红，而行为没变）。它由 scripts/residual-carry-smoke.mjs 的场景 6 用
+    // 行为钉：让第一笔写真的被拒、让泵真的补写，再断言残留仍在盘上。
+    // 实测把 `attachResidualCell(drainedPatch)` 删掉 ⇒ 场景 6 当场红，且红的就是那条路径
+    // （盘上 `_push` 变成 B 视角而哪一格都没有残留）。
   });
   run('客户端读侧守卫在场：建议格原文未变 ⇒ 不重解析、不重跑帧判据', () => {
     // **代码断言，不是行为断言**：拆格之后收益 1 的可量面是「客户端不必为一次纯热度

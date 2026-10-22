@@ -282,6 +282,29 @@ All notable changes to this project will be documented in this file.
   上界一侧（紧循环护栏）照旧钉死；改的原因是窗口落地后首次变化可能落在前一场留下的**开口窗口**里
   （少一次 leading 写，4→3，这是节流的预期行为），保留等式等于**用测试禁止节流**
 
+- **别的会话的一次 pull / 一次停顿续写 / 一次回合结束，不再盖掉盘上未判定的残留**（#56）。「未判定的
+  残留」＝宿主重启后从盘上读到、但**判不了**的那条建议（它的会话还没进店 ⇒ `judgePersistedPush` 回
+  `session-unavailable`）。此前别的会话的任何一个动作都会把 `_push` **整格**覆盖成自己的视角 ⇒ 残留丢
+  （同进程内还能靠内存里的原文救回来，**重启才真丢**）
+  - **新增传输载体格 `_residual`**（`{suggestion, sessionId}`，至多一条；**客户端不读**）：别的会话的动作
+    只写 `_push` / `_hot`，**不碰 `_residual`** ⇒ 保护是**构造性的**，不依赖「写的时候记得带上残留」这种
+    人工纪律 ⇒ **三条覆盖路径同时闭合**（pull、停顿续写、**回合结束** —— 最后这条最常见：B 跑一轮就抹了）
+  - **懒搬迁**：启动期**一字不写**（「启动只读不写不推」那条不变量原样保住）⇒ 下一次写 `_push` 时同批带上
+    `_residual`；崩溃/重启发生在懒写之前 ⇒ 盘上残留本就在 ⇒ 两条都闭合
+  - **一条必须成立的不变式**：**每一次写 `_push` 的路径都在同一笔 patch 里带上 `_residual`** —— 补写泵那笔
+    尤其要紧：第一笔写被拒 → 入队 → 队列里那份载荷不含 `_residual` → 泵 flush 时**两条一起丢**
+  - 字节形状与 `_push` 的建议部分**同形** ⇒ 判定复用 `decidePersistedPush` / `parsePersistedPush`，
+    **没有第二套「什么算可恢复」的判据**；了结挂在 restore / stale-turn / superseded / corrupt 四个终判出口
+    （`session-unavailable`、`session-mismatch` 不算收敛 ⇒「跨会话不恢复也不清」原样）；清空**绝不碰 `_push`**
+  - 一格一指纹（`residualSigOf` + `residualFingerprintOfPersisted`）；**`_push` 的三处 sig 一字未动** ⇒
+    「字节变了但指纹没变 ⇒ 该写不写」那个坑**从路径上消失**；`_residual` 与 `_push` 同批写 ⇒ 被拒时两格都
+    不落地 ⇒ 不会留半更新状态 ⇒ **不需要第三个补写槽**
+  - 回归：`scripts/residual-carry-smoke.mjs` 10 场，**同一个文件、同一套期望**，改前 4 红 → 改后全绿；那条
+    不变式由**行为钉**（三处写点各覆盖：即时写 / 补写泵 / 只需清空那笔），并用变异自证（删掉
+    `attachResidualCell(drainedPatch)` ⇒ 补写泵那条当场红）
+  - 客户端只加两个**只读**计数（`ownerHidden` / `llmGhostOffered`）与一条归属守卫场景（B 在场隐藏 A 的残留、
+    切回 A 立即可用且**不重推**）⇒ 判据语义未动
+
 ### 修复
 
 - **HMR 事务内写失败退化成微任务紧循环（2026-10-22 事故：tee 日志 23 GB、事件循环卡死）**。

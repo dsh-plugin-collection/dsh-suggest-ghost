@@ -204,6 +204,18 @@ const EditableFields = {
    *    （失败时清指纹 + 载荷留在槽里等下一次 flush）；建议格才走 #47 的三态分诊与补写。
    */
   _hot: z.string().default(EMPTY_PUSH).volatile(),
+  /**
+   * host 自用 · **未判定残留格**（#56）。装 `{suggestion, sessionId}` 至多一条。
+   *
+   * 为什么需要它（而不是「把残留当别的会话的建议塞进 `_push`」）：建议格只有**一个槽位**，
+   * `suggestionFieldsFor`（`src/coldstart.ts:327`）里当前会话的建议优先占格 ⇒ B 自己
+   * 有建议时 A 的残留根本放不进去，那一次写照样把它清掉。有了自己的一格，保护就是
+   * **构造性**的：别的会话的动作只写 `_push`/`_hot`，碰不到 `_residual`。
+   *
+   * 客户端**不读**这一格（未知键天然忽略）⇒ 零改动；`live-settings.ts` 的 `TRANSPORT_KEYS`
+   * 已登记，不会被当配置值读进 `effective()`。
+   */
+  _residual: z.string().default(EMPTY_PUSH).volatile(),
 };
 
 /**
@@ -249,6 +261,7 @@ export interface PluginConfigValues {
   _ops: Volatile<string>;
   _push: Volatile<string>;
   _hot: Volatile<string>;
+  _residual: Volatile<string>;
 }
 
 /**
@@ -515,7 +528,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
    *
    * `_push` 与 `_ops` 走**同一个** describe 行，所以回读残留建议不必多读一次盘。
    */
-  const readChannel = (name: '_ops' | '_push' | '_hot'): string => {
+  const readChannel = (name: '_ops' | '_push' | '_hot' | '_residual'): string => {
     const svc = settingsSvc as { describe?: () => unknown } | null;
     if (svc !== null && typeof svc.describe === 'function') {
       try {
@@ -532,7 +545,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         }
       } catch { /* describe 异常回退引用读取 */ }
     }
-    const ref = (resolved as { _ops?: unknown; _push?: unknown; _hot?: unknown })[name];
+    const ref = (resolved as { _ops?: unknown; _push?: unknown; _hot?: unknown; _residual?: unknown })[name];
     const payload = typeof ref === 'object' && ref !== null && typeof (ref as { get?: unknown }).get === 'function'
       ? (ref as { get: () => unknown }).get()
       : ref;
@@ -555,6 +568,14 @@ export function apply(ctx: Context, config: GenerateConfig): void {
    * 同一条性质，拆成两格之后必须**两格都成立**。
    */
   const readHot = (): string => readChannel('_hot');
+  /**
+   * 取当前 `_residual`（#56 的未判定残留格）。
+   *
+   * **优先级就一条**：这一格在 ⇒ 它是 pending 残留的唯一来源；不在才退回 `_push` 里那条
+   * （#50 的旧路径）。两条都在时以 `_residual` 为准——`_push` 里那条可能已经被别的会话
+   * 的动作换过了，而 `_residual` 才是「还没判定归属」的那一条。
+   */
+  const readResidual = (): string => readChannel('_residual');
   ctx.inject(['settings'], (settingsCtx) => {
     try {
       const svc = (settingsCtx as { settings?: { update: (ns: unknown, patch: object) => Promise<void> } }).settings;
@@ -631,6 +652,36 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       //    那才是 client 真正需要的入口。
       const rawPush = readPush();
       persistedPushRaw = rawPush === '' || rawPush === 'null' ? null : rawPush;
+      // #56：**残留优先从 `_residual` 认**（那一格在 ⇒ 它就是唯一来源）；不在才退回
+      // `_push` 里那条（#50 的旧路径）。退回时 `residualLanded=false` ⇒ 走**懒搬迁**：
+      // 启动期**不写**（不变量③），等下一次要写 `_push` 时同一笔 patch 把它搬过去。
+      {
+        const residualCell = parseResidualCell(readResidual());
+        if (residualCell !== null) {
+          pendingResidual = residualCell;
+          // 「要不要再写这一格」判的是**字节是否已经落过**（`residualLanded` +
+          // `lastLandedResidual`），不给它配第三个指纹：这格只在「未搬迁」或「待清空」
+          // 两种时刻写，内容都是原子的整格替换，加指纹只会多一个会漂的状态。
+          residualLanded = true;
+          lastLandedResidual = residualCell.raw;
+          // ⚠️ **不覆盖 `persistedPushRaw`**：那是 `_push` 那一格的原文，`seedPushStateFromPersisted`
+          // 拿它 seed `_push` 的指纹。两格的内容**可以不同**（进程 1 里 `_push` 已经变成 B 的
+          // 快照、残留搬进了 `_residual`），混用会让 `_push` 的指纹对上「盘上并不是那样」的字节
+          // ⇒ 下一次真该写的时候判成「不脏」而漏写（第一版就栽在这里：A 重启后 pull 的应答
+          // 被当成没变化，`_push` 里仍然是 `suggestion: null`）。
+          // 判定链本身一字不改：`_residual` 的字节形状与 `_push` 的建议部分同形，
+          // 直接喂给既有的 `decidePersistedPush` ⇒ 不出现第二套「什么算可恢复」的判据。
+        } else if (persistedPushRaw !== null) {
+          const fromPush = parsePersistedPush(persistedPushRaw);
+          if (fromPush.suggestion !== null && fromPush.sessionId !== null) {
+            pendingResidual = {
+              raw: buildResidualPayload({ suggestion: fromPush.suggestion, sessionId: fromPush.sessionId }),
+              sessionId: fromPush.sessionId,
+              suggestion: fromPush.suggestion,
+            };
+          }
+        }
+      }
       // 两格**一起 seed**，且放在建议判定之前：热度格不参与「恢复/清盘」判断（热度不是
       // 不可重建的 LLM 输出），只负责「盘上那格我已经知道，别再写一遍」。放在 if 之外是有
       // 意的——`_push` 可能是 null 而 `_hot` 有值（上一个进程推过「建议已被作废」的状态）。
@@ -642,6 +693,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         tracePersistedPush('read', 'startup', { present: true, suggestion: verdict.suggestion });
         if (verdict.action === 'restore') {
           trackSuggestion(verdict.sessionId, verdict.suggestion);
+          // 启动就判得动（会话已进店）⇒ 当场了结，不给它占格的机会。
+          settleResidual();
           tracePersistedPush('restored', 'startup', { suggestion: verdict.suggestion });
         } else if (verdict.reason === 'session-unavailable') {
           // 'session-unavailable' = 会话还没进店 ⇒ **判不了**（不是「判废」），留给该
@@ -650,6 +703,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           // 像「读到了、然后什么也没发生」。
           tracePersistedPush('deferred', 'startup', { reason: verdict.reason, suggestion: verdict.suggestion });
         } else {
+          settleResidual();
           tracePersistedPush('skipped', 'startup', { reason: verdict.reason, suggestion: verdict.suggestion });
         }
       } else {
@@ -793,6 +847,27 @@ export function apply(ctx: Context, config: GenerateConfig): void {
    */
   let persistedPushRaw: string | null = null;
   /**
+   * **未判定残留**（#56）。`{raw, sessionId, suggestion}` = 盘上/内存里有一条建议，
+   * 但它的归属会话还没进店、因此**没判过**；null = 没有待判定的残留。
+   *
+   * 三个来源与去向：
+   *  - 启动读到 `_residual`（合法）⇒ 直接就是它，且 `landed=true`（已在自己格里，不必搬）；
+   *  - 启动读到 `_push` 里那条而 `_residual` 空 ⇒ 也是它，但 `landed=false`
+   *    ⇒ **懒搬迁**：不启动写（不变量③），等下一次要写 `_push` 时同一笔 patch 带上它；
+   *  - 归属会话进店判定完成后 ⇒ 置 null，并把盘上那一格清成 `'null'`（`clearResidualNeeded`）。
+   */
+  let pendingResidual: {
+    readonly raw: string;
+    readonly sessionId: string;
+    readonly suggestion: SuggestGhostSuggested;
+  } | null = null;
+  /** `pendingResidual.raw` 是否已经在盘上的 `_residual` 里（true 就不必再搬迁）。 */
+  let residualLanded = false;
+  /** 判定已完成、需要把盘上那一格清空（同样是懒做：搭下一次 `_push` 写，或单独一笔）。 */
+  let clearResidualNeeded = false;
+  /** 最近一次成功落到盘上的 `_residual` 字节（脏判定用，与 `lastLandedPushPayload` 同性质）。 */
+  let lastLandedResidual: string | null = null;
+  /**
    * 回读判定结果（null = 还没判）。`reason === 'session-unavailable'` 表示「判不了，
    * 留给 pull 补判」——其余 reason 都是终判，不再重判。
    */
@@ -834,7 +909,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     source: 'startup' | 'pull',
     forSessionId: string | null,
   ): PersistedPushVerdict => {
-    const raw = persistedPushRaw;
+    // 残留的来源（优先级只有一条）：`_residual` 在 ⇒ 以它为准；否则退回 `_push` 里那条。
+    const raw = pendingResidual !== null ? pendingResidual.raw : persistedPushRaw;
     if (raw === null) {
       return { action: 'skip', reason: 'no-persisted-payload', suggestion: null, sessionId: null };
     }
@@ -861,8 +937,23 @@ export function apply(ctx: Context, config: GenerateConfig): void {
    * **只在判出「可恢复」时动内存**；本会话已有更新的建议时**不**接回（旧残留盖掉
    * 更新的建议是这条语义最容易犯的错）；其余情况一律不动盘。
    */
+  /**
+   * 残留**判定收敛**（restore 或任何终判）之后收尾：内存里的 pending 清掉，
+   * 盘上那一格留一个「要清空」的意图，由下一次写落盘（懒清空，见 `attachResidualCell`）。
+   *
+   * 不清的后果不是脏数据，是**长期占格**：A 的建议此后既在追踪态里、又躺在 `_residual`
+   * 里，下次重启会把它当成未判定残留再判一遍——把「一次性覆盖 bug」换成「永久携带 bug」。
+   * 冒烟的场景 5b 就是钉这一条的（断言三格里都不许再躺着那条待判定文本）。
+   */
+  const settleResidual = (): void => {
+    if (pendingResidual === null) return;
+    pendingResidual = null;
+    if (residualLanded) clearResidualNeeded = true;
+    residualLanded = false;
+  };
+
   const restorePersistedPushForSession = (sessionId: string): void => {
-    if (persistedPushRaw === null) return;
+    if (persistedPushRaw === null && pendingResidual === null) return;
     // 启动期已经终判过 ⇒ 不再判（避免每次 pull 都重判同一条）。
     const startupVerdict = persistedPushVerdict;
     if (startupVerdict !== null && startupVerdict.reason !== 'session-unavailable') return;
@@ -886,6 +977,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         return;
       }
       persistedPushVerdict = verdict;
+      // 终判（陈旧回合 / 载荷损坏 / 没有残留）⇒ 同样要了结，否则那格会一直占着。
+      settleResidual();
       tracePersistedPush('skipped', 'pull', { reason: verdict.reason, suggestion: verdict.suggestion });
       return;
     }
@@ -897,11 +990,15 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         suggestion: verdict.suggestion,
         sessionId: verdict.sessionId,
       };
+      // 「本会话已有更新的建议」也是终判：残留不再有意义，照样要了结。
+      settleResidual();
       tracePersistedPush('skipped', 'pull', { reason: 'superseded', suggestion: verdict.suggestion });
       return;
     }
     trackSuggestion(sessionId, verdict.suggestion);
     persistedPushVerdict = verdict;
+    // 归属会话已经自己把它接走了 ⇒ 这一格的事到此为止。
+    settleResidual();
     tracePersistedPush('restored', 'pull', { suggestion: verdict.suggestion });
   };
 
@@ -1230,6 +1327,85 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   };
 
   /**
+   * **残留格**自己的签名（#56）。照 `hotSigOf` 的模式来：一格一指纹，
+   * 这样「只有残留变了」与「只有建议变了」互不牵动。
+   *
+   * 内容取建议的**语义四件套 + 归属会话**：残留的用途是「等 A 进店再判」，
+   * 只要那一条没变、归属没变，重写它就是多余的。
+   */
+  const residualSigOf = (o: { suggestion: SuggestGhostSuggested | null; sessionId: string | null }): string => {
+    if (o.suggestion === null || o.sessionId === null) return '<RES>∅';
+    const t = o.suggestion;
+    return `<RES>${o.sessionId}|${t.turn}:${t.text}:${t.baseSeq}`;
+  };
+  /**
+   * 残留格的载荷（宿主自用；客户端不读）。
+   *
+   * 键名刻意与 `_push` 的建议部分**同形**（`{suggestion, suggestionSessionId}`）：
+   * 这样判定可以直接复用 `parsePersistedPush` / `decidePersistedPush`，不必再写第二套
+   * 「什么算一条合法建议」的结构校验——两套校验必然会漂（本仓在别处踩过「两份真相」）。
+   */
+  const buildResidualPayload = (o: { suggestion: SuggestGhostSuggested; sessionId: string }): string =>
+    JSON.stringify({ suggestion: o.suggestion, suggestionSessionId: o.sessionId });
+
+  /** 从盘上 `_residual` 字节算指纹（启动 seed 用，避免「第一次推送顺手把这格又写一遍」）。 */
+  const residualFingerprintOfPersisted = (raw: string | null): string => {
+    if (raw === null || raw === '' || raw === 'null') return '<RES>∅';
+    try {
+      const parsed = parseResidualCell(raw);
+      return parsed === null ? '<RES>∅' : residualSigOf({ suggestion: parsed.suggestion, sessionId: parsed.sessionId });
+    } catch {
+      return '<RES>∅';
+    }
+  };
+
+  /**
+   * 盘上 `_residual` 的**结构**校验：合法就返回 `{raw, sessionId, suggestion}`，
+   * 不合法一律按「这一格没有内容」处理（不猜、不恢复；与 `parsePersistedPush` 同口径）。
+   */
+  const parseResidualCell = (raw: string | null): {
+    readonly raw: string; readonly sessionId: string; readonly suggestion: SuggestGhostSuggested;
+  } | null => {
+    if (raw === null || raw === '' || raw === 'null') return null;
+    const parsed = parsePersistedPush(raw);
+    if (parsed.suggestion === null || parsed.sessionId === null) return null;
+    return { raw, sessionId: parsed.sessionId, suggestion: parsed.suggestion };
+  };
+
+  /**
+   * 把「待写/待清的残留格」拼进**同一笔** patch —— #56 的关键纪律，也是懒写唯一的漏洞的
+   * 补丁（漏了这一处，被拒的那一笔会同时丢掉 `_push` 与 `_residual`，两条一起没）。
+   *
+   * 只在**这一笔确实要写 `_push`** 时顺带：不为了残留单独多写一笔（那会违反
+   * 「无多余写」）。单独清空的场合由 `maybeClearResidualAlone` 兜。
+   */
+  const attachResidualCell = (patch: Record<string, string>): void => {
+    const writesPush = Object.prototype.hasOwnProperty.call(patch, '_push');
+    if (pendingResidual !== null && !residualLanded) {
+      // 搬迁必须**跟着** `_push` 那笔写走：单独写 `_residual` 而 `_push` 还留着残留，
+      // 只是把同一份字节抄两遍；而不跟着写就会出现「`_push` 落了、残留没落地」的空档。
+      if (writesPush) patch._residual = pendingResidual.raw;
+      return;
+    }
+    if (clearResidualNeeded) {
+      // 清空不需要 `_push` 同批：这一格该空着就空着，哪怕这一笔只写它自己。
+      patch._residual = EMPTY_PUSH;
+    }
+  };
+
+  /** 一笔 `_residual` 写落地之后同步内存态。 */
+  const noteResidualLanded = (written: string | undefined): void => {
+    if (written === undefined) return;
+    lastLandedResidual = written;
+    if (written === EMPTY_PUSH) {
+      clearResidualNeeded = false;
+      residualLanded = false;
+    } else {
+      residualLanded = true;
+    }
+  };
+
+  /**
    * 把盘上残留的**热度格**折成 `HotSig` 算指纹。
    *
    * 这一格不需要「恢复」任何东西（热表由 storageDomain 自己恢复、历史环由会话日志
@@ -1425,7 +1601,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       // 有断言钉着）。但**槽里可能还压着一份上次没写进去的热度载荷**（被拒时留在
       // 槽里，由事务外 pump 补写，见 `drainDeferred` 的热度格分支）：借任何一次推送
       // 入口补一次落地，事件驱动、不引入空转定时器。
-      if (pendingHotPayload !== null) flushPush();
+      // #56 再加一条：还压着「残留格该清空」时也必须走一次 flush —— 否则判定已经收敛、
+      // 而盘上那一格永远不清，就真成了长期占格。
+      if (pendingHotPayload !== null || clearResidualNeeded) flushPush();
       return;
     }
     // 注意：这里**不**改 lastSuggestion/lastSuggestionSession。载荷里的
@@ -1518,12 +1696,26 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       pendingHotPayload = null;
       pendingHotFingerprint = null;
     }
-    if (payload === null && hotPayload === null) return;
+    // #56 的懒清空：判定已经完成、只需要把残留格清掉，而这一轮**没有**建议/热度要写
+    // ⇒ 单独清一格。这是「了结」必须落盘的一步（不清就等于长期占格，见冒烟场景 5b）。
+    if (payload === null && hotPayload === null) {
+      if (clearResidualNeeded) {
+        const clearOnly: Record<string, string> = { _residual: EMPTY_PUSH };
+        pushInFlight = settingsSvc.update(SUGGEST_GHOST_NAMESPACE, clearOnly)
+          .then(() => { noteResidualLanded(EMPTY_PUSH); }, () => { /* 留着标记，下一次写补上 */ });
+        pushInFlight.catch(() => undefined);
+      }
+      return;
+    }
     const rev = pushRev;
     const hotRevNow = hotRev;
     const patch: Record<string, string> = {};
     if (payload !== null) patch._push = payload;
     if (hotPayload !== null) patch._hot = hotPayload;
+    // **同一笔 patch 带上 `_residual`**（不变式③）。不带的话：这一笔把 `_push` 里那条
+    // 残留覆盖掉，而残留又还没进自己的格 ⇒ 两条一起丢，且再也回不来。
+    attachResidualCell(patch);
+    const writtenResidual: string | undefined = patch._residual;
     // 写实耗（#39 的尾延迟分解）。量在 `settings.update` 这一对上，不是量在「进入
     // pushToClient」那一对上：后者会把合并缓冲的排队也算进来，就分不出
     // 「等泵」与「写本身」——而这两个数决定的是完全不同的两件事（降泵间隔 vs 换通道）。
@@ -1535,6 +1727,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           // 这条通道只留下 372 次 nested-transaction 拒绝、**一次成功都没记过**，
           // 于是「从没写」和「写了就失败」在日志里长得一模一样。
           if (payload !== null) lastLandedPushPayload = payload;
+          noteResidualLanded(writtenResidual);
           if (hotPayload !== null) {
             lastLandedHotPayload = hotPayload;
             // 即时写成功了：热度格补写预算归零（失败重试路径可能已经计过数）。
@@ -1779,10 +1972,16 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       const drainWriteStartedAt = Date.now();
       // 补写这笔写也占那把 profile 锁 ⇒ 记在途（互斥的另一半：即时写与 `_ops` 清空都
       // 要看它，见 `anyWriteInFlight`）。
-      const write = svc.update(SUGGEST_GHOST_NAMESPACE, { _push: item.payload });
+      const drainedPatch: Record<string, string> = { _push: item.payload };
+      // 不变式③在补写路径上同样成立：队列里这份 `_push` 落盘时，未搬迁的残留必须
+      // **同一笔**跟着走，否则「第一次写被拒 → 入队 → 稍后 flush」这一串会把两条一起丢掉。
+      attachResidualCell(drainedPatch);
+      const drainedResidual: string | undefined = drainedPatch._residual;
+      const write = svc.update(SUGGEST_GHOST_NAMESPACE, drainedPatch);
       const tracked = write.then(
         () => {
           lastLandedPushPayload = item.payload;
+          noteResidualLanded(drainedResidual);
           // 验收就看这条：`deferred ` 前缀把它和正常即时写路径（`push landed rev=…`）
           // 分开，二者同时出现才说明「即时被拒 → 事务外补写成功」这条链真的走通了。
           // 行尾两个新键是 #39 的尾延迟分解：`after` 是**入队到落盘**（等泵 + 写），

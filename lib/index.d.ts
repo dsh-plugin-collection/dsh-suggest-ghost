@@ -60,6 +60,7 @@ export interface PluginConfigValues {
     _ops: Volatile<string>;
     _push: Volatile<string>;
     _hot: Volatile<string>;
+    _residual: Volatile<string>;
 }
 /**
  * 配置 schema（cordis 插件约定，config catalog 会原样粘贴声明）。
@@ -179,6 +180,18 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      *    （失败时清指纹 + 载荷留在槽里等下一次 flush）；建议格才走 #47 的三态分诊与补写。
      */
     _hot: z<string, string, "volatile-defined">;
+    /**
+     * host 自用 · **未判定残留格**（#56）。装 `{suggestion, sessionId}` 至多一条。
+     *
+     * 为什么需要它（而不是「把残留当别的会话的建议塞进 `_push`」）：建议格只有**一个槽位**，
+     * `suggestionFieldsFor`（`src/coldstart.ts:327`）里当前会话的建议优先占格 ⇒ B 自己
+     * 有建议时 A 的残留根本放不进去，那一次写照样把它清掉。有了自己的一格，保护就是
+     * **构造性**的：别的会话的动作只写 `_push`/`_hot`，碰不到 `_residual`。
+     *
+     * 客户端**不读**这一格（未知键天然忽略）⇒ 零改动；`live-settings.ts` 的 `TRANSPORT_KEYS`
+     * 已登记，不会被当配置值读进 `effective()`。
+     */
+    _residual: z<string, string, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     /** 最终框架化用户提示的最大 UTF-8 字节数。 */
     maxInputBytes: z<number, number, "volatile-defined">;
@@ -289,6 +302,18 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      *    （失败时清指纹 + 载荷留在槽里等下一次 flush）；建议格才走 #47 的三态分诊与补写。
      */
     _hot: z<string, string, "volatile-defined">;
+    /**
+     * host 自用 · **未判定残留格**（#56）。装 `{suggestion, sessionId}` 至多一条。
+     *
+     * 为什么需要它（而不是「把残留当别的会话的建议塞进 `_push`」）：建议格只有**一个槽位**，
+     * `suggestionFieldsFor`（`src/coldstart.ts:327`）里当前会话的建议优先占格 ⇒ B 自己
+     * 有建议时 A 的残留根本放不进去，那一次写照样把它清掉。有了自己的一格，保护就是
+     * **构造性**的：别的会话的动作只写 `_push`/`_hot`，碰不到 `_residual`。
+     *
+     * 客户端**不读**这一格（未知键天然忽略）⇒ 零改动；`live-settings.ts` 的 `TRANSPORT_KEYS`
+     * 已登记，不会被当配置值读进 `effective()`。
+     */
+    _residual: z<string, string, "volatile-defined">;
 }>>, "plain">;
 export declare const Config: z<Schemastery.TypeS<typeof ConfigSchema>, PluginConfigValues>;
 /** 所需服务：LLM 路由 + 会话存储 + 设置服务。 */
