@@ -7,7 +7,9 @@
  *  2. 放出去的那一份**内容必须是当前热表**（含刚合并掉的那条），否则让路只是"提前写了旧的"；
  *  3. **让路不产生额外写**：槽里没有攒着时，再来一次 `complete` ⇒ 含 `_hot` 的写次数为 0
  *     （按格判重还在，这是"推广让路"不等于"每键一次写"的证据）；
- *  4. **窗口本身没被动过**（`HOT_PUSH_WINDOW_MS` 仍是 1000）—— 任务书明写"调小窗口是钝器"，
+ *  4. **写次数 ≤ 待写变化数**（判据 ③ 的前半句，断言 6）：写次数由变化数封顶，
+ *     不由 `complete` 的次数封顶 —— 后半句「无待写时不写」是断言 3。
+ *  5. **窗口本身没被动过**（`HOT_PUSH_WINDOW_MS` 仍是 1000）—— 任务书明写"调小窗口是钝器"，
  *     所以这条要钉住：本条的修法是让路，不是缩窗口。
  *  另加：建议格不被牵连（让路那一次写只带热度格）。
  *
@@ -196,6 +198,43 @@ run('5) 只有热度变时让路 ⇒ 那一次写只带 `_hot`，建议格一字
     '让路留痕少于 2 行 ⇒ `add` 那条路径（槽是空的、但窗口开着）没被观测到，可观测性缺一半');
 });
 
+// ── 6) 判据 ③ 的**前半句**：让路的写次数 ≤ 待写变化数 ─────────────────────────
+// 断言 3 只钉住了后半句（「无待写时不写」）。前半句才是这条线的**上界**：
+// 写次数由**热度内容的变化数**决定，**不由 `complete` 的次数决定**。
+// 口径必须落在内容上而不是字节上：载荷里带 `rev`，每写一次就 +1 ⇒ 拿原始字节比原始字节
+// 会永远"不一样"，这个判据会假绿（同一类坑已在 #41 的量度里记过一次，比较前必须剥 rev）。
+const stripRev = (raw) => {
+  if (typeof raw !== 'string' || raw === '') return null;
+  try {
+    const box = JSON.parse(raw);
+    delete box.rev;
+    return JSON.stringify(box);
+  } catch {
+    return null;
+  }
+};
+const hotWriteInfos = writes
+  .map((w) => stripRev(w.patch._hot))
+  .filter((x) => x !== null);
+const duplicateWrites = hotWriteInfos.filter((x, i) => i > 0 && x === hotWriteInfos[i - 1]).length;
+const distinctChanges = hotWriteInfos.reduce((set, x) => set.add(x), new Set()).size;
+const yieldCount = traced.filter((l) => /hot push yielded on input/.test(l)).length;
+const completeCount = traced.filter((l) => /ops consumed: complete/.test(l)).length;
+
+run('6) 让路的写次数 ≤ 待写变化数（写次数不由 complete 次数决定）', () => {
+  assert.ok(completeCount >= 2,
+    `本脚本只发了 ${completeCount} 次 complete，不足以判这条上界（判据要有载体，不是空跑）`);
+  assert.equal(duplicateWrites, 0,
+    `${duplicateWrites} 次写带走了与上一次落盘**相同**的热度内容 ⇒ 让路把写次数和事件数绑了，`
+    + `而不是和变化数绑（这正是「每轮多一次写」那个担心的形态）`);
+  assert.ok(hotWriteInfos.length <= distinctChanges,
+    `含 _hot 的写 ${hotWriteInfos.length} 次 > 热度内容变化 ${distinctChanges} 次 ⇒ 有写没有信息量`);
+  assert.ok(yieldCount <= distinctChanges,
+    `让路打字 ${yieldCount} 次 > 变化数 ${distinctChanges} ⇒ 让路在重复放同一份快照`);
+  realLog(`  ℹ 写次数=${hotWriteInfos.length} · 热度内容变化数=${distinctChanges} · `
+    + `complete 次数=${completeCount} · 让路次数=${yieldCount}（写次数由变化数封顶，不由 complete 封顶）`);
+});
+
 console.log('\n  ⚪ NOT-COVERED：burst 内**第一次合成的首字符**那 ≤1.5s 切片仍无法由宿主侧消除');
 console.log('     原因：会话事件面（@deepseek-ai/dsh-session）没有任何 draft/typing 通道，按键只在浏览器里；');
 console.log('     `complete` 已经是宿主可见的最早合成信号。要覆盖那段，只能让客户端在首字符时发信号，');
@@ -207,6 +246,6 @@ if (failed > 0) {
   console.error(`❌ hot-yield-smoke: ${failed} 组失败`);
   process.exit(1);
 }
-console.log('✅ hot-yield-smoke: complete 让路生效、带的是当前热表、不产生额外写、窗口未动、建议格不被牵连');
+console.log('✅ hot-yield-smoke: 让路生效、带的是当前热表、写次数由变化数封顶、窗口未动、建议格不被牵连');
 // 显式退出：apply() 期建的 500ms 补写泵跨 apply 存活（同 payload-split-smoke 那条注释）。
 process.exit(0);
