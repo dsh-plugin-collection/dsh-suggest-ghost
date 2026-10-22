@@ -295,5 +295,16 @@ export declare const Config: z<Schemastery.TypeS<typeof ConfigSchema>, PluginCon
 export declare const inject: string[];
 /** 插件名（与 cordis 条目 id 及 manifest 一致）。 */
 export declare const name = "dsh-suggest-ghost";
+/**
+ * 热度格被拒后由事务外 pump 补写的**次数上限**（2026-10-22 事故护栏）。
+ *
+ * 为什么是 3 而不是 `DEFERRED_MAX_ATTEMPTS`（8）：热度格是**整份当前快照**，不是
+ * 「用户刚等的东西」——它每帧都可能被下一帧覆盖，晚 1.5s（3 × 500ms）落盘与晚 4s
+ * 落盘对产品没有区别；而每次补写都占同一把 profile 锁，预算给大了只是加剧本仓与
+ * 其它写者的锁竞争（`atomic-write: timed out waiting for the writer lock` 的来源）。
+ * 到点丢弃后清指纹，下一次状态推送（打字/回合结束/pull 应答）会重建一份**更新**的
+ * 快照，不会丢数据。
+ */
+export declare const HOT_DRAIN_MAX_ATTEMPTS = 3;
 export declare function apply(ctx: Context, config: GenerateConfig): void;
 export {};

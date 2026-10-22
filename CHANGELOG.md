@@ -248,6 +248,40 @@ All notable changes to this project will be documented in this file.
 
 ### 修复
 
+- **HMR 事务内写失败退化成微任务紧循环（2026-10-22 事故：tee 日志 23 GB、事件循环卡死）**。
+  现场链路：client 一条 `pull` 写进 `_ops` → 内核在 settings 写入事务里就地 emit
+  `settings/document-updated`（`dsh-settings/lib/index.js:435`）→ 宿主的 `consumeOps` 回调整个跑在
+  HMR 事务内 → 应答 pull 要推 `_hot`（历史环/热度）→ 被 `HMR transactions cannot be nested` 拒 →
+  #57 拆分后的失败分支把载荷放回 `pendingHotPayload`，`.finally` 见热度槽非空**又立刻
+  `flushPush()`**。事务内的拒绝是同步零副作用的 `Promise.reject`，于是「失败 → 重排 → 再写」全在
+  微任务里打转：事件循环拿不回控制权（timer / I/O 全饿死），每圈还打一行 `hot write refused`。
+  **为什么以前没撞上**：拆格之前失败分支不把载荷放回 `pendingPushPayload`（只入补写队列），
+  所以 `.finally` 的续写条件不会成立；拆格给热度格加了「放回」却没给它独立的出口，才把
+  微任务链闭合。**为什么 `_ops` 一直留在盘上**：同一个事务里那次「消费后清空」也被拒，只是
+  进了补写槽——而紧循环让 500ms 的泵永远轮不到。
+  - **`.finally` 只续写建议格**（`pendingPushPayload`）。热度格被拒后**不再**立即 re-flush；
+    载荷留在槽里，由事务外锚点 `drainDeferred` 新增的 `drainHotFromPump` 补写。
+  - **热度格补写有界**：新增 `HOT_DRAIN_MAX_ATTEMPTS = 3`（每次失败计数，到点丢弃 + 放开
+    `lastHotFingerprint`，下一次状态推送重建一份**当前**快照）。它不共用 `deferred` 的两槽：
+    热度是整份快照、无 CAS 语义，但同样只能从事务外写，且不该和「用户刚等的东西」抢锁。
+  - **在途更新不倒退**：失败放回/泵失败放回都只在槽空着时做——写入期间若已排进更新的热度，
+    旧字节不许盖新状态。
+  - **留痕有界**：`hot write refused` 从无条件 `traceOps` 改成 `traceFault`（同类第一条 + 每
+    20 条带计数）；泵内失败按 `deferred-hot-*` 分 kind，到上限留 `hot-drain-exhausted`。
+  - **顺带修 `after=` 失去信息量**：#57 重构把 `pushStartedAt` 的赋值弄丢了，被拒留痕里出现过
+    `after=1792631248119ms`（从 epoch 起算）。现在 `pushToClient` 进入合并缓冲时赋值。
+  - **回归**：新增 `scripts/hmr-write-loop-smoke.mjs`（11 组，A1–A6 / B1–B5，已进 `test:e2e`
+    构建之后）。A 组复刻事故原路径（事务内 pull）并断言：留痕 ≤ 40 行、**夹具侧确有 `_hot`/`_ops`
+    写落在事务内被 nested 拒**（下界，防止「这一拍不脏/写成功」式假绿）、`hot write refused` 1–2 次、
+    `after=` < 10s、`_ops` 被事务外泵清成 `null`、`_hot` 落盘且历史环含本会话那句话、事务外写 ≤ 8 次。
+    B 组把所有宿主写入都拒掉（锁超时）后**数写面而不是数被节流的日志**：`_hot` 写入次数必须等于
+    `1 + HOT_DRAIN_MAX_ATTEMPTS`、再等 1.6s 不得有新增、`hot-drain-exhausted` 的 `attempts=` 必须等于
+    上限、总留痕 ≤ 120 行、2.2s 等待按时结束（timer 没被饿死）。脚本自带 2000 行保险丝（越过即
+    `exit 99`），修复前构建下它 **339ms 触发**；修复后整场峰值 17 行。
+    `scripts/deferred-writes-smoke.mjs` 补三条静态守卫：`.finally` 里不得出现「因热度槽再 flush」、
+    热度补写必须走 `drainHotFromPump` 且引用 `HOT_DRAIN_MAX_ATTEMPTS`、`pushStartedAt` 必须在
+    `pushToClient` 入口（no-dirty 早退之前）赋值
+
 - **客户端类型检查基线里 18 条是同一个 bug 的产物**（#34）。`src/client/index.ts` 里 `_push` 的解析
   结果声明成 `let pushed: {…} | null = null` 再用 `as typeof pushed` 断言，而 `typeof` 在该处取到的是
   **已被窄化过的 `null`**，于是每个 `pushed?.x` 都报 `TS2339 … on type 'never'`。改成具名

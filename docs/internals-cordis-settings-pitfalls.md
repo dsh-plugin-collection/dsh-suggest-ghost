@@ -271,6 +271,31 @@ issue #20 只记到了第 1 条的一半）：
    本仓库当前把非 `nested` 的失败按 `deferred-*-failed` 记（`src/index.ts:1095-1107`）并塞进同一个
    8 次预算；把这两种病分开分诊是 `push-retry` 那条线在做的事。
 
+**在事务内被拒之后，绝不能「重排 + 立刻再 flush」**（2026-10-22 **实测事故**：tee 日志 23 GB、
+事件循环卡死）。这条不是风格问题，是事件循环语义：结构性拒绝是同步零副作用的
+`Promise.reject`，`flushPush` 的失败分支把载荷放回槽、`.finally` 见槽非空又调 `flushPush`，
+**整条「失败 → 重排 → 再写」链全在微任务里**——微任务队列清空前 timer / I/O 都轮不到，所以
+进程表现成「卡死」，而每圈一行 `hot write refused` 就是 23 GB 的来源。拆格提交 #57 给热度格
+加了「放回」却漏了「独立的出口」，正好把这条链闭合；此前失败分支只把载荷入补写队列，所以
+`.finally` 的续写条件不成立，问题没暴露。
+
+不变量（改这段代码前先读）：
+
+- **`.finally` 只续写「在途期间新排进来的建议格」**（`pendingPushPayload`）。任何失败路径都不许
+  在这里为同一个槽再调一次 `flushPush`——那等价于把重试循环放回微任务。
+- **补写只能从事务外锚点发起**：`apply()` 期建立的 `drainDeferred`（见
+  `src/deferred-writes.ts` 顶部与 `src/index.ts` 的建泵注释）。事务内建的 timer 继承
+  `store=true`，重试多少次都是同一个 `nested`。
+- **任何补写都必须有次数上限**：建议/清空走 `DEFERRED_MAX_ATTEMPTS = 8`；热度格走
+  `HOT_DRAIN_MAX_ATTEMPTS = 3`（整份快照、每帧可被覆盖，不需要 8 次）。到上限必须**丢槽 +
+  放开指纹 + 留一条放弃留痕**，否则下一次推送会把「同内容」判成「没变」，客户端永远停在旧值。
+- **失败留痕必须节流**：走 `traceFault`（同类第一条 + 每 N 条带计数），不许在失败分支里用
+  无条件的 `traceOps`。紧循环下「每圈一行」比循环本身更快耗尽磁盘。
+
+回归：`scripts/hmr-write-loop-smoke.mjs`（A 组复刻事务内 pull、B 组泵也写不进）自带 2000 行
+保险丝；`scripts/deferred-writes-smoke.mjs` 有两条静态守卫（`.finally` 不得因热度槽再 flush、
+热度补写必须走 `drainHotFromPump` 且有上限）。
+
 **同一条链上的连带怀疑（未验证，已单独报 lead）**：`handleComplete` 由该回调同步调起，它的
 LLM 续写 `await` 之后仍在同一个上下文里 → 那次 `pushToClient` 可能与 `_ops` 清空失败是
 **同一个拒绝**。若成立，#18「ghost 永不显示」的真实原因在这，而不是载荷被下一次推送覆盖。

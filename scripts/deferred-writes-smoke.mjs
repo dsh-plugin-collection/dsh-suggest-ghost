@@ -330,12 +330,33 @@ run('pump 建在 apply() 的同步续体里（settingsSvc 就位之后，中间�
   }
 });
 
-run('drainDeferred 第一句就是 isEmpty 快路径（空队列不得 describe / 读盘）', () => {
+run('drainDeferred 第一句就是空快路径（空队列且无待补热度时不得 describe / 读盘）', () => {
   assert.match(
     hostSource,
-    /function drainDeferred\(\): void \{\s*\n\s*if \(deferred\.isEmpty\(\)\) return;/,
-    '队列空时必须立刻 return：pump 每 500ms 跑一次且常年空转，空转成本必须是布尔判断',
+    /function drainDeferred\(\): void \{\s*\n(?:\s*\/\/.*\n)*\s*if \(deferred\.isEmpty\(\) && pendingHotPayload === null\) return;/,
+    '队列空且没有待补热度时必须立刻 return：pump 每 500ms 跑一次且常年空转，空转成本必须是布尔判断',
   );
+});
+
+run('热度格被拒后只能由事务外 pump 有界补写（不得在 finally 里立刻再 flush）', () => {
+  // 2026-10-22 事故：`失败 → re-stage → finally 再 flush` 是微任务紧循环，日志 23 GB。
+  // `.finally` 只允许续写建议格；热度格必须走 drainHotFromPump（事务外 + 有界）。
+  assert.doesNotMatch(
+    hostSource,
+    /pendingPushPayload !== null \|\| pendingHotPayload !== null\) flushPush\(\)/,
+    'flushPush 的 finally 不得因热度槽再 flush：那会在事务内退化成微任务紧循环',
+  );
+  assert.match(hostSource, /function drainHotFromPump\(/, '热度格补写必须落在事务外 pump（drainHotFromPump）');
+  assert.match(hostSource, /HOT_DRAIN_MAX_ATTEMPTS/, '热度格补写必须有次数上限');
+  assert.match(hostSource, /if \(pendingPushPayload !== null\) flushPush\(\);\s*\n\s*\}\);/, 'finally 只续写建议格');
+});
+
+run('pushStartedAt 在 pushToClient 入口赋值（no-dirty 重试也要有正确的 after=）', () => {
+  const fnAt = hostSource.indexOf('const pushToClient = (');
+  const stampAt = hostSource.indexOf('pushStartedAt = Date.now();', fnAt);
+  const earlyAt = hostSource.indexOf('if (!pushDirty && !hotDirty)', fnAt);
+  assert.ok(fnAt >= 0 && stampAt > fnAt, 'pushToClient 里找不到 pushStartedAt 赋值（after= 会退化成 epoch 差值）');
+  assert.ok(stampAt < earlyAt, '赋值必须在 no-dirty 早退之前：那条分支也会重试热度槽，被拒时同样要报 after=');
 });
 
 run('卸载时 clearInterval（跨 apply 不留无人认领的写入源）', () => {
