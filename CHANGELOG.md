@@ -347,7 +347,8 @@ All notable changes to this project will be documented in this file.
   **同进程内用 CDP**（Node 内置 WebSocket）操作 headless chromium）⇒ **token 明文彻底不进 transcript**
   （输出全过 `redact()`，并自打「明文进 stdout 次数 = 0」）。**不接测试链**（它要花真回合）。
   实测结论见 #63：**让路在单人流量下没有分母** —— 真实读数 `pull 19 / complete 3 / push landed 18 /
-  hot push landed 11`，而 **`hot push coalesced = 0`、`hot push yielded on input = 0`**，且**每一行落地留痕
+  hot push landed 11`，而 **`hot push coalesced = 0`、`hot push yielded on input = 0`**（这一批读数；后续批次里
+  该路径**首次真实执行**，见下一条），且**每一行落地留痕
   都带 `coalesced=0`** ⇒ 让路的触发条件（「窗口开着且本可推迟」**且**「此刻热表相对上次写是脏的」**且**
   「这一拍是 `complete`」）在单人节奏下很少同时成立 ⇒ 「应当让路的次数」为 0 ⇒ 性质那半句
   （让路写次数 ≤ 待写变化数）在真实宿主里同样成立（0 让路、0 多余写）
