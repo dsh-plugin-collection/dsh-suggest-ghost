@@ -50,6 +50,8 @@ import {
   decidePushDrain,
   errorText,
   triageWriteFailure,
+  decideHotPush,
+  HOT_PUSH_WINDOW_MS,
 } from './deferred-writes.js';
 import type {
   DeferredItem,
@@ -311,6 +313,9 @@ type CompletionValue = Awaited<ReturnType<typeof generateCompletion>>;
  * 快照，不会丢数据。
  */
 export const HOT_DRAIN_MAX_ATTEMPTS = 3;
+
+/** 热度格写合并窗口的长度在此 re-export，冒烟从 `lib/index.js` 读它更顺手。 */
+export { HOT_PUSH_WINDOW_MS, decideHotPush } from './deferred-writes.js';
 
 /**
  * 挂载插件：监听完成回合、按会话生成建议、注册投影单元，并把配置暴露
@@ -655,11 +660,13 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       lastOpsPayload = readOps();
       consumeOps(parseHotnessOps(lastOpsPayload), svc);
       // 热度恢复是异步的（storageDomain.open）：恢复完成后补推一次快照，修正
+      // ⚠️ 这一次**必须绕开热度合并窗口**（`hotNow`）：它是**修正**用的（恢复前推出去的是
+      // 不完整的表），把它再压一个窗口等于把修正推迟 —— task-16 判据 5。
       // 恢复窗口内已推送的不完整热度。目标会话取自追踪的建议会话。
       void persistence.whenReady.then(() => {
         if (settingsSvc === null) return;
         const id = lastSuggestionSession;
-        if (id !== null) pushToClient(statePushOf(id));
+        if (id !== null) pushToClient(statePushOf(id), { hotNow: true });
       });
       // `_ops` 反向通道：client 经 `ctx.remote.settings.mutate(ns, ops)` 写入，
       // 内核改 volatile 引用并 emit `settings/document-updated(ns, revision)`。
@@ -1353,6 +1360,29 @@ export function apply(ctx: Context, config: GenerateConfig): void {
    */
   let hotDrainAttempts = 0;
   /**
+   * 上一次热度格**写出去**的时刻（null = 从未写过 ⇒ 下一次立刻写）。
+   *
+   * 计时起点取「上一次写」而不是「第一次待写」，两个都有代价，取前者是因为它不会饥饿：
+   * 若取后者且不断顺延，用户持续打字就把写永远推后。取「上次写」则窗口是固定刻度，
+   * 每窗至多一次写，陈旧度有硬上界（≤ 窗口 + 一个泵间隔）。
+   */
+  let hotWindowOpenedAt: number | null = null;
+  /** 本窗口内被合并掉的热度变化次数（落地时打 `coalesced=` 并归零）。 */
+  let hotCoalesced = 0;
+  /** 热度格写出去了：开一个新窗口（计时起点 = 此刻），归零合并计数。 */
+  const armHotWindow = (): void => {
+    hotWindowOpenedAt = Date.now();
+    hotCoalesced = 0;
+  };
+
+  /**
+   * 被拒时的处置：清空计时起点，让留在槽里的快照由泵按 #47 的**有界**重试立刻补。
+   * 窗口是给「省无谓重写」用的，不该变成「把没写成功的东西再扣一会儿」。
+   */
+  const disarmHotWindow = (): void => {
+    hotWindowOpenedAt = null;
+  };
+  /**
    * 最近一次**成功落盘**的 `_push` 载荷原文（不是指纹：指纹不区分「同一份字节写过」）。
    * 补写前比一下，同一份字节已在盘上就不要再推一次 revision。
    */
@@ -1372,8 +1402,13 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   let deferredWaitSince: number | null = null;
   /** 本次推送进入合并缓冲的时刻（被拒留痕里算出等待时长）。 */
   let pushStartedAt = 0;
-  const pushToClient = (p: ClientPush): void => {
+  const pushToClient = (p: ClientPush, opts: { hotNow?: boolean } = {}): void => {
     if (settingsSvc === null) return;
+    // **让路必须在入口生效**，不能只在 `hotDirty` 分支里做：第一版就是这样，于是
+    // 「两格都没变 + 槽里还压着一份合并中的热度」这条路径（pull 恰好是最常见的触发者）
+    // 只调了 flushPush，而 flushPush 仍按未解除的窗口判定「还没到期」⇒ 不带热度格，
+    // pull 让路形同不存在（冒烟 3b 实测：pull 之后两笔写都只带 `_ops`）。
+    if (opts.hotNow) hotWindowOpenedAt = null;
     // 本次推送进入合并缓冲的时刻：**只给被拒留痕的 `after=` 用**。必须放在函数最前面
     // （包括 no-dirty 早退分支之前）：那条分支也会借机重试槽里的热度载荷，被拒时同样要
     // 报「本次入口到失败」的时长。2026-10-22 之前的拆分重构把这条赋值整个弄丢了，日志里
@@ -1415,6 +1450,24 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       pendingHotFingerprint = fpHot;
       // 新载荷取代旧的：补写预算从头计（旧载荷的失败次数不该吃掉新载荷的机会）。
       hotDrainAttempts = 0;
+      // **task-16 的窗口**：纯热度变化按窗口合并，避免「每次用户输入一次整档重写」。
+      // 三条硬规则（判据来自 task-16，写在这里是为了让下一个改这段的人看见理由）：
+      //  1. **建议格永不被这里拖慢**：合并只等于「这一轮不带走热度格」，绝不等于推迟写；
+      //  2. `hotNow`（pull 应答 / 热表恢复补推 / 卸载前强刷）**绕开窗口**：切会话时
+      //     「先旧后新」比滞后更难看，而恢复补推本身就是修正；
+      //  3. 计时起点是**窗口开启时刻**而不是「上一次写时刻」，否则连续打字会把写永远推后
+      //     （饥饿），见 `deferred-writes.ts` 的 `decideHotPush`。
+      if (decideHotPush(Date.now(), hotWindowOpenedAt).action === 'defer') {
+        // ⚠️ 这里**不能 return**。第一版就是 return：那句把同一拍里**建议格**的写一起推迟了，
+        // 而「建议格永不被热度窗口拖慢」是 task-16 的硬规则。合并的正确表达是「这一轮
+        // 不取热度槽」（见 flushPush），不是「这一轮不写」。
+        hotCoalesced += 1;
+        traceFault(
+          'hot-coalesce',
+          `hot push coalesced pending=1 heldMs=${Date.now() - (hotWindowOpenedAt ?? Date.now())} windowMs=${HOT_PUSH_WINDOW_MS}`,
+          20,
+        );
+      }
     }
     flushPush();
   };
@@ -1451,13 +1504,20 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     const payload = pendingPushPayload;
     const fingerprint = pendingPushFingerprint;
     const carriesCompletion = pendingCarriesCompletion;
-    const hotPayload = pendingHotPayload;
-    const hotFingerprint = pendingHotFingerprint;
+    // **窗口在这一处生效**（不是在 pushToClient 里 return）：「不写热度」表达成
+    // 「这一轮不取热度槽」，建议格该怎么写还怎么写 —— 这就是判据 1 的落点。
+    const hotDue = pendingHotPayload !== null
+      && decideHotPush(Date.now(), hotWindowOpenedAt).action === 'write';
+    const hotPayload = hotDue ? pendingHotPayload : null;
+    const hotFingerprint = hotDue ? pendingHotFingerprint : null;
+    const hotCoalescedNow = hotCoalesced;
     pendingPushPayload = null;
     pendingPushFingerprint = null;
     pendingCarriesCompletion = false;
-    pendingHotPayload = null;
-    pendingHotFingerprint = null;
+    if (hotDue) {
+      pendingHotPayload = null;
+      pendingHotFingerprint = null;
+    }
     if (payload === null && hotPayload === null) return;
     const rev = pushRev;
     const hotRevNow = hotRev;
@@ -1479,6 +1539,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
             lastLandedHotPayload = hotPayload;
             // 即时写成功了：热度格补写预算归零（失败重试路径可能已经计过数）。
             hotDrainAttempts = 0;
+            armHotWindow();
           }
           const writeMs = Date.now() - writeStartedAt;
           const at = Date.now();
@@ -1488,11 +1549,11 @@ export function apply(ctx: Context, config: GenerateConfig): void {
             // 的那个数；为了不把「口径变了」伪装成「优化生效」，行尾补两个新键：
             //  `hotBytes=` 同一次写里热度格的字节数（没带就是 0）
             //  `cells=`   这一次写到底带了几格（push / both），换算总字节用
-            traceOps(`push landed rev=${rev} bytes=${payload.length}${carriesCompletion ? ' withCompletion=1' : ''} writeMs=${writeMs} at=${at} hotBytes=${hotPayload === null ? 0 : hotPayload.length} cells=${hotPayload === null ? 'push' : 'both'}`);
+            traceOps(`push landed rev=${rev} bytes=${payload.length}${carriesCompletion ? ' withCompletion=1' : ''} writeMs=${writeMs} at=${at} hotBytes=${hotPayload === null ? 0 : hotPayload.length} cells=${hotPayload === null ? 'push' : 'both'} coalesced=${hotCoalescedNow}`);
           } else {
             // 纯热度变化：**新前缀**（`push landed` 那行的语义是「建议格落地」，复用它
             // 会让 bytes= 的含义在同一行里飘）。package.json 的 sandbox.greps 同步补一条。
-            traceOps(`hot push landed rev=${hotRevNow} hotBytes=${hotPayload === null ? 0 : hotPayload.length} writeMs=${writeMs} at=${at} cells=hot`);
+            traceOps(`hot push landed rev=${hotRevNow} hotBytes=${hotPayload === null ? 0 : hotPayload.length} writeMs=${writeMs} at=${at} cells=hot coalesced=${hotCoalescedNow}`);
           }
         },
         (error: unknown) => {
@@ -1682,7 +1743,12 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     // 每次失败 `hotDrainAttempts+1`，到 `HOT_DRAIN_MAX_ATTEMPTS` 就丢弃并放开指纹，
     // 由下一次状态推送重建。绝不能让 500ms 的 tick 变成永久重试。
     if (deferred.isEmpty()) {
-      if (pendingHotPayload !== null) drainHotFromPump(svc);
+      // 窗口没到期就不写：否则这条事务外锚点会每 500ms 把合并中的快照冲出去，
+      // 窗口等于不存在（`decideHotPush` 用同一个判据，两边不会漂移）。
+      if (pendingHotPayload !== null
+        && decideHotPush(now, hotWindowOpenedAt).action === 'write') {
+        drainHotFromPump(svc);
+      }
       return;
     }
     const item = deferred.take();
@@ -1789,6 +1855,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     }
     const fingerprint = pendingHotFingerprint;
     const attempt = hotDrainAttempts + 1;
+    // 归零前先取走合并计数（`armHotWindow` 会清 `hotCoalesced`）。
+    const hotCoalescedNowPump = hotCoalesced;
     const writeStartedAt = Date.now();
     // 先离槽：写入期间若有更新载荷排进来，它应该占住槽（最后由它自己落地）。
     pendingHotPayload = null;
@@ -1797,8 +1865,10 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       () => {
         lastLandedHotPayload = payload;
         hotDrainAttempts = 0;
+        const coalesced = hotCoalescedNowPump;
+        armHotWindow(); // 泵这条路口径一致：写出去了就从此刻重新开一个窗口
         traceOps(
-          `hot push landed via deferred pump bytes=${payload.length} after=${Date.now() - writeStartedAt}ms attempts=${attempt} at=${Date.now()}`,
+          `hot push landed via deferred pump bytes=${payload.length} after=${Date.now() - writeStartedAt}ms attempts=${attempt} at=${Date.now()} coalesced=${coalesced}`,
         );
       },
       (error: unknown) => {
@@ -1817,6 +1887,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         pendingHotPayload = payload;
         pendingHotFingerprint = fingerprint;
         hotDrainAttempts = attempt;
+        // 被拒 ⇒ **解除窗口**（`hotWindowOpenedAt = null`）：留在槽里的这份快照该由 #47 的
+        // 有界重试立刻补写，而不是再被合并窗口扣一个窗口。窗口省的是「无谓的重写」，
+        // 不该变成「把没写成功的东西多扣一会儿」。
         if (attempt >= HOT_DRAIN_MAX_ATTEMPTS) {
           // 到点丢弃：同一份快照再试也只是同一类失败。放开指纹，让下一次状态推送
           // 重新判脏、重建一份**当前**快照。
@@ -1979,7 +2052,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         // 无论历史环可不可得都应答：环缺失（会话尚未进店/已销毁）时 statePushOf
         // 会省略 history（client 保留现值），但热度与对账后的建议照常送达——
         // 静默丢弃会让 client 永远等不到这一轮对账。
-        pushToClient(statePushOf(op.sessionId));
+        // **pull 让路**（task-16 判据 2）：切会话时「先旧后新」比滞后更难看，
+        // 所以应答必须带**当前**热度，窗口未到期也立刻写。
+        pushToClient(statePushOf(op.sessionId), { hotNow: true });
       } else if (op.op === 'complete') {
         // 草稿只打长度不打正文：留痕要能对上号，但不能把用户输入抄进 tee 日志。
         traceOps(`ops consumed: complete session=${op.sessionId} draftChars=${op.draft.length}`);
@@ -2164,6 +2239,14 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   // partialReload 会把旧的那份留在事件循环里，槽队列与 settingsSvc 都是旧闭包的，
   // 留着就成了无人认领的写入源）。
   ctx.effect(() => () => {
+    // **卸载前把挂起的热度快照刷出去**（task-16 判据 4）：窗口是为了省无谓的整档重写，
+    // 不是为了丢最后一段。不刷的话，「用户最后打的那句进了热表、但此后再没有变化」
+    // 这段热度就永远留在服务端，客户端下次打开看到的是旧列表。
+    // 此刻已经在卸载路径上，不指望它一定写进盘（服务可能先于我们关闭），但**不静默**：
+    // 成功/失败都有落地留痕（走 flushPush 的既有分诊），实在没写面就一行告警。
+    if (pendingHotPayload !== null && settingsSvc !== null) {
+      pushToClient(statePushOf(lastSuggestionSession), { hotNow: true });
+    }
     if (deferredPump !== null) clearInterval(deferredPump);
     deferredPump = null;
     for (const state of tracked) state.pending?.controller.abort();

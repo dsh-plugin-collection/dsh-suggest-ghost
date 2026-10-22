@@ -178,6 +178,12 @@ Three details that only surface when you try them:
   ride in `_push`. Neither means data loss: the authoritative store of the hotness table is the
   `suggest_ghost_hotness` domain (`src/hotness-store.ts:44-45`) and `_hot` is only the snapshot handed
   to the client, so a refresh brings both back.
+- **A 1000ms write-coalescing window on the hotness cell**: several hotness/history changes
+  within one window land as a single write. Writes that carry the **suggestion cell are never
+  delayed** by it, and a `pull` answer, the post-restore re-push, and plugin unload all force the
+  current snapshot out. The observable cost is that the hotness list can lag by up to
+  ~window + one pump tick (≤1.5s) — it affects hotness **ordering** (history-candidate scoring),
+  never the suggestion itself.
 - **Do not treat "volatile fields are not persisted" as a guarantee**: this plugin's `_ops` / `_push` are written into the profile document, and the clear-after-consume write is refused as a nested transaction, so a payload stays on disk and a fresh instance replays it at boot (measured in an isolated instance: one leftover `complete` was consumed before any client connected). See the cold-start section above and issue #22.
 - **No polling on the client**: what `0.1.7` removed along with `settingsScope` is only `scope.subscribe`. The kernel has a separate Host→client event channel — `ctx.remote.$on('settings/document-updated')`, on dsh-api-remotes' forwarding allowlist (mode `emit`). The kernel's own settings page drives `SettingsDescribeMirror` off exactly that. This plugin subscribes the same way, so `describe()` is issued only when the host actually pushes `_push`, plus once at startup and once per `connection/reset`.
 
