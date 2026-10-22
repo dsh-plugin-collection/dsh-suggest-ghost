@@ -195,6 +195,51 @@ run('A3 after= 是本次推送毫秒数，不是从 epoch 起算（拆分重构�
   assert.equal(stale, undefined, `出现了荒谬的 after=（pushStartedAt 未赋值）：${String(stale).slice(0, 160)}`);
 });
 
+/**
+ * A3 的两个补角（2026-10-22 复核增量，都是「断言自己会静默失效」的形态）：
+ *  - **缺键**：A3 的谓词在 `after=` 不存在时返回 false，于是「留痕把 after= 整个弄丢」
+ *    会被读成通过 —— 而这条断言存在的理由恰恰是「after= 得有信息量」。
+ *  - **负值**：`Number('-5') > 10_000` 为假 ⇒ 起点被写成未来时刻时 A3 也是绿的。
+ *    （`pushStartedAt` 用错基准、或复用了一条陈旧起点，都会出这种数。）
+ *
+ * ⚠️ **变异要数值上可分辨，否则「断言没红」不等于「断言有效」**：我第一次自证是把
+ * `Date.now() - pushStartedAt` 整个翻转成 `pushStartedAt - Date.now()`，结果 A3b 没红 ——
+ * 因为这一拍的真实耗时是 0~1ms，翻转后是 0 或 -1，`-0` 根本不匹配负号，等于没变异。
+ * 换成 `- 5000` 之后 A3b/A3c 同时红。**测「有没有界」要用显著量级的偏移**，不是符号。
+ */
+const refusalLines = afterPull.filter((line) => /refused/.test(line) && line.includes('after='));
+run('A3b 每条带 after= 的被拒留痕，after= 都必须是**非负**时长', () => {
+  const negative = afterPull.find((line) => {
+    const match = /after=(-\d+)ms/.exec(line);
+    return match !== null;
+  });
+  assert.equal(negative, undefined, `after= 是负数（起点晚于终点，时长不可解释）：${String(negative).slice(0, 160)}`);
+});
+
+run('A3c 带 after= 的那两种形态不许把 after= 丢掉（缺键不能读成通过）', () => {
+  // 口径（第一版我写宽了，正好被这条测出来）：`after=` 只属于**即时写被拒**的两条形态：
+  //  - `hot write refused … re-staged=1 after=Nms`（热度格即时被拒，永远带）
+  //  - `push write refused … carriedCompletion=1 after=Nms`（带续写的那条**不节流**，所以带）
+  // 而 `push-nested #N` 那种**节流**行与泵侧的 `deferred hot push refused` 量的是别的
+  // 东西（第几次补写），本来就没有 after= —— 要求「所有 refused 行都带」会把合法行判成红。
+  // 这条断言真正的价值是：**只要那两种形态出现过，after= 就必须在**，否则 A3 整条空转。
+  const forms = [
+    { re: /hot write refused/, label: 'hot write refused … re-staged', need: /after=\d+ms/ },
+    { re: /push write refused .*carriedCompletion=1/, label: 'push write refused（带续写、不节流）', need: /after=\d+ms/ },
+  ];
+  let carriers = 0;
+  for (const form of forms) {
+    const lines = afterPull.filter((line) => form.re.test(line));
+    for (const line of lines) {
+      carriers += 1;
+      assert.ok(form.need.test(line),
+        `「${form.label}」这一行丢了 after= ⇒ A3（时长合法性）对它空转：${line.slice(0, 160)}`);
+    }
+  }
+  assert.ok(carriers >= 1,
+    `A 组里两种带 after= 的形态一行都没有 ⇒ 这三条断言没有载体（测试退化，不是通过）：refused=${JSON.stringify(afterPull.filter((l) => l.includes('refused')).map((l) => l.slice(0, 60)))}`);
+});
+
 run('A4 事务外泵仍把 _ops 清空成 null（修复不是靠删掉补写）', () => {
   assert.equal(String(document._ops), 'null', `_ops 仍留在盘上：${String(document._ops).slice(0, 120)}`);
 });
