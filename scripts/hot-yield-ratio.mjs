@@ -27,7 +27,9 @@ const opt = (name, dflt) => {
 };
 const flag = (name) => args.includes(`--${name}`);
 const SANDBOX = String(opt('home', join(HOME, 'dsh-sbx-yield'))).replace(/^~/, HOME);
-const WS = String(opt('ws', join(HOME, 'dsh-sbx-yield-ws'))).replace(/^~/, HOME);
+// 工作区**默认放在 --home 里面**：`dev-sandbox --cleanup` 认的就是 `<home>/ws`
+// （实测把它放 ~/dsh-sbx-yield-ws 时，cleanup 会报残留却删不掉）。
+const WS = String(opt('ws', '')).replace(/^~/, HOME) || join(SANDBOX, 'ws');
 const ROUNDS = Number(opt('rounds', flag('probe') ? 1 : 12));
 const GATEWAY = Number(opt('gateway', 4118));
 const CHROME = process.env.CHROME_BIN
@@ -430,8 +432,8 @@ const oneRound = async (page, index) => {
   if (first?.fail !== undefined) return first;
   // ③ 首字符：打 ≥inlineMinChars 个字符后停顿 ⇒ 客户端发 complete
   const typed = await cdpType(page, `() => window.__gy.composer()`, 'ababab', false,
-    `(() => (window.__gy.composer()?.textContent ?? '').length)`);
-  const draftLen = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length)`);
+    `(() => (window.__gy.composer()?.textContent ?? '').length)()`);
+  const draftLen = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length)()`);
   return { ...first, typed, draftLen };
 };
 
@@ -442,8 +444,8 @@ const composerSend = async (page, text) => {
   })()`);
   if (before === null) return { step: 'no composer' };
   const ok = await cdpType(page, `() => window.__gy.composer()`, text, false,
-    `(() => (window.__gy.composer()?.textContent ?? '').length)`);
-  const draftLen = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length)`);
+    `(() => (window.__gy.composer()?.textContent ?? '').length)()`);
+  const draftLen = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length)()`);
   if (draftLen === 0) return { step: '打字没进草稿', ok };
   await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
   await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
@@ -527,11 +529,11 @@ const burstRound = async (page, index, tally) => {
   const t0 = Date.now();
   await hotAdd(page, `burst${index}ab`);
   await cdpType(page, `() => window.__gy.composer()`, 'abab', false,
-    `(() => (window.__gy.composer()?.textContent ?? '').length)`);
+    `(() => (window.__gy.composer()?.textContent ?? '').length)()`);
   await sleep(260);
   await hotAdd(page, `burst${index}cd`);
   await cdpType(page, `() => window.__gy.composer()`, 'cd', false,
-    `(() => (window.__gy.composer()?.textContent ?? '').length)`);
+    `(() => (window.__gy.composer()?.textContent ?? '').length)()`);
   await sleep(1400);
   const after = tally();
   return {
@@ -580,9 +582,9 @@ const quickSend = async (page, text) => {
   const focused = await page.evaluate(`(() => { const c = window.__gy.composer(); if (c === null) return false; c.focus(); return true; })()`);
   if (!focused) return { ok: false, draftLen: -1 };
   await page.send('Input.insertText', { text });
-  const draftLen = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length)`);
+  const draftLen = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length)()`);
   await pressEnter(page);
-  const cleared = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length === 0)`);
+  const cleared = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length === 0)()`);
   return { ok: true, draftLen, cleared };
 };
 
@@ -640,7 +642,7 @@ const burst2 = async (page, tally, read) => {
     if (!(await ensureComposer(page))) { rows.push({ round: k, gate: 'composer 不在' }); say(`轮 ${k}：composer 不在，弃这轮`); continue; }
     const tokA = uniq('甲'), tokB = uniq('乙');
     // ① 先造一次脏：提交 tokA（宿主在提交那一刻改热表，且**不**推送）
-    const idleA = await waitIdle(page);
+    const idleA = flag('tight') ? false : await waitIdle(page);
     const sA = await quickSend(page, `测 ${tokA}`);
     await sleep(120);
     // ② 我明确发起的 arm：点「新会话」⇒ mount ⇒ pull ⇒ 带 rev 的热度写
@@ -662,7 +664,12 @@ const burst2 = async (page, tally, read) => {
     if (arm === null) { rows.push({ round: k, gate: '等 arm 超时' }); say(`轮 ${k}：等 arm 超时`); continue; }
     const armAt = Date.now();
     // ③ arm 之后**立刻**再弄脏一次（tokB），然后打字 + 停顿 ⇒ complete
-    const idleB = await waitIdle(page, 2500);
+    // --tight：arm 之后**不再**等空闲（实测这一步自己就烧掉 2.5s，是上一批超窗的主因）。
+    // 空闲与否在轮开始前判一次；这里只记录当时按钮状态，作为「提交会不会被排队」的证据。
+    const idleB = flag('tight') ? await page.evaluate(`(() => {
+      const b = window.__gy.byText('发送消息');
+      return b === null ? 'no-btn' : (b.disabled ? 'busy' : 'idle');
+    })()`) : await waitIdle(page, 2500);
     const sB = await quickSend(page, `测 ${tokB}`);
     await quickType(page, 'ababab');
     const typeGap = Date.now() - armAt;
@@ -674,13 +681,16 @@ const burst2 = async (page, tally, read) => {
     // 归因四条件：arm 是我点出来的那次 pull、complete 落在 1000ms 窗口内、
     // 窗口内没有第三者插写、**且造脏那次提交真的发生了**（回车前草稿非空）
     const landedB = hotCellHas(tokB);
+    // busy 时提交会被排进 agent inbox ⇒ 热表不在那一刻变脏：这是**结构性**原因，
+    // 不是传输延迟（CDP 单步实测 1~2ms）。所以归因条件里必须带着「提交那刻会话是否空闲」。
+    const idleAtB = idleB === true || idleB === 'idle';
     const attributable = arm.pullBefore === true && typeGap <= 1000 && writesAfterArm.length <= 2
-      && sB.ok === true && sB.draftLen > 0 && sB.cleared === true;
+      && sB.ok === true && sB.draftLen > 0 && sB.cleared === true && idleAtB;
     const row = {
       round: k, armRev: arm.rev, pullBefore: arm.pullBefore, typeGap,
       writesAfterArm: writesAfterArm.length, yielded: yieldIdx >= 0, draftB: sB.draftLen, draftA: sA.draftLen,
       attributable, landed: landedB, landedA: hotCellHas(tokA),
-      idleA, idleB, clearedB: sB.cleared, clearedA: sA.cleared,
+      idleA, idleB, idleAtB, clearedB: sB.cleared, clearedA: sA.cleared,
     };
     rows.push(row);
     say(`轮 ${String(k).padStart(2)}：arm rev=${row.armRev}（紧邻 pull=${row.pullBefore ? '✓' : '✗'}） `
@@ -688,6 +698,17 @@ const burst2 = async (page, tally, read) => {
       + `其后写=${row.writesAfterArm} 让路=${row.yielded ? '✓' : '—'} ⇒ 可归因=${row.attributable ? '是' : '否'} `
       + `落地含本轮独有 token=${row.landed ? '✓' : '✗'}`);
   }
+  const gaps = rows.map((r) => r.typeGap).filter((v) => typeof v === 'number' && v >= 0).sort((a, b) => a - b);
+  const med = gaps.length === 0 ? null : gaps[Math.floor(gaps.length / 2)];
+  say('=== enabling 数：arm→complete 的分布（生产窗口 1000ms，代码一字未改）===');
+  say(`样本 = ${gaps.length} 轮；min=${gaps[0] ?? '-'}ms 中位=${med ?? '-'}ms max=${gaps[gaps.length - 1] ?? '-'}ms`);
+  say(`分档 = ${JSON.stringify({
+    '≤300ms': gaps.filter((g) => g <= 300).length,
+    '301-1000ms（窗口内）': gaps.filter((g) => g > 300 && g <= 1000).length,
+    '1001-3000ms（超窗）': gaps.filter((g) => g > 1000 && g <= 3000).length,
+    '>3000ms': gaps.filter((g) => g > 3000).length,
+  })}`);
+  say(`⇒ 中位数 ${med ?? '-'}ms ${med !== null && med <= 600 ? '≲600ms ⇒ 分母可达' : '> 600ms ⇒ 看下面实际分母，够不着就按决策规则停'}`);
   const now = tally();
   const den = rows.filter((r) => r.attributable === true).length;
   const num = rows.filter((r) => r.attributable === true && r.yielded === true).length;
@@ -701,7 +722,7 @@ const burst2 = async (page, tally, read) => {
     if (r.pullBefore !== true) bad.push('arm 不是我的 pull');
     if ((r.typeGap ?? 9999) > 1000) bad.push('complete 超窗');
     if ((r.writesAfterArm ?? 0) > 2) bad.push(`窗口内有 ${r.writesAfterArm} 次第三者写`);
-    if (r.idleB !== true) bad.push('会话忙（提交会被排进 inbox）');
+    if (r.idleAtB !== true) bad.push(`提交时会话不空闲（idleB=${JSON.stringify(r.idleB)}，会被排进 inbox）`);
     if (r.clearedB !== true) bad.push('回车后草稿没清空 ⇒ 没真提交');
     if ((r.draftB ?? 0) <= 0) bad.push('打字没进草稿');
     return bad.length > 0 ? bad.join('+') : '未知';
@@ -819,7 +840,7 @@ try {
       const commitGap = Date.now() - armAt;
       // ③ 立刻打字 + 停顿 ⇒ 客户端发 complete
       await cdpType(page, `() => window.__gy.composer()`, 'ababab', false,
-        `(() => (window.__gy.composer()?.textContent ?? '').length)`);
+        `(() => (window.__gy.composer()?.textContent ?? '').length)()`);
       const typeGap = Date.now() - armAt;
       // 归因有效性：complete 必须落在 armAt 之后 1000ms 内，否则这轮的让路不能算作本编排造成的
       //（上一批 4 轮的 typeGap 全是 ~1400ms ⇒ 超窗 ⇒ 那几次 yielded 的**来源不可归因**，已如实记）
