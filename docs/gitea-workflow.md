@@ -1,0 +1,124 @@
+# Gitea 协作流程（本仓的实际约定，含两条会静默失败的坑）
+
+**结论先行**：这个仓的交付路径上有两处**「看起来成功了其实没成功」**的地方 —— 评论命令写错形式
+（退出码 0、打印 issue 列表、评论没进去）与 `lib/` 是入库产物（多分支各自重建必然冲突）。
+两条都在 2026-10-21/22 这两天真实踩过并留下了证据，所以这页存在。
+
+---
+
+## 1. 发评论：`tea comment`，且**发完必须回读**
+
+### 正确形式
+
+```bash
+tea comment -r dsh-plugins/dsh-suggest-ghost <编号> "$(cat /tmp/comment.md)"
+```
+
+### 错误形式（本仓任务书以前写的是这个，别再抄）
+
+```bash
+tea issues comment add -r dsh-plugins/dsh-suggest-ghost 36 -m "…"   # ❌
+```
+
+**实测行为**（2026-10-22，本机 tea）：
+
+| 观察项 | 结果 |
+|---|---|
+| 退出码 | **0**（不是报错） |
+| 标准输出 | **整个 issue 列表**（`tea` 把无法识别的子命令当成 `issues list` 跑了） |
+| 评论是否写进服务器 | **没有** |
+
+`tea --help` 的 `COMMANDS → ENTITIES` 里只有顶层的 `comment, c`；`tea issues comment` 没有帮助主题
+（`Error: No help topic for 'comment'`）。⇒ **这条命令的形式不能靠"跑一遍看有没有报错"验证**，
+报错本来就不是它的失败模式。
+
+### 回读复核（唯一可靠的确认方式）
+
+```bash
+tea api "/repos/<owner>/<repo>/issues/<编号>/comments?limit=100" \
+  | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+      const a=JSON.parse(d);
+      console.log('评论总数=',a.length,'| 最后一条=',a[a.length-1].user.login, a[a.length-1].created_at);
+    });"
+```
+
+⚠️ **不要用 `tea issues -o json` 的 `comments` 字段做回读**：实测那个字段恒为空数组，
+用它复核会得出"评论没发出去"的错误结论（反过来也验证不了发出去了）。只有 API 那条路径可信。
+
+---
+
+## 2. 分支与 PR
+
+- **只推 `origin`（Gitea），绝不推 `github` remote**。本仓配了两个远端，github 那边是镜像；
+  推上去会污染镜像且拿不到 CI/评审。推完确认：`git log --oneline -1 origin/<分支>`。
+- **开 PR 用 `tea pulls create --remote origin --repo <owner>/<repo> --head <分支> --base main`**。
+  `--remote origin` 不是可选的：tea 会按 remote 反查登录，缺了它可能挑到另一个 login。
+- **逐条 `git add <文件>`，不许 `git add -A`**：worktree 里的 `node_modules` 是指向主仓的**软链**，
+  `-A` 会把它连带进索引（`.gitignore` 挡的是目录内容，不保证挡得住已经被解析成路径条目的东西）。
+  提交前跑一次 `git status --short` 数一下条目，与本任务的写范围对齐。
+- PR body 必须含三件：**CHANGELOG 条目草稿**（lead 统一落仓，你只交草稿）、**验收命令的真实输出**、
+  **遗留风险**。结论措辞按实测量级写，不要用"感觉变快了"替代数字。
+
+---
+
+## 3. 产物纪律：`lib/` 由 lead 在 main 上统一重建
+
+`lib/` 是**入库产物**（宿主直接加载它，见 `docs/internals-cordis-settings-pitfalls.md`），
+所以：
+
+- 多条分支各自 `tsc && node build.mjs` ⇒ `lib/*.js` 必然冲突，而且冲突发生在**生成物**上，
+  人工解冲突等于在猜编译器的输出；
+- 约定：**你在自己的 worktree 里构建只为跑冒烟**（冒烟导入的是 `lib/`，见第 4 节），
+  **提交时把 `lib/` 一起提**，由 lead 顺序合并后在 main 上统一重建一次收口；
+- `CHANGELOG.md` 与 `package.json` 的 `version` **由 lead 写**，协作者只交草稿（第 2 节）。
+
+⚠️ 一条推论：**冒烟导入的是 `lib/` 而不是 `src/`** ⇒ 改了 `src/` 不重建 `lib/` 就重跑冒烟，
+测的还是旧字节码，"变异没让断言变红"很可能是这个原因而不是断言无效。
+本次实测踩过：变异 `src/index.ts` 后直接跑冒烟全绿，补上
+`./node_modules/.bin/tsc -p tsconfig.json && node build.mjs` 之后才如预期变红。
+
+---
+
+## 4. 主仓纪律与 worktree 构建
+
+- **主仓目录是 live 宿主正在加载的那一份** ⇒ 不在里面改代码、不在里面构建。
+  要改就开 worktree：
+
+  ```bash
+  git -C <主仓> worktree add -b <分支> wt/<名字> origin/main
+  ln -s <主仓>/node_modules wt/<名字>/node_modules
+  ```
+
+- **worktree 里 `pnpm` 不可用**（软链的 `node_modules` 过不了它的依赖检查），改用直接调二进制：
+
+  ```bash
+  ./node_modules/.bin/tsc -p tsconfig.json --noEmit          # 类型检查
+  ./node_modules/.bin/tsc -p tsconfig.json && node build.mjs  # 构建 lib/
+  bash -c "$(node -p "require('./package.json').scripts['test:smoke']")"
+  bash -c "$(node -p "require('./package.json').scripts['test:e2e']")"
+  ./node_modules/.bin/tsc -p tsconfig.client.json --noEmit | grep -c "error TS"   # 客户端基线数
+  ```
+
+- **隔离实例**用 `node scripts/dev-sandbox.mjs --home ~/dsh-sbx-<名字> --rewrite 'port: 3983=port: 41NN'`。
+  两条它自带的坑：
+  1. **它无参数即创建并启动一个实例**（不是校验脚本）⇒ 批量挑脚本跑之前先排掉非 `*-smoke.mjs`；
+  2. `pkill -f <模式>` 的模式串会匹配到调用方自己的命令行 ⇒ 会把自己那条命令杀掉。
+  用完关掉、删掉沙箱目录（**里面有一份 `.credentials.yaml` 副本**，凭据留在磁盘上比删掉更糟）。
+
+- **回收 worktree 前要确认两件事**：工作树干净，且**内容**已进 main。
+  cherry-pick 进去的分支不是 main 的祖先，`merge-base --is-ancestor` 会判"未合并"，
+  这时用 `git diff origin/main <分支>` 打出**空 diff** 才算内容等价。
+
+---
+
+## 5. 断言与冒烟的两条口径（本仓特有）
+
+- **没验到的不得写成通过**：区分 `PASS / FAIL / NOT-COVERED` 三态，NOT-COVERED 必须写清
+  缺哪个前置（见 `scripts/ghost-frame-e2e.mjs` 的收尾说明）。基线产物跑同一份脚本时，
+  脚本要**自动降级成"只打印不判定"**，而不是把判定跳过当成通过。
+- **形状断言 vs 语义断言**：形状（"某句必须是函数第一句"）**可以严格蕴含**语义
+  （"守卫前不得有任何 IO"），而且比 token 名单强 —— 改名能绕过 token 名单，绕不过位置约束。
+  想把形状改成语义之前，**先拿变异证明语义版更强**，别默认"语义一定更好"
+  （本仓有一次 lead 的这类指示被实测驳回，见 `scripts/deferred-writes-smoke.mjs` 里那条注释）。
+- **变异必须数值上可分辨**：真实耗时是 0~1ms 时，把 `Date.now() - t0` 翻转成 `t0 - Date.now()`
+  **不构成变异**（`-0` 不匹配负号），"断言没红"在这个前提下不说明任何事。测边界要用显著量级偏移。

@@ -166,14 +166,20 @@ with dsh 0.2.0-rc.2: peerDependencies {…}
 逐字未变**，变的只是载体。0.6.1 起 host → client 分**两格**：`_push` 只装
 `{suggestion(+frame/final), suggestionSessionId, completion(+final), error}`，`_hot` 只装
 `{hot, total, history, historySessionId}`——两格各自判重，一次纯热度变化不再连带重写建议格。
-**两格都脏时合并成一次 `settings.update`**
-
-热度格还带一个 **1000ms 的写合并窗口**：同一窗口内的多次热度/历史环变化只落一次盘
-（携带建议格的写**永远立即落**，不受窗口影响；pull 应答、热表恢复补推、插件卸载前都会
-强制带出当前快照）。可观测的代价是**热度列表最长滞后约「窗口 + 一个泵间隔」（≤1.5s）**，
-影响的是热表排序（历史补全候选的打分顺序），**不影响建议本身**。（省的是客户端一次重解析，不是「一次整档重写」：
+**两格都脏时合并成一次 `settings.update`**（省的是客户端一次重解析，不是「一次整档重写」：
 补写泵不排队，各写各的最坏只多等一个 500ms tick）。缺省语义按格成立：整格缺席 = 保留现值，
 **不是**清空——旧宿主没有 `_hot` 时客户端的热度与历史必须原样留着。
+
+> **热度格写合并窗口（1000ms）**：只合并**纯热度**的变化（连续输入、一批多 op）；**建议格永远
+> 立即写**，不被窗口拖慢；`pull` 会让路（窗口未到期时 pull 的应答带当前热度）。热表恢复后的那次
+> 补推与插件卸载前的那一次同样绕开窗口。**用户可见代价**：热表**排序**可能滞后 ≤1.5s，
+> **不影响建议本身**。实测（真实会话日志 + 纯函数判定，**120 会话 / 8134 次判定**）：
+> 「这次没补出来」的无条件比例 ≈ **0.033%**（3 例）；而「落后一整个回合」的代价是 12.6% ——
+> **窗口的可见代价取决于「用户输入节奏 ÷ 陈旧上界」这个比值**（本机实测相邻输入间隔
+> p50 = 341 秒、≤1.5s 的仅 0.29%），**不是窗口本身多大**。复算：
+> `node --experimental-strip-types scripts/hot-window-staleness.mjs` 与
+> `scripts/hot-window-timeline.mjs`（**不接 `test:smoke` 链**，一次性量度）。
+> 程序化连发（相邻输入 ≤1.5s）下这 12.6% 会变成真实代价 ⇒ 见 issue #63。
 
 > **宿主升级后请刷新页面**（不需要重启宿主）。客户端 bundle 由同一个宿主提供（`lib/client.js`），
 > 所以版本偏斜只影响**升级前就已打开的旧标签页**，而那里的现象两个格子不一样（都按旧代码实读确认）：
@@ -245,7 +251,10 @@ nested`（ALS 事务沿 `await` 传播，推迟一个 tick 不算逃出）。文
 走 stdout：`ctx.logger` 在健康进程里不落任何地方，运行期唯一可见面是 `console.log` 经宿主
 tee 进日志，所以本插件用语义标记 `[dsh-suggest-ghost][ops-trace]` 把留痕与调试噪声分开。
 
-见 [docs/internals-cordis-settings-pitfalls.md](docs/internals-cordis-settings-pitfalls.md)：
+Gitea 协作流程（评论命令的正确形式与回读、分支/PR 约定、`lib/` 与主仓纪律）见
+[docs/gitea-workflow.md](docs/gitea-workflow.md)。
+
+内核 settings 通道的坑见 [docs/internals-cordis-settings-pitfalls.md](docs/internals-cordis-settings-pitfalls.md)：
 每条按「症状 → 根因 → 正确用法 → 错误用法」写，附源码行号与 commit，并区分「已修」「待宿主
 验证」「内核契约」「仅本插件经验」四档确定性，文末是改动前后的复查清单。
 
