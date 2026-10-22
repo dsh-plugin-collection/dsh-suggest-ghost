@@ -29,8 +29,8 @@
 
 import type {} from '@deepseek-ai/dsh-client-ui-conversation';
 import type { Context } from '@deepseek-ai/cordis';
-import type { SuggestGhostProjection, SuggestGhostSuggested } from '../domain.ts';
-import { clearNormalizeCache, commonPrefixLength, extractHistory, historySuggestion, normalizeForMatch, stripCommandPrefix } from './history.ts';
+import type { SuggestGhostProjection, SuggestGhostSuggested } from '../domain.js';
+import { clearNormalizeCache, commonPrefixLength, extractHistory, historySuggestion, normalizeForMatch, stripCommandPrefix } from './history.js';
 import {
   acceptTarget,
   buildFullAccept,
@@ -47,10 +47,10 @@ import {
   type DraftSnapshot,
   type FrameHint,
   type FrameLedger,
-} from './accept-guard.ts';
-import { alignCompletion, decideInlineForm } from './completion-align.ts';
-import { buildOpsPayload, createSeqSource } from './ops-envelope.ts';
-import { nextAcceptChunk } from './chunk.ts';
+} from './accept-guard.js';
+import { alignCompletion, decideInlineForm } from './completion-align.js';
+import { buildOpsPayload, createSeqSource } from './ops-envelope.js';
+import { nextAcceptChunk } from './chunk.js';
 import {
   anchorMovedBeyond,
   configValuesEqual,
@@ -68,8 +68,8 @@ import {
   type InlineArmState,
   type OverlayShape,
   type TallyState,
-} from './inline-arm-policy.ts';
-import { keyCodeOf } from './keyspec.ts';
+} from './inline-arm-policy.js';
+import { keyCodeOf } from './keyspec.js';
 /**
  * 远程 `mutate` 兑现值的分类与写后判定（纯函数模块）。#16 的实质就落在「兑现 ≠ 落盘」
  * 这一层判定上，所以它必须能离线驱动测试（`scripts/ops-write-verify-smoke.mjs`），
@@ -82,10 +82,10 @@ import {
   unwrapMutateResult,
   verdictFromView,
   type WriteVerdict,
-} from './settings-result.ts';
-import { SuggestGhostCard } from './settings-card.tsx';
-import type { PluginSettingsScope } from './settings-scope.ts';
-import type { LocaleFaceLike } from './useGhostT.ts';
+} from './settings-result.js';
+import { SuggestGhostCard } from './settings-card.js';
+import type { PluginSettingsScope } from './settings-scope.js';
+import type { LocaleFaceLike } from './useGhostT.js';
 
 /**
  * 宿主可观察快照的最小结构视图。不从 @deepseek-ai/dsh-client-runtime 导入：

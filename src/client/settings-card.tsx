@@ -23,12 +23,12 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 // 0.1.7 移除了内核 settingsScope 服务；卡片依赖的 scope 最小面在 client 侧
 // 本地声明，由 index.ts 的 remoteSettingsScope() 适配器实现。
-import type { PluginSettingsScope } from './settings-scope.ts';
-import type { ScopeSnapshot } from './index.ts';
-import type { HotnessOp } from '../domain.ts';
-import { keyEventToSpec } from './keyspec.ts';
-import { useGhostT, type GhostLang, type LocaleFaceLike } from './useGhostT.ts';
-import { injectStyles } from './styles.ts';
+import type { PluginSettingsScope } from './settings-scope.js';
+import type { ScopeSnapshot } from './index.js';
+import type { HotnessOp } from '../domain.js';
+import { keyEventToSpec } from './keyspec.js';
+import { useGhostT, type GhostLang, type LocaleFaceLike } from './useGhostT.js';
+import { injectStyles } from './styles.js';
 // 图标取自官方图标集：primitives 是 Web 壳的 platform module（冻结模块表常驻），
 // esbuild 标 external 后由 __ModuleLoader__ 的 require 在运行时解析（与 react 同
 // 机制，参考 dsh-group-status 的用法），无需 peerDependency 或 dsh.client.inject。
