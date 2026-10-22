@@ -100,6 +100,7 @@ const suggestion = (turn, text = '跑一下测试') => ({
   assert.deepEqual(parsePersistedPush(good), {
     suggestion: { ...suggestion(2), frame: 1, final: true },
     sessionId: 'session-a',
+    emptyText: null,
   });
   assert.equal(parsePersistedPush(good).suggestion.version, 1, '回读时补齐 version');
   // 盘上已有帧语义：原样带回，不能被重置成 1/true（否则「第 2 帧」在重启后变成「第 1 帧」，
@@ -112,15 +113,15 @@ const suggestion = (turn, text = '跑一下测试') => ({
   assert.equal(parsePersistedPush(carried).suggestion.frame, 2, '盘上的 frame 原样带回');
   assert.equal(parsePersistedPush(carried).suggestion.final, false, 'final:false 不许被翻案成 true');
 
-  assert.deepEqual(parsePersistedPush(undefined), { suggestion: null, sessionId: null });
-  assert.deepEqual(parsePersistedPush(''), { suggestion: null, sessionId: null });
-  assert.deepEqual(parsePersistedPush('null'), { suggestion: null, sessionId: null }, 'EMPTY_PUSH');
-  assert.deepEqual(parsePersistedPush('{ 坏 JSON'), { suggestion: null, sessionId: null }, '解析失败');
-  assert.deepEqual(parsePersistedPush('[]'), { suggestion: null, sessionId: null }, '非对象');
+  assert.deepEqual(parsePersistedPush(undefined), { suggestion: null, sessionId: null, emptyText: null });
+  assert.deepEqual(parsePersistedPush(''), { suggestion: null, sessionId: null, emptyText: null });
+  assert.deepEqual(parsePersistedPush('null'), { suggestion: null, sessionId: null, emptyText: null }, 'EMPTY_PUSH');
+  assert.deepEqual(parsePersistedPush('{ 坏 JSON'), { suggestion: null, sessionId: null, emptyText: null }, '解析失败');
+  assert.deepEqual(parsePersistedPush('[]'), { suggestion: null, sessionId: null, emptyText: null }, '非对象');
 
   // 有建议无会话 id：保留 id 为 null，建议作废（无从判断归属）
   const noSession = JSON.stringify({ suggestion: suggestion(2) });
-  assert.deepEqual(parsePersistedPush(noSession), { suggestion: null, sessionId: null });
+  assert.deepEqual(parsePersistedPush(noSession), { suggestion: null, sessionId: null, emptyText: null });
 
   // 字段级防御：逐项破坏都应降级为「无建议」而不是抛错
   for (const patch of [
@@ -135,6 +136,14 @@ const suggestion = (turn, text = '跑一下测试') => ({
     const got = parsePersistedPush(raw);
     assert.equal(got.suggestion, null, `畸形字段应作废：${JSON.stringify(patch)}`);
     assert.equal(got.sessionId, 'session-a', '会话 id 仍应保留（供上层区分「无建议」与「会话未知」）');
+    // 分类也必须在这一处就分开（#73）：只有 `{ text: '' }` 是「正文为空」，其余全是真损坏。
+    // 期望从 patch 自己推，不手写清单——加一个新字段时这条断言会自动要求表态。
+    const expectEmpty = Object.keys(patch).length === 1 && patch.text === '';
+    assert.deepEqual(
+      got.emptyText,
+      expectEmpty ? { turn: 2, baseSeq: 3 } : null,
+      `空正文档与真损坏档分错了：patch=${JSON.stringify(patch)} 实得 ${JSON.stringify(got.emptyText)}`,
+    );
   }
 }
 
@@ -326,4 +335,76 @@ const suggestion = (turn, text = '跑一下测试') => ({
   );
 }
 
-console.log('✅ coldstart 冒烟测试通过（结构校验/语义校验/按需物化/增量维护/跨会话追踪/启动回读判定）');
+// —— 12. 正文为空与载荷损坏**分归因**（#73）——
+//
+// `corrupt-payload` 以前同时描述两种性质不同的情况：
+//  ① 真的损坏：JSON 解析不了 / 字段类型不对 ⇒ 盘上载荷确实不可信；
+//  ② 结构合法、只是**正文为空**（`text === ''`）⇒ 载荷没坏，是「没有内容」。
+// 读到 `corrupt-payload` 的人只会想到 ① ⇒ 去怀疑写盘路径。这不是假想：沙箱里手写一份
+// `text:""` 的终帧，留痕就是 `persisted push skipped source=startup reason=corrupt-payload`
+// （见 docs/real-session-harness.md §10），排障方向当场被带偏。
+//
+// 分档而不是改名：①保持 `corrupt-payload`（这个词已在沙箱日志与文档里被检索过，改名会把
+// 旧的检索习惯一起废掉），②给它自己的 reason `empty-text`。
+{
+  const events = [userMessage(1, '第一句'), turnEnd(2, 1)];
+  const live = sessionOf(events);
+  const ctx = {
+    sessionExists: (id) => id === 's',
+    isCurrent: (sug, id) => suggestionIsCurrent(sug, id === 's' ? live : undefined),
+  };
+
+  /** ② 结构全都合法、只有正文为空（宿主自己永远不会发这种载荷，但手改/旧版本会）。 */
+  const emptyText = JSON.stringify({
+    rev: 9,
+    suggestion: { ...suggestion(2), text: '' },
+    suggestionSessionId: 's',
+  });
+  const emptyVerdict = decidePersistedPush(emptyText, ctx);
+  assert.equal(emptyVerdict.action, 'skip', '正文为空仍然不恢复（行为不许变，只改归因）');
+  assert.equal(
+    emptyVerdict.reason,
+    'empty-text',
+    `正文为空必须有自己的 reason，不许再借道「载荷损坏」：实得 ${JSON.stringify(emptyVerdict.reason)}`,
+  );
+
+  /** ① 字段类型不对 = 真损坏 ⇒ **保持** corrupt-payload（同一条建议只把 text 换成数字）。 */
+  const damaged = JSON.stringify({
+    rev: 9,
+    suggestion: { ...suggestion(2), text: 42 },
+    suggestionSessionId: 's',
+  });
+  assert.equal(decidePersistedPush(damaged, ctx).reason, 'corrupt-payload', '真损坏不许被顺手改成新词');
+  // 逐字不同是这条修复的全部价值：留痕检索能一眼分开两类。
+  assert.notEqual(emptyVerdict.reason, decidePersistedPush(damaged, ctx).reason);
+
+  // 留痕要带够定位信息（会话、turn、baseSeq、字符数），且**不打正文**。
+  assert.equal(emptyVerdict.sessionId, 's', '空正文也要说清是哪会话的');
+  assert.deepEqual(
+    emptyVerdict.location,
+    { turn: 2, baseSeq: 3, chars: 0 },
+    `正文为空必须带 turn/baseSeq/字符数（旧写法 suggestion=null ⇒ 三个全 n/a，等于没定位）：${JSON.stringify(emptyVerdict.location)}`,
+  );
+
+  /** `_residual` 与 `_push` **同一口径**（要求 2）：残留格字节形状与 `_push` 的建议部分
+   * 同形，喂进同一条判定链就必须判成同一档——「两套口径」是第二种漂法。 */
+  const residualCell = JSON.stringify({
+    suggestion: { ...suggestion(2), text: '' },
+    suggestionSessionId: 'session-b',
+  });
+  const residualVerdict = decidePersistedPush(residualCell, { sessionExists: () => true, isCurrent: () => true });
+  assert.equal(residualVerdict.reason, emptyVerdict.reason, '残留格与建议格必须判成同一档');
+  assert.equal(residualVerdict.sessionId, 'session-b');
+
+  // 结构校验层也必须把这个事实**当数据报出来**，否则上层只能自己再抄一遍判据（两份真相）。
+  const parsedEmpty = parsePersistedPush(emptyText);
+  assert.equal(parsedEmpty.suggestion, null, '行为不变：空正文依然不构成建议');
+  assert.deepEqual(
+    parsedEmpty.emptyText,
+    { turn: 2, baseSeq: 3 },
+    `parsePersistedPush 必须把「只有正文为空」与「字段类型不对」区分开上报：${JSON.stringify(parsedEmpty.emptyText)}`,
+  );
+  assert.equal(parsePersistedPush(damaged).emptyText, null, 'text 类型不对是真损坏，不算空正文档');
+}
+
+console.log('✅ coldstart 冒烟测试通过（结构校验/语义校验/按需物化/增量维护/跨会话追踪/启动回读判定/空正文与损坏分归因）');

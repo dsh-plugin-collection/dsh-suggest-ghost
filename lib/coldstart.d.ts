@@ -56,6 +56,11 @@ export declare function lastCompletedTurnInLog(session: Session): number;
  *
  *  - `no-persisted-payload`：盘上根本没有残留载荷（正常态）。
  *  - `corrupt-payload`：盘上有载荷但结构不合法（上个进程写坏了 / 被人手改过）。
+ *  - `empty-text`：载荷**结构完全合法，只是正文为空**（`text === ''`）。以前这一档借用
+ *    `corrupt-payload`，于是读到它的人会去怀疑写盘路径 —— 而那笔写根本没坏，盘上也没有坏
+ *    字节（实测被误导过一次：手写一份 `text:""` 的终帧进 profile，留痕打的就是
+ *    `reason=corrupt-payload`，见 docs/real-session-harness.md §10 与 #73）。
+ *    **分档而不是改名**：`corrupt-payload` 留给真损坏，这个词已被沙箱日志与文档检索过。
  *  - `session-mismatch`：载荷里的建议**无法归属**到会话（缺 `suggestionSessionId`），
  *    或它属于**另一个**会话（用户切了会话）——此时不恢复、不 track、**不动盘**。
  *  - `session-unavailable`：会话尚未进店（宿主的持久化懒恢复未发生）⇒ 无从判新旧，
@@ -64,7 +69,29 @@ export declare function lastCompletedTurnInLog(session: Session): number;
  *  - `superseded`：该会话**已有更新的建议**（更新一轮产出/回读后接上的），残留不得
  *    盖掉它 ⇒ 不接回（这不是载荷的毛病，是状态更新了）。
  */
-export type PersistedPushSkipReason = 'no-persisted-payload' | 'corrupt-payload' | 'session-mismatch' | 'session-unavailable' | 'stale-turn' | 'superseded';
+export type PersistedPushSkipReason = 'no-persisted-payload' | 'corrupt-payload' | 'empty-text' | 'session-mismatch' | 'session-unavailable' | 'stale-turn' | 'superseded';
+/**
+ * `parsePersistedPush` 的返回值。
+ *
+ * `emptyText` 是「结构全都合法、**只有正文为空**」这件事的**数据形态**：由结构校验那一处
+ * 报出来（不在上层重判 ⇒ 不会出现第二套口径），`decidePersistedPush` 只负责把它映射成
+ * reason。`_push` 与 `_residual` 共用这条链 ⇒ 同一档（要求 2）。
+ */
+export type ParsedPersistedPush = {
+    readonly suggestion: SuggestGhostSuggested | null;
+    readonly sessionId: string | null;
+    /** 非 null = 载荷结构合法、正文为空（带定位用的 turn/baseSeq）；其余情况为 null。 */
+    readonly emptyText: {
+        readonly turn: number;
+        readonly baseSeq: number;
+    } | null;
+};
+/** 「跳过」时的定位信息：正文为空这一档没有建议对象，但留痕仍要说清是哪一条。 */
+export type PersistedPushLocation = {
+    readonly turn: number;
+    readonly baseSeq: number;
+    readonly chars: number;
+};
 /** 一次回读判定的结论。 */
 export type PersistedPushVerdict = {
     readonly action: 'restore';
@@ -77,6 +104,12 @@ export type PersistedPushVerdict = {
     /** 解析得出来的建议（载荷损坏/无法归属时为 null）——留痕要带 turn/baseSeq/字符数。 */
     readonly suggestion: SuggestGhostSuggested | null;
     readonly sessionId: string | null;
+    /**
+     * 没有建议对象**但仍有定位信息**时（`empty-text`）用：正文为空 ⇒ `suggestion` 是
+     * null，旧写法留痕里 turn/baseSeq/chars 全打成 `n/a`，等于把「是哪一条」这个信息
+     * 丢了。这一档恰恰是最需要定位的（盘上确实躺着一条有会话、有回合、没内容的载荷）。
+     */
+    readonly location?: PersistedPushLocation | null;
 };
 /**
  * 判定盘上残留的建议能不能恢复（**纯函数**，可离线驱动）。
@@ -109,10 +142,7 @@ export declare function decidePersistedPush(raw: string | undefined, ctx: {
  * @param raw - `_push` 字段的 JSON 字符串（'null' = 无）。
  * @returns 结构合法的建议与其会话 id；无建议时 suggestion 为 null。
  */
-export declare function parsePersistedPush(raw: string | undefined): {
-    readonly suggestion: SuggestGhostSuggested | null;
-    readonly sessionId: string | null;
-};
+export declare function parsePersistedPush(raw: string | undefined): ParsedPersistedPush;
 /**
  * 就地追加一条历史文本（幂等：相邻重复不重复入环；超出容量从头截断）。
  * 会前先由调用方物化环——环绝不能凭空从单条文本起建，否则丢掉此前的轮次。
