@@ -219,3 +219,62 @@ composer 存在=true，宿主日志期间 error 计数 0
 - ① 的「空正文终帧在真 DOM 的呈现」、② 的「真实宿主里的让路比例」两项仍未验（各自原因见 §8 末）。
 - 支持性推断与验证要分清：「`_residual` 是宿主自用格 ⇒ 旧客户端会忽略」是**推断**；
   §8 里那条装旧客户端跑两轮、`_residual` 字节不变的观察才是**验证**。
+
+## 10. #67 空正文终帧的真 DOM（2026-10-22 第二次真跑，结论：**当前架构下双重不可达**）
+
+做法：先跑一个真回合物会话有 `turn=1 (completed)`，杀掉宿主，往沙箱 profile 的 `_push` 里**手写一份**
+`{suggestion:{version:1,turn:1,baseSeq:12,text:"",truncated:false,acceptKey:"Tab",frame:1,final:true},
+suggestionSessionId:<那个会话>}`，重启并打开该会话（触发 7 次 pull）。
+
+**宿主侧实测**：
+```
+persisted push read   source=startup present=1 turn=n/a baseSeq=n/a chars=n/a
+persisted push skipped source=startup reason=corrupt-payload turn=n/a baseSeq=n/a chars=n/a
+```
+⇒ 空正文根本进不了恢复链：`parsePersistedPush` 在结构层就把 `text === ''` 判成「没有建议」
+（`src/coldstart.ts:234`），于是 `decidePersistedPush` 走 `suggestion===null && sessionId!==null`
+那条 ⇒ 归为 `corrupt-payload` 并**跳过、不动盘**。
+另一半不可达是产出侧：`generateSuggestion` 在「空/被过滤」时返回 `suggestion: undefined`
+⇒ 载荷里写的是 `suggestion: null`（`buildPushPayload` 的 `p.suggestion === null ? null : …`），
+所以**宿主自己永远不会发一份 `text:""` 的终帧**。
+
+**真实 DOM 侧实测**（Playwright，会话视图下）：
+```
+overlay 存在 = false        ← 连节点都没挂上
+placeholder display=flow-root / visibility=visible / opacity=1
+console error 计数 = 0（该页 1 条 error 与插件无关，宿主其它面）
+```
+⇒ **#53 遗留的「空正文会不会画一枚空幽灵并把占位文案藏掉」这条 NOT-COVERED 可以收口**：
+在真实宿主 + 真实浏览器里，那种空白输入框**没有出现**，而且原因不是"运气好"——是
+产出侧与回读侧**两条都把它挡住了**。
+
+⚠️ 一处**留痕措辞**的小问题（不改行为，交给 lead 定）：`reason=corrupt-payload` 被用来描述
+「结构合法但正文为空」这种情况。它不是载荷坏了，是「没有内容」。要么在 `parsePersistedPush`
+里把 `text === ''` 与「字段类型不对」分开归因，要么把这条留痕的理由改名 —— 现在这样会让人
+以为盘上载荷损坏（进而去怀疑写盘路径）。
+
+## 11. #63 让路比例：本轮**仍未量到**，且原因结构性（不拿推断顶替）
+
+同一轮日志的计数：
+```
+ops consumed: pull   7     push landed  6     hot push landed  3
+hot push coalesced   0     hot push yielded on input   0     ops consumed: complete   0
+```
+
+读代码后能确定**为什么正常操作量不到**：`hot push yielded on input` 要同时满足三件事
+（`src/index.ts` 的 `complete` 分支）：
+1. 窗口开着（`hotWindowOpenedAt !== null` 且 `decideHotPush` 判 `defer`）——即 **1000ms 内刚写过热度格**；
+2. 此刻槽里**还攒着**一份没落地的热度快照（`windowWasOpen` 判的是「本可推迟」）；
+3. 这一拍来的必须是 **`complete`** op（用户打了 ≥`inlineMinChars` 个字符并停顿）。
+
+单会话的正常使用凑不齐 1+2：一次 pull/回合末尾把热度写出去 ⇒ 窗口开，但槽同时被清空；
+下一份热度变化要再等一次用户输入提交，而那次提交本身才会带来新的 `complete` 时机。
+⇒ **量比例需要一次刻意的三方编排**：
+`pull`（arm 窗口）→ 立刻改一次热表（管理面板 add/delete ⇒ 制造 pending）→ 1s 内在输入框打出
+≥4 个字符并停顿（`complete`）。**本轮没做这条**，因为三步要在 1s 内完成，而我这边每一次
+浏览器调用往返就是数秒级 ⇒ 只能写成一次 in-page 脚本化编排（`page.evaluate` 里连做 click +
+输入 + 停顿），那是下一条线的活，不是本轮能靠多试几次绕过去的。
+
+⇒ **#63 的「真实宿主里的让路比例」保持 NOT-COVERED**；离线侧 `scripts/hot-yield-smoke.mjs`
+与 `scripts/hot-yield-write-bound-smoke.mjs`（判据③前半句：让路写次数 ≤ 待写变化数）继续钉着性质，
+但**那不等于真实比例**，两件事在 tracker 上别合并。
