@@ -137,3 +137,23 @@ tea api "/repos/<owner>/<repo>/issues/<编号>/comments?limit=100" \
   （本仓有一次 lead 的这类指示被实测驳回，见 `scripts/deferred-writes-smoke.mjs` 里那条注释）。
 - **变异必须数值上可分辨**：真实耗时是 0~1ms 时，把 `Date.now() - t0` 翻转成 `t0 - Date.now()`
   **不构成变异**（`-0` 不匹配负号），"断言没红"在这个前提下不说明任何事。测边界要用显著量级偏移。
+
+## 6. 发布前自检：「部署链正确」不等于「运行态是它」
+
+核「用户是不是在跑这份代码」要核**两件事**，只看一件会得出反向结论：
+
+1. **部署链**：`~/.dsh/profiles/web/node_modules/<pkg>` 是否解析到这份工作副本（软链）
+2. **条目是否启用**：`~/.dsh/profiles/web/cordis.patch.yml` 里该 `- id:` 有没有 `disabled: true`
+
+```bash
+# 两条都要看，缺一不可
+ls -l ~/.dsh/profiles/web/node_modules/dsh-suggest-ghost
+grep -n -A3 '^- id: suggest-ghost$' ~/.dsh/profiles/web/cordis.patch.yml
+```
+
+⚠️ **只核第 1 条会把「延迟失真」读成「正在失真」**：链对但条目禁用 ⇒ 用户**没在**跑这些代码，只是**下一次启用那一刻**会立刻拿到一批没有版本记录的行
+为。⇒ 这条判据直接影响发布决定与发布说明的措辞（本仓 2026-10-22 就这么错过一次：拿部署链 + 产物比 src 新，论证「用户已在跑未发布行为」，
+而 `:712` 是 `disabled: true`）。
+
+**同一条自检还该看产物是否嵌版本号**：本仓 `lib/index.js` 里 `0.6.0` 命中 **0 处** ⇒ 版本 bump **不触发**产物重建；但 `lib/` 整体仍是
+入库产物（见 §3），改了 `src/**` 就必须重建再跑 `check:loop`，否则「版本号改了、产物还是旧的」会被那道门禁拦住。
