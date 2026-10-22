@@ -242,6 +242,21 @@ await scenario('场景 1：B 的一次 pull 之后，盘上 A 的残留字节仍
     '有一笔 `_push` 写把残留弄没了（写后的快照里 `_push` 与 `_residual` 都找不到它）');
   assert.ok(pushWrites.length <= writesAfterBoot + 1,
     `一次 pull 至多一笔建议格写（无多余写）；boot 后=${writesAfterBoot}，现在=${pushWrites.length}`);
+
+  // 断言 2（任务书那条「`_residual` 的字节不变」）：** presence 不等于不变**。
+  // 再让 B 动两次（一次 pull、一次续写），每次都会写 `_push`；`_residual` 已经被第一笔
+  // 搬迁写定 ⇒ 之后每一笔都必须**逐字带着同一份字节**，既不能被清、也不能被改写。
+  const settled = medium.read(NS)._residual;
+  assert.equal(firstPushWriteThatDroppedResidual(medium), null, '搬迁之后不该把 `_residual` 弄丢');
+  await settings.update(NS, { _ops: JSON.stringify({ rev: 100, ops: [{ op: 'pull', sessionId: SESSION_B }] }) });
+  await sleep(250);
+  await settings.update(NS, {
+    _ops: JSON.stringify({ rev: 101, ops: [{ op: 'complete', sessionId: SESSION_B, draft: '这个插件怎么构建' }] }),
+  });
+  await sleep(450);
+  assert.equal(medium.read(NS)._residual, settled,
+    `B 再动两次之后 _residual 必须逐字不变；前=${String(settled).slice(0, 120)} 后=${String(medium.read(NS)._residual).slice(0, 120)}`);
+  assert.ok(residualStillOnDisk(medium), '且仍在盘上');
   await root[Symbol.asyncDispose]?.();
 });
 
