@@ -327,6 +327,16 @@ All notable changes to this project will be documented in this file.
     客户端在首字符时发一条信号给宿主，而那等于每轮连发多一次写，正是这个窗口省掉的东西 ⇒ 该取舍
     **另立**，本条没有替人决定
 
+- **`docs/real-session-harness.md`**：在隔离沙箱里驱动一个真回合的配方与实测结果（#69）。含三个此前
+  没写下来的事实：
+  - **挂插件要三个前置，不是两个**：profile 的 `package.json → dsh.profile.bundles` 里要有该插件、profile
+    的 `node_modules` 要能解析到它、`--patch` **只用于改配置、不能新增条目**（实测：无 patch 98 个顶层条目、
+    带 patch 仍 98 个，`id: suggest-ghost` 零命中）
+  - **headless 测不到「写」**：它自述即 “flushes its Session, prints the final assistant text, and exits”
+    （`dsh-headless/lib/index.js:28-34`，config 无 keep-alive）⇒ `turn/end` 之后进程立刻退出 ⇒ 插件回合后
+    那次异步调用拿不到执行时间（探针实测：`HT ENTER` 进了，`push landed` 一条没有，盘上三格计数全 0）
+  - **端口以日志里那行 `dsh web:` 为准**：`--rewrite` 改的是 profile 里那条，不是实例实际服务的端口
+
 ### 修复
 
 - **HMR 事务内写失败退化成微任务紧循环（2026-10-22 事故：tee 日志 23 GB、事件循环卡死）**。
