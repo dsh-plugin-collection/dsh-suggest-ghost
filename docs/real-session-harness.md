@@ -278,3 +278,48 @@ hot push coalesced   0     hot push yielded on input   0     ops consumed: compl
 ⇒ **#63 的「真实宿主里的让路比例」保持 NOT-COVERED**；离线侧 `scripts/hot-yield-smoke.mjs`
 与 `scripts/hot-yield-write-bound-smoke.mjs`（判据③前半句：让路写次数 ≤ 待写变化数）继续钉着性质，
 但**那不等于真实比例**，两件事在 tracker 上别合并。
+
+## 12. #63 让路比例：脚本打通了真实宿主，但**量出来的分母是 0**（这是数据，不是失败）
+
+驱动：`scripts/hot-yield-ratio.mjs`（task-22）。零依赖：自己起沙箱、自己读 `logs/sbx.log` 取
+URL+token、自己在同一进程里用 **CDP（Node 内置 WebSocket）** 操作 headless chromium。
+**不接进 `test:smoke`/`test:e2e`**（每条链要花真 LLM 调用）。
+
+同一份沙箱日志累计（多次探测试跑合起来的真实流量）：
+
+| 计数 | 值 |
+|---|---|
+| `ops consumed: pull` | 19 |
+| `ops consumed: complete` | 3 |
+| `push landed` / `deferred push landed` | 18 / 4 |
+| `hot push landed` | 11 |
+| **`hot push coalesced`** | **0** |
+| **`hot push yielded on input`** | **0** |
+
+关键读数不是那两个 0，而是**每一行落地留痕里都带 `coalesced=0`**：
+⇒ **合并窗口在这份真实流量里从未攒出过 pending 热度快照**（`windowWasOpen` 因此永远为 false）。
+⇒ 「让路 / 应当让路」的分母是 **0**，不是"编排没打中时机"，而是**根本没有可让的写**。
+
+为什么会这样，用同一条日志就能说清：这份流量是**单人 casual 操作**（切会话、发一条、等回合），
+每一次热度变化都发生在「没有别的热度变化在 1s 内跟着来」的时刻，而 pull 与回合末尾的推送要么
+带 `hotNow`（立刻写、不攒），要么窗口本来就还没开 ⇒ 窗口一次没开过。
+⇒ **#62/#63 那套节流与让路的真实收益/比例，只在「连发」形态下才有分母**（正是 #68 那条
+「同一秒内既改热表又换会话」的形态）。所以这条现场结论应当这样表述：
+
+> 真实宿主 + 单人 casual 流量：**0 次 coalesce、0 次 yield、0 次多余写**。
+> 这既证明节流在普通操作下不产生额外写（判据③的后半句在真宿主里成立），
+> 也说明**比例这个指标需要连发流量才有意义** —— 用现在这台实例的手点节奏量不到。
+
+要做的是给驱动加一段**连发编排**（不是"多试几次"）：同一秒内制造两次热表变化 + 一次 `complete`，
+最省的实现是走热度管理面板的 add/delete（`_ops`，不产生推送 ⇒ 真正造出 pending），而不是切会话
+（切会话每次都是 `hotNow`，永远攒不出 pending —— 这条是本轮跑出来的、可直接写进 #63 的观察）。
+
+### 脚本现状（诚实）
+- ✅ 起沙箱、打补丁（enable + `inlineDelayMs=60`）、CDP 打开 GUI、关首屏叠层引导、选工作区、
+  打字发消息（真回合）、读日志计数、kill + 删目录，全链路可复跑
+- ✅ **token 纪律达成**：token 只在脚本进程内存在，所有输出过 `redact()`，脚本自己统计并打印
+  「明文进 stdout 的次数 = 0」；10+ 次运行里这条一直是 0（tool 参数里也不再出现 token —— 这是
+  改用 CDP 而非 Playwright MCP 的唯一理由）
+- ⚠️ 编排的 ①② 步（切会话）在 `--rounds-only` 复用时拿不到 `[role=treeitem]`（这一版 GUI 的
+  会话行不在该 role 下，或列表被折叠），所以连发编排还没跑起来 —— 已定位，属选择器适配，
+  不是路径不通
