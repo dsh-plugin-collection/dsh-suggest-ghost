@@ -1,14 +1,46 @@
-// ⚠️ 这是一份**诊断用**配置，尚未接入 `pnpm typecheck`（接了会把构建卡死）。
-// 它当前报 31 条错误，分两类：
-//   ① 依赖缺失的噪音 6 条——本包没有 @types/react，且
-//      `@deepseek-ai/dsh-client-ui-conversation` 不在依赖里（TS2307/TS7016/
-//      TS6142/TS5097）。补齐这两个 devDep 后即可消掉。
-//   ② 真实代码问题 ~25 条——因为 src/client 被根配置 exclude、**从来没有被类型
-//      检查过**而长期潜伏，例如 `remote.settings.mutate` 少传一个参数（被
-//      .catch 吞成 false）、`ctx.on('connection/reset')` 不是合法事件名（重连后
-//      永不重新首读）、把 sessions getter 当 store 对象调 getSnapshot/subscribe。
-// 保留本文件的目的：修 ① 之后就能当门禁，防止再出现 `scrollHost` 那类
-// 「未声明标识符直接进产物」的回归（见下方 compilerOptions 注释）。
+// ⚠️ 这是一份**诊断用**配置，尚未接入构建（`pnpm typecheck` 会把它一起拖进发射路径）。
+// 在 worktree 里跑请直接用 `./node_modules/.bin/tsc -p tsconfig.client.json --noEmit`
+// ——别用 `pnpm typecheck`：worktree 的 node_modules 是指向主仓的软链，pnpm 的
+// runDepsStatusCheck 会因此报依赖错，与代码无关。
+//
+// 条数**当前 8**（#81 落地后；此前 23，再早这份注释写过「31」并配了一套过期分类——
+// 一条过期的自述会把人带去改一行**本来正确**的代码，所以这里改成「数字 + 自取命令」的
+// 写法：数字对不上时，跑一遍命令就知道是注释过期，而不是判据变了）。
+//   ./node_modules/.bin/tsc -p tsconfig.client.json --noEmit 2>&1 | grep -c 'error TS'
+// 逐条归因（① 口径产物 / ② 真实缺陷 / ③ 假象中的真问题）见 Gitea **#34 评论 id 38815**；
+// #81 收口后的 8 条残留：
+//   TS5097 ×1  `accept-guard.ts` 的 `./history.ts`——改 `.js` 会断 5 条按 TS 源码直载的
+//              离线冒烟（Node 的 type-stripping 不做 `.js→.ts` 回退，实测 ERR_MODULE_NOT_FOUND）
+//   TS2532 ×2  `chunk.ts`：继承自根配置的 `noUncheckedIndexedAccess` 的保守告警，调用点
+//              已有 `i < parts.length` 守卫 ⇒ 属①，但消它要关共享严格性 ⇒ 不建议，宁改代码
+//   TS2307 / TS7016 / TS6142：`@types/react` 与两个宿主客户端包不在 devDeps（需 lead 排产）
+//   TS2341 / TS18047：**②类真实缺陷，刻意留着不掩盖**（`attach` 被类外调用；
+//              `last.nodeValue` 的不变式类型面看不见）。这两条是「不掩盖真实缺陷」的哨兵，
+//              哪天它们不见了或被换成别的形状，一定要查是不是有人放宽了口径。
+//
+// 修前那 23 条的归因是 **① 口径产物 11 / ② 真实缺陷 2 / ③ 假象中的真问题 10**。三条最要紧的更正：
+//  - **`ctx.on('connection/reset')` 是合法事件**（本注释此前称它「不是合法事件名、
+//    重连后永不重新首读」——**那个结论是错的**）：宿主在 emit
+//    （`@deepseek-ai/dsh-api-gateway/lib/client.browser.js:1640`），类型面有声明
+//    （`@deepseek-ai/dsh-client-connection/lib/types/client/index.d.ts:17`），宿主自家
+//    客户端包同款监听 3 处。它报 TS2345 只因该包不在本仓 devDeps ⇒ augmentation 进不来，
+//    **修法在类型面，不在这行监听上**。
+//  - 「把 sessions getter 当 store 调 getSnapshot/subscribe」同样**不是缺陷**：
+//    `ctx.get('sessions')` 在类型上被解析成**服务端** `SessionStore`，而运行时是宿主
+//    **客户端**服务，其面里 `scope`/`sessionOf`/`list: SnapshotStore<…>` 都在
+//    （`dsh-api-session-controller/lib/types/client/sessions/service.d.ts:213/:238/:99`）
+//    ⇒ 那 6 条 TS2339 是「面接错」，属 ③。
+//  - TS5097 那 9 条**不是依赖缺失**：客户端写 `.ts` 后缀、宿主侧 NodeNext 写 `.js`，
+//    而本配置从根配置继承的是**发射**规则、它自己却是 `noEmit` 的诊断配置。
+//    消它只有两条路：开 `allowImportingTsExtensions`，或改后缀 —— 后者**不能全改**：
+//    `accept-guard.ts` 的 `./history.ts` 一改，5 条按 TS 源码直载的离线冒烟当场
+//    `ERR_MODULE_NOT_FOUND`（Node 的 type-stripping 不做 `.js→.ts` 回退，实测）。
+//
+// 保留本文件的目的：防止再出现 `scrollHost` 那类「未声明标识符直接进产物」的回归
+// （见下方 compilerOptions 注释）。⇒ 任何**放宽口径**（`noImplicitAny:false`、
+// `strictNullChecks:false`）都等于拆掉这道护栏：实测 `strictNullChecks:false` 不降反升，
+// 23→**25**；而 `jsx` 一旦设上，23→**199**（其中 176 条落在基线贡献 0 条的
+// `settings-card.tsx` —— 那是一块从未被检查的存量，不是新引入的错）。
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "extends": "./tsconfig.json",
