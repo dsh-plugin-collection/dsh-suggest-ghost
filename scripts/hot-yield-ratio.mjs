@@ -80,15 +80,16 @@ const ensureSandbox = async () => {
   t = t.slice(0, i) + block + t.slice(j);
   // inlineDelayMs 压到 60：让「停顿 → complete」尽可能早，抢 1000ms 窗口
   t = t.replace(/^(\s*)inlineDelayMs: \d+$/m, '$1inlineDelayMs: 60');
-  // ⚠️ 关掉沙箱里的 auto-continue：它会**自己往会话里发「继续」**，于是 complete/hot 计数
-  // 混进非本轮动作（实测出现过「分子 3 / 分母 2 = 1.50」这种不可能的比例）。
-  {
-    const i = t.indexOf('- id: auto-continue');
-    if (i >= 0) {
-      const j = t.indexOf('\n- id: ', i + 5); const blk = t.slice(i, j < 0 ? t.length : j);
-      if (/enabled:\s*true/.test(blk)) t = t.slice(0, i) + blk.replace(/enabled:\s*true/, 'enabled: false') + t.slice(j < 0 ? t.length : j);
-      else if (!/enabled:/.test(blk)) t = t.slice(0, i) + blk.replace(/^(- id: auto-continue\n)/, '$1  enabled: false\n') + t.slice(j < 0 ? t.length : j);
-    }
+  // ⚠️ **必须关掉 auto-continue**：它自己往会话里发「继续」，实测后果有两层——
+  //  ① complete/hot 计数混进非本轮动作（出现过「分子 3 / 分母 2 = 1.50」这种不可能值）；
+  //  ② 更致命：它让会话**一直处于忙**，而我这边 GUI 提交在忙时会被排进 agent inbox
+  //     （会话日志实测 6 条 `agent/inbox/spliced`）⇒ 我的"提交"根本没在预期的那一刻进宿主
+  //     ⇒ 热表不在那一刻变脏 ⇒ 归因轮永远凑不齐（上一批 6 轮全是「回车后草稿没清空」）。
+  // 它是 **bundle 带进来的顶层条目**（`dsh --profile web --dump-config` 里有 `- id: auto-continue`），
+  // 所以虽然 profile 文件里 grep 不到它，**profile 层可以盖掉它**（bundle patch 之下、profile 之上）。
+  // 幂等追加一条顶层盖写：把 auto-continue 标成 disabled
+  if (!/- id: auto-continue\n  disabled: true/.test(t)) {
+    t = t.trimEnd() + '\n- id: auto-continue\n  disabled: true\n';
   }
   writeFileSync(profile, t);
   say('· profile 已打补丁（enabled + inlineDelayMs=60）');
@@ -542,6 +543,178 @@ const burstRound = async (page, index, tally) => {
   };
 };
 
+
+// ── burst2：带 **rev 对齐归因** 的连发编排（#63 的比例）────────────────────
+//
+// 为什么要归因锚点：沙箱里 `auto-continue` 会自己发消息、它的回合末尾同样写热度、同样开窗口
+// （见文档 §7）⇒ 「这一拍的窗口是我开的」不能靠假设。锚点是宿主每次落地都带的 `rev=`：
+//   ① arm 必须来自**我明确发起**的那次动作（点「新会话」⇒ mount ⇒ `ops consumed: pull` ⇒ 一次带
+//      `rev=R` 的热度写），且这条 pull 行必须紧邻在那次写之前；
+//   ② arm 之后到 `complete` 之间**不得有第二次写**（第三者插进来就判不可归因）；
+//   ③ arm→complete 实测间隔必须 ≤ 1000ms（窗口长度），超窗即弃（上一批 6 次全在 ~1400ms ⇒ 弃）。
+// 分母 = 三条同时成立的轮数；分子 = 其中出现 `hot push yielded on input` 的轮数。
+const revLine = /^.*ops-trace\] (hot push landed|push landed|deferred push landed).*?rev=(\d+)/;
+
+const writeRevs = (lines) => {
+  const out = [];
+  lines.forEach((l, i) => {
+    const m = l.match(revLine);
+    if (m !== null) out.push({ idx: i, rev: Number(m[2]), kind: m[1] === 'deferred push landed' ? 'deferred' : (m[1] === 'hot push landed' ? 'hot' : 'both') });
+  });
+  return out;
+};
+
+// 轻量的提交/打字：burst2 的关键路径上不能有额外的 evaluate 往返（实测 composerSend 的
+// 回读自证会把 arm→complete 拖到 ~1400ms，直接超窗）
+const pressEnter = (page) => page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' })
+  .then(() => page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }));
+
+/**
+ * 关键路径上的提交：逐字符发 keyDown + **char** + keyUp（只发 keyDown/keyUp 不插字，
+ * 而 `Input.insertText` 单独用在 Lexical 上不进状态 —— burst2 第一轮就是这么「提交成功、
+ * 其实没提交」，token 零命中暴露了它）。
+ * 返回 `draftLen`：回车**之前**草稿长度，作为「这次提交确实把内容交给了宿主」的非循环证据
+ *（热表脏不脏不能靠「之后有没有写」倒推 —— 那和分子是同一件事）。
+ */
+const quickSend = async (page, text) => {
+  const focused = await page.evaluate(`(() => { const c = window.__gy.composer(); if (c === null) return false; c.focus(); return true; })()`);
+  if (!focused) return { ok: false, draftLen: -1 };
+  await page.send('Input.insertText', { text });
+  const draftLen = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length)`);
+  await pressEnter(page);
+  const cleared = await page.evaluate(`(() => (window.__gy.composer()?.textContent ?? '').length === 0)`);
+  return { ok: true, draftLen, cleared };
+};
+
+/** 会话空闲判据：发送按钮可用。忙的时候 GUI 会把消息排进 agent inbox ⇒ 「提交」不成立。 */
+const waitIdle = async (page, ms = 4000) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const idle = await page.evaluate(`(() => {
+      const b = window.__gy.byText('发送消息') ?? window.__gy.byText('发送');
+      if (b === null) return null;
+      return b.disabled === false;
+    })()`);
+    if (idle === true) return true;
+    if (idle === null) return true;
+    await sleep(150);
+  }
+  return false;
+};
+
+const quickType = async (page, text) => {
+  await page.evaluate(`(() => { const c = window.__gy.composer(); if (c !== null) c.focus(); return c !== null; })()`);
+  await page.send('Input.insertText', { text });
+};
+
+const ensureComposer = async (page) => {
+  for (let k = 0; k < 6; k += 1) {
+    const has = await page.evaluate(`(() => { const c = window.__gy.composer(); return c !== null && (c.dataset.phase ?? '') !== 'inert'; })()`);
+    if (has) return true;
+    await page.evaluate(`(async () => {
+      const G = window.__gy;
+      const b = G.byText('新会话') ?? G.byText('新建会话');
+      if (b !== null) { b.click(); await G.wait(900); }
+    })()`);
+  }
+  return false;
+};
+
+const burst2 = async (page, tally, read) => {
+  const uniq = (tag) => `${tag}${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+  const hotCellHas = (token) => {
+    try {
+      const t = readFileSync(join(SANDBOX, 'profiles', 'web', 'cordis.patch.yml'), 'utf8');
+      const m = t.match(/^    _hot: '([\s\S]*?)'\n(?=    [a-z_-]+:|- id:|  config:)/m);
+      if (m === null) return false;
+      // ⚠️ YAML 会把长单引号标量**折行**（行首补缩进）⇒ 直接 includes 会跨行漏检。
+      //    折回一行再找 —— 上一批「token 零命中」有多少是真没提交、有多少是我这方法漏检，
+      //    必须先分清，不然我把度量误差当成了被测对象的行为。
+      const flat = m[1].replace(/\n\s*/g, ' ');
+      return flat.includes(token);
+    } catch { return false; }
+  };
+  const rows = [];
+  const base = tally();
+  for (let k = 1; k <= ROUNDS; k += 1) {
+    if (!(await ensureComposer(page))) { rows.push({ round: k, gate: 'composer 不在' }); say(`轮 ${k}：composer 不在，弃这轮`); continue; }
+    const tokA = uniq('甲'), tokB = uniq('乙');
+    // ① 先造一次脏：提交 tokA（宿主在提交那一刻改热表，且**不**推送）
+    const idleA = await waitIdle(page);
+    const sA = await quickSend(page, `测 ${tokA}`);
+    await sleep(120);
+    // ② 我明确发起的 arm：点「新会话」⇒ mount ⇒ pull ⇒ 带 rev 的热度写
+    const revBeforeList = writeRevs(read());
+    const revBefore = revBeforeList.length > 0 ? revBeforeList[revBeforeList.length - 1].rev : -1;
+    await page.evaluate(`(() => { const G = window.__gy; const b = G.byText('新会话') ?? G.byText('新建会话'); if (b !== null) b.click(); return b !== null; })()`);
+    let arm = null; const tArmStart = Date.now();
+    while (Date.now() - tArmStart < 20000) {
+      const list = writeRevs(read());
+      const last = list[list.length - 1];
+      if (last !== undefined && last.rev > revBefore) {
+        // 归因检查：这次写之前紧邻的 op 行必须是 pull（我点出来的那次）
+        const between = read().slice((list[list.length - 2]?.idx ?? -1) + 1, last.idx);
+        arm = { ...last, pullBefore: between.some((l) => l.includes('ops consumed: pull')), gapFromClick: Date.now() - tArmStart };
+        break;
+      }
+      await sleep(60);
+    }
+    if (arm === null) { rows.push({ round: k, gate: '等 arm 超时' }); say(`轮 ${k}：等 arm 超时`); continue; }
+    const armAt = Date.now();
+    // ③ arm 之后**立刻**再弄脏一次（tokB），然后打字 + 停顿 ⇒ complete
+    const idleB = await waitIdle(page, 2500);
+    const sB = await quickSend(page, `测 ${tokB}`);
+    await quickType(page, 'ababab');
+    const typeGap = Date.now() - armAt;
+    await sleep(2200);
+    const lines = read();
+    const list = writeRevs(lines);
+    const writesAfterArm = list.filter((w) => w.idx > arm.idx);
+    const yieldIdx = lines.findIndex((l, i) => i > arm.idx && l.includes('hot push yielded on input'));
+    // 归因四条件：arm 是我点出来的那次 pull、complete 落在 1000ms 窗口内、
+    // 窗口内没有第三者插写、**且造脏那次提交真的发生了**（回车前草稿非空）
+    const landedB = hotCellHas(tokB);
+    const attributable = arm.pullBefore === true && typeGap <= 1000 && writesAfterArm.length <= 2
+      && sB.ok === true && sB.draftLen > 0 && sB.cleared === true;
+    const row = {
+      round: k, armRev: arm.rev, pullBefore: arm.pullBefore, typeGap,
+      writesAfterArm: writesAfterArm.length, yielded: yieldIdx >= 0, draftB: sB.draftLen, draftA: sA.draftLen,
+      attributable, landed: landedB, landedA: hotCellHas(tokA),
+      idleA, idleB, clearedB: sB.cleared, clearedA: sA.cleared,
+    };
+    rows.push(row);
+    say(`轮 ${String(k).padStart(2)}：arm rev=${row.armRev}（紧邻 pull=${row.pullBefore ? '✓' : '✗'}） `
+      + `arm→complete=${typeGap}ms${typeGap <= 1000 ? '（窗口内）' : '（**超窗，弃**）'} `
+      + `其后写=${row.writesAfterArm} 让路=${row.yielded ? '✓' : '—'} ⇒ 可归因=${row.attributable ? '是' : '否'} `
+      + `落地含本轮独有 token=${row.landed ? '✓' : '✗'}`);
+  }
+  const now = tally();
+  const den = rows.filter((r) => r.attributable === true).length;
+  const num = rows.filter((r) => r.attributable === true && r.yielded === true).length;
+  say('\n=== burst2 汇总（rev 对齐归因）===');
+  say(`轮数 = ${rows.length}；可归因（分母）= ${den}；其中真的让路（分子）= ${num}`);
+  say(`比例 = ${den === 0 ? 'n/a（没有一轮可归因 ⇒ 报比例就是拿推断当通过）' : `${num}/${den} = ${(num / den).toFixed(2)}`}`);
+  // 逐条报「哪个条件没成立」——上一版这里把所有失败都归到最后一个判据上，是错的
+  const whyNot = (r) => {
+    if (r.gate !== undefined) return r.gate;
+    const bad = [];
+    if (r.pullBefore !== true) bad.push('arm 不是我的 pull');
+    if ((r.typeGap ?? 9999) > 1000) bad.push('complete 超窗');
+    if ((r.writesAfterArm ?? 0) > 2) bad.push(`窗口内有 ${r.writesAfterArm} 次第三者写`);
+    if (r.idleB !== true) bad.push('会话忙（提交会被排进 inbox）');
+    if (r.clearedB !== true) bad.push('回车后草稿没清空 ⇒ 没真提交');
+    if ((r.draftB ?? 0) <= 0) bad.push('打字没进草稿');
+    return bad.length > 0 ? bad.join('+') : '未知';
+  };
+  say(`不可归因的构成：${JSON.stringify(rows.filter((r) => r.attributable !== true).map((r) => ({ 轮: r.round, 原因: whyNot(r) })))}`);
+  say(`每轮的「提交是否真发生」：${JSON.stringify(rows.map((r) => ({ 轮: r.round, A: r.clearedA, B: r.clearedB })))}`);
+  const landedYes = rows.filter((r) => r.landed === true).length;
+  say(`第 3 项：可归因轮里「落地内容含本轮独有 token」= ${landedYes}/${den}`);
+  say(`性质现场再核对：让路行增量 = ${now.yielded - base.yielded}，热度写增量 = ${now.hot - base.hot} ⇒ `
+    + `${now.yielded - base.yielded <= now.hot - base.hot ? '成立' : '**不成立（要报）**'}`);
+  say(`全量计数：${JSON.stringify(now)}`);
+};
+
 // ── 主流程 ─────────────────────────────────────────────────────────────────
 const ctx = {};
 let page = null;
@@ -594,6 +767,13 @@ try {
       pull: lines.filter((l) => l.includes('ops consumed: pull')).length,
     };
   };
+  if (flag('burst2')) {
+    await openPage(page);
+    if (!(await ensureComposer(page))) say('!! composer 不在主视图（先试着拉回来）');
+    await burst2(page, tally, read);
+    await cleanup();
+    process.exit(0);
+  }
   if (flag('burst')) {
     // ⚠️ 上一轮两次 60s 超时的真因：页面被留在**插件详情页**，那里 composer 元素虽然还在
     // （phase=plain）但**没有被 attach** ⇒ 打字与回车根本进不了宿主。先把主视图拉回来，
