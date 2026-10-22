@@ -388,43 +388,95 @@ function main() {
   /**
    * 工作区体检：是不是本沙箱建的、干净不干净、有没有凭据副本。
    *
-   * **两道闸**（#72 的硬要求：不许删别人的工作区）：
-   *  ① 「确实是本沙箱建的」：有本脚本写的标记文件，或**空 git 仓签名**（无提交、无远端、
-   *     工作树里没有别的文件）——后者正是 #72 之前那个旧脚本留下的形状（只 mkdir + git init）。
-   *  ② 「干净」：`git status --porcelain` 为空（**标记文件本身不算脏**）。
-   * 另外：工作区里**有提交**或**含凭据副本** ⇒ 也不自动删（前者里面可能有别人的工作，
-   * 后者按「确认无凭据再删」的口径交给人）。
+   * **三道闸**（#72 的硬要求：不许删别人的工作区）：
+   *  ① 「确实是本沙箱建的」：有本脚本写的标记文件，或**空仓签名**。
+   *  ② 「干净」：`git status --porcelain` 为空（**只有同名**的标记文件不算脏）。
+   *  ③ 「里面没有别人的东西」：无提交历史、无远端、无凭据副本。
+   *
+   * ⚠️ **fail-closed**：任何**查不出来**的情况一律判「无法确认 ⇒ 拒绝删除」，**绝不**
+   * 当成「干净」。上一版把 `git status` 抛错读成「工作树里没有别的文件」⇒ index.lock /
+   * 索引损坏 / 权限问题会把「没检查成」变成「检查通过」——删的可是带凭据副本的目录，
+   * 这种方向错不得（fail-open ⇒ 删掉别人的东西；fail-closed ⇒ 最多多留一个目录）。
+   * ⇒ 「空仓签名」因此改用**文件系统**判定（目录里**只有** `.git` 外加可选的标记文件
+   * 才算空），这与判据的字面意思一致；「有提交」也改用文件系统判定（`refs/heads` 或
+   * `packed-refs`），不拿 git 的失败当「没有」。
    */
   const inspectWorkspace = (dir) => {
     const info = {
-      dir, exists: false, ours: false, clean: false, hasCommit: false,
-      why: '', dirty: [], credentialFiles: [], credentialKeys: [],
+      dir, exists: false, ours: false, clean: false, hasCommit: false, hasRemote: false,
+      unverifiable: false, deletable: false, why: '', dirty: [], credentialFiles: [], credentialKeys: [],
     };
     if (!lstatSafe(dir)) return info;
     info.exists = true;
-    const isRepo = (() => {
-      try { execFileSync('git', ['-C', dir, 'rev-parse', '--git-dir'], { stdio: 'ignore' }); return true; }
+    // ── 文件系统事实：目录里到底有什么（readdir 失败 ⇒ 无法确认 ⇒ 拒）──
+    let entries = null;
+    try { entries = readdirSync(dir); } catch { entries = null; }
+    if (entries === null) {
+      info.unverifiable = true;
+      info.why = '目录读不出来（权限？）⇒ 无法确认，拒绝删除';
+      return info;
+    }
+    const gitPath = join(dir, '.git');
+    let gitStat = null;
+    try { gitStat = lstatSync(gitPath); } catch { gitStat = null; }
+    if (gitStat !== null && !gitStat.isDirectory()) {
+      info.unverifiable = true;
+      info.why = '`.git` 是文件（worktree 指针）⇒ 里面可能连着别的仓，不删';
+      return info;
+    }
+    const hasMarker = lstatSafe(join(dir, WS_MARKER));
+    // 「空仓签名」：**只有** `.git`（外加可选的标记文件）⇒ 别的什么都不算。
+    const others = entries.filter((n) => n !== '.git' && n !== WS_MARKER);
+    const emptyByFs = others.length === 0;
+    // ── git 的回答：**失败 = 无法确认**，不是「干净」 ──
+    let isRepo = true;
+    try { execFileSync('git', ['-C', dir, 'rev-parse', '--git-dir'], { stdio: 'ignore' }); }
+    catch { isRepo = false; }
+    if (!isRepo) {
+      info.unverifiable = true;
+      info.why = '不是 git 仓（无法确认是本沙箱建的）⇒ 不删';
+      return info;
+    }
+    let porcelain = null;
+    try { porcelain = execFileSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' }); }
+    catch { porcelain = null; }
+    if (porcelain === null) {
+      info.unverifiable = true;
+      info.why = 'git 检查失败（index.lock / 索引损坏 / 权限？）⇒ 无法确认，拒绝删除';
+      return info;
+    }
+    // porcelain 的行是 `XY <path>`；**只**放过 basename **正好**是标记文件的那一个
+    // （用 endsWith 会连带放过 `foo.dsh-sandbox-ws` 这种别的路径 ⇒ 与原意不符）。
+    const pathOf = (line) => {
+      const body = line.slice(3).trim();
+      const arrow = body.split(' -> ');
+      return (arrow[arrow.length - 1] ?? body).replace(/^"|"$/g, '');
+    };
+    info.dirty = porcelain.split('\n').filter((l) => l.trim() !== '').filter((l) => pathOf(l).split('/').pop() !== WS_MARKER);
+    info.clean = info.dirty.length === 0;
+    // 「有提交历史」「有远端」：同样用文件系统判定（refs/heads、packed-refs、config）。
+    info.hasCommit = (() => {
+      try { if (readdirSync(join(gitPath, 'refs', 'heads')).some((n) => n.trim() !== '')) return true; } catch { /* 没有 */ }
+      try {
+        return readFileSync(join(gitPath, 'packed-refs'), 'utf8').split('\n').some((l) => l.trim() !== '' && !l.startsWith('#'));
+      } catch { return false; }
+    })();
+    info.hasRemote = (() => {
+      try { return readFileSync(join(gitPath, 'config'), 'utf8').split('\n').some((l) => /^\s*\[remote\s/.test(l)); }
       catch { return false; }
     })();
-    if (!isRepo) { info.why = '不是 git 仓（无法确认是本沙箱建的）'; return info; }
-    const hasMarker = lstatSafe(join(dir, WS_MARKER));
-    let porcelain = '';
-    try { porcelain = execFileSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' }); } catch { porcelain = ''; }
-    info.dirty = porcelain.split('\n').filter((l) => l.trim() !== '' && !l.trim().endsWith(WS_MARKER));
-    try { execFileSync('git', ['-C', dir, 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore' }); info.hasCommit = true; } catch { info.hasCommit = false; }
-    let remotes = 0;
-    try { remotes = execFileSync('git', ['-C', dir, 'remote'], { encoding: 'utf8' }).split('\n').filter((l) => l.trim() !== '').length; } catch { remotes = 0; }
-    info.ours = hasMarker || (!info.hasCommit && remotes === 0 && info.dirty.length === 0);
-    info.clean = info.dirty.length === 0;
     for (const f of CREDENTIAL_FILES) {
       if (!lstatSafe(join(dir, f))) continue;
       info.credentialFiles.push(f);
       info.credentialKeys.push(...credentialKeyNames(join(dir, f)));
     }
-    if (!info.ours) info.why = '不像本沙箱建的（既没有本脚本的标记，也不是空 git 仓）';
+    info.ours = hasMarker || emptyByFs;
+    if (!info.ours) info.why = '不像本沙箱建的（既没有本脚本的标记，目录里也不止 .git）';
     else if (!info.clean) info.why = `有未提交内容（${info.dirty.slice(0, 3).join(' ')}${info.dirty.length > 3 ? ' …' : ''}）`;
     else if (info.hasCommit) info.why = '有提交历史（里面可能有别人的工作）';
+    else if (info.hasRemote) info.why = '配了远端（里面可能连着别人的仓）';
     else if (info.credentialFiles.length > 0) info.why = `含凭据副本 ${info.credentialFiles.join(', ')}（键名 ${info.credentialKeys.join(',') || '无'}）⇒ 人工确认后再删`;
+    info.deletable = info.ours && info.clean && !info.hasCommit && !info.hasRemote && info.credentialFiles.length === 0;
     return info;
   };
 
@@ -462,6 +514,9 @@ function main() {
    */
   const cleanupSandbox = () => {
     console.log('');
+    // 护栏先行：**在停实例与任何删除之前**先证明「要删的是沙箱自己的目录」。
+    // 放晚了就成了「先删了工作区、再发现沙箱目录不该删」——那已经删出去了。
+    assertHomeIsDeletable();
     say('收尾：停实例 → 体检工作区 → 删沙箱目录 → 残留自检');
     const pids = pidsOfHome(HOME_);
     let killed = 0;
@@ -480,6 +535,7 @@ function main() {
         say(`⚠ 工作区 ${info.dir} 未删：${info.why}`);
         continue;
       }
+      assertDeletablePath(info.dir, '工作区');
       rmSync(info.dir, { recursive: true, force: true });
       say(`已删工作区 ${info.dir}`);
     }
@@ -492,7 +548,7 @@ function main() {
         + ' ⇒ 删它等于删掉别人的工作区；处理掉那个工作区再跑一次收尾');
     } else if (lstatSafe(HOME_)) {
       rmSync(HOME_, { recursive: true, force: true });
-      say(`已删沙箱目录 ${HOME_}（里面有一份 .credentials.yaml 凭据副本）`);
+      say(`已删沙箱目录 ${HOME_}（里面是**沙箱自带的凭据副本**，与 ~/.dsh/.credentials.yaml 无关——那份未动）`);
     } else {
       say(`沙箱目录 ${HOME_}：不存在（无需处理）`);
     }
@@ -502,11 +558,54 @@ function main() {
     return refused > 0 ? 1 : 0;
   };
 
+  /**
+   * 删除前的护栏（fail-closed）：只允许删「沙箱自己的」路径。
+   *
+   * `--cleanup` 是本 PR **新增**的一条以「删除」为名的路径 ⇒ 它有权删东西，就必须先证明
+   * 删的是沙箱自己的目录。任一条不满足 ⇒ **直接 die，一个字都不删**：
+   *  - 不是主目录本身、不是 `~/.dsh`、也不是 `~/.dsh` 的**祖先**目录（`~`、`/`……）
+   *  - 不是仓库目录（自身带 `.git` 的也算）
+   *  - 形状对：要么是 `--home` **显式给出**的，要么**正好等于**默认的 `~/dsh-sbx-<entry>`
+   */
+  const assertDeletablePath = (target, what) => {
+    const t = resolve(target);
+    const homeDir = resolve(homedir());
+    const live = resolve(join(homeDir, '.dsh'));
+    const repoDir = resolve(REPO);
+    const problems = [];
+    if (t === homeDir) problems.push('它就是主目录本身');
+    if (t === live) problems.push('它是 live 宿主的 ~/.dsh');
+    if (live.startsWith(t + sep)) problems.push('它是 ~/.dsh 的祖先目录（live 的状态在它下面）');
+    if (t === repoDir) problems.push('它是仓库目录');
+    if (problems.length > 0) {
+      die(`拒绝删除${what} ${t}：${problems.join('；')}\n`
+        + '      沙箱目录必须是「--home 显式给出的」或「正好等于默认的 ~/dsh-sbx-<entry>」那种专用目录，\n'
+        + '      且不得是主目录、~/.dsh（含其祖先）或仓库目录。');
+    }
+    return t;
+  };
+
+  /** 沙箱目录专属的那一条：在通用护栏之外，还要「形状对」。 */
+  const assertHomeIsDeletable = () => {
+    const t = assertDeletablePath(HOME_, '沙箱目录');
+    // 沙箱目录自己带 .git ⇒ 它是个仓库目录（不是沙箱）⇒ 拒。
+    // ⚠️ 这条**只对沙箱目录**成立：工作区**本来就**是个 git 仓（脚本 git init 出来的）。
+    if (lstatSafe(join(t, '.git'))) die(`拒绝删除沙箱目录 ${t}：它自己带 .git（是个仓库目录，不是沙箱目录）。`);
+    const explicit = opt('home', '') !== '';
+    const defaultHome = resolve(join(resolve(homedir()), `dsh-sbx-${short}`));
+    if (!explicit && t !== defaultHome) {
+      die(`拒绝删除沙箱目录 ${t}：它既不是 --home 显式给出的，也不是默认的 ${defaultHome}。`);
+    }
+    return t;
+  };
+
   if (flag('cleanup')) process.exit(cleanupSandbox());
   if (flag('residual')) { console.log(''); residualReport(); process.exit(0); }
 
   let entryId = entryCfg;
   if (!flag('deploy')) {
+    // 护栏：删沙箱目录前先证明「删的是沙箱自己的目录」（fail-closed，见 assertDeletablePath）。
+    assertHomeIsDeletable();
     rmSync(HOME_, { recursive: true, force: true });
     mkdirSync(PROFILE, { recursive: true });             // 漏了它，copyFileSync 直接 ENOENT
     mkdirSync(join(HOME_, 'logs'), { recursive: true }); // 建错位置会让启动崩在 spawn 之后
