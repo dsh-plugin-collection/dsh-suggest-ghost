@@ -102,6 +102,11 @@ export function lastCompletedTurnInLog(session: Session): number {
  *
  *  - `no-persisted-payload`：盘上根本没有残留载荷（正常态）。
  *  - `corrupt-payload`：盘上有载荷但结构不合法（上个进程写坏了 / 被人手改过）。
+ *  - `empty-text`：载荷**结构完全合法，只是正文为空**（`text === ''`）。以前这一档借用
+ *    `corrupt-payload`，于是读到它的人会去怀疑写盘路径 —— 而那笔写根本没坏，盘上也没有坏
+ *    字节（实测被误导过一次：手写一份 `text:""` 的终帧进 profile，留痕打的就是
+ *    `reason=corrupt-payload`，见 docs/real-session-harness.md §10 与 #73）。
+ *    **分档而不是改名**：`corrupt-payload` 留给真损坏，这个词已被沙箱日志与文档检索过。
  *  - `session-mismatch`：载荷里的建议**无法归属**到会话（缺 `suggestionSessionId`），
  *    或它属于**另一个**会话（用户切了会话）——此时不恢复、不 track、**不动盘**。
  *  - `session-unavailable`：会话尚未进店（宿主的持久化懒恢复未发生）⇒ 无从判新旧，
@@ -113,10 +118,32 @@ export function lastCompletedTurnInLog(session: Session): number {
 export type PersistedPushSkipReason =
   | 'no-persisted-payload'
   | 'corrupt-payload'
+  | 'empty-text'
   | 'session-mismatch'
   | 'session-unavailable'
   | 'stale-turn'
   | 'superseded';
+
+/**
+ * `parsePersistedPush` 的返回值。
+ *
+ * `emptyText` 是「结构全都合法、**只有正文为空**」这件事的**数据形态**：由结构校验那一处
+ * 报出来（不在上层重判 ⇒ 不会出现第二套口径），`decidePersistedPush` 只负责把它映射成
+ * reason。`_push` 与 `_residual` 共用这条链 ⇒ 同一档（要求 2）。
+ */
+export type ParsedPersistedPush = {
+  readonly suggestion: SuggestGhostSuggested | null;
+  readonly sessionId: string | null;
+  /** 非 null = 载荷结构合法、正文为空（带定位用的 turn/baseSeq）；其余情况为 null。 */
+  readonly emptyText: { readonly turn: number; readonly baseSeq: number } | null;
+};
+
+/** 「跳过」时的定位信息：正文为空这一档没有建议对象，但留痕仍要说清是哪一条。 */
+export type PersistedPushLocation = {
+  readonly turn: number;
+  readonly baseSeq: number;
+  readonly chars: number;
+};
 
 /** 一次回读判定的结论。 */
 export type PersistedPushVerdict =
@@ -132,6 +159,12 @@ export type PersistedPushVerdict =
       /** 解析得出来的建议（载荷损坏/无法归属时为 null）——留痕要带 turn/baseSeq/字符数。 */
       readonly suggestion: SuggestGhostSuggested | null;
       readonly sessionId: string | null;
+      /**
+       * 没有建议对象**但仍有定位信息**时（`empty-text`）用：正文为空 ⇒ `suggestion` 是
+       * null，旧写法留痕里 turn/baseSeq/chars 全打成 `n/a`，等于把「是哪一条」这个信息
+       * 丢了。这一档恰恰是最需要定位的（盘上确实躺着一条有会话、有回合、没内容的载荷）。
+       */
+      readonly location?: PersistedPushLocation | null;
     };
 
 /**
@@ -163,9 +196,9 @@ export function decidePersistedPush(
   if (!present) {
     return { action: 'skip', reason: 'no-persisted-payload', suggestion: null, sessionId: null };
   }
-  // 先自己判「盘上这一坨是不是连 JSON 都不是」：`parsePersistedPush` 对「JSON 坏了」
-  // 与「JSON 合法但没有会话 id」都返回 {suggestion:null, sessionId:null}，而这两种的
-  // 处置不同（前者是载荷损坏，后者是无法归属），留痕必须分清。
+  // 先自己判「盘上这一坨是不是连 JSON 都不是」：`parsePersistedPush` 对「JSON 坏了」与
+  // 「JSON 合法但没有会话 id」都给出 `suggestion:null`（两者 `emptyText` 也都是 null），
+  // 而这两种的处置不同（前者是载荷损坏，后者是无法归属），留痕必须分清。
   let record: Record<string, unknown> | null = null;
   try {
     const value: unknown = JSON.parse(raw);
@@ -176,12 +209,25 @@ export function decidePersistedPush(
   }
   const parsed = parsePersistedPush(raw);
   if (parsed.suggestion === null) {
-    // JSON 合法但解析不出建议：会话 id 缺失 ⇒ 无法归属；会话 id 在但建议字段不合法
-    // ⇒ 载荷坏了。两者处置相同（不恢复），但**留痕必须分清**，否则「载荷损坏」会被
-    // 误读成「归属不上」。
-    return parsed.sessionId === null
-      ? { action: 'skip', reason: 'session-mismatch', suggestion: null, sessionId: null }
-      : { action: 'skip', reason: 'corrupt-payload', suggestion: null, sessionId: parsed.sessionId };
+    // JSON 合法但解析不出建议，三档必须分清（处置相同：不恢复、不动盘）：
+    //  1. 会话 id 缺失 ⇒ 无法归属（`session-mismatch`）。**优先级保持原样**：这一条先看，
+    //     否则「归属不上的空正文」会从旧档漂到新档。
+    //  2. 结构全都合法、只有正文为空 ⇒ `empty-text`（#73）。以前它落在第 3 档，读的人
+    //     会以为盘上字节坏了、去怀疑写盘路径；这里把它分出来，并带上定位信息。
+    //  3. 其余（字段类型不对等）⇒ `corrupt-payload`，词不变。
+    if (parsed.sessionId === null) {
+      return { action: 'skip', reason: 'session-mismatch', suggestion: null, sessionId: null };
+    }
+    if (parsed.emptyText !== null) {
+      return {
+        action: 'skip',
+        reason: 'empty-text',
+        suggestion: null,
+        sessionId: parsed.sessionId,
+        location: { turn: parsed.emptyText.turn, baseSeq: parsed.emptyText.baseSeq, chars: 0 },
+      };
+    }
+    return { action: 'skip', reason: 'corrupt-payload', suggestion: null, sessionId: parsed.sessionId };
   }
   const suggestion = parsed.suggestion;
   const sessionId = parsed.sessionId;
@@ -206,11 +252,8 @@ export function decidePersistedPush(
  * @param raw - `_push` 字段的 JSON 字符串（'null' = 无）。
  * @returns 结构合法的建议与其会话 id；无建议时 suggestion 为 null。
  */
-export function parsePersistedPush(raw: string | undefined): {
-  readonly suggestion: SuggestGhostSuggested | null;
-  readonly sessionId: string | null;
-} {
-  const noSuggestion = (sessionId: string | null) => ({ suggestion: null, sessionId }) as const;
+export function parsePersistedPush(raw: string | undefined): ParsedPersistedPush {
+  const noSuggestion = (sessionId: string | null) => ({ suggestion: null, sessionId, emptyText: null }) as const;
   if (typeof raw !== 'string' || raw === '' || raw === 'null') return noSuggestion(null);
   let parsed: unknown;
   try {
@@ -231,7 +274,15 @@ export function parsePersistedPush(raw: string | undefined): {
   const nonNegativeInt = (value: unknown): value is number =>
     typeof value === 'number' && Number.isInteger(value) && value >= 0;
   if (!nonNegativeInt(s.turn) || !nonNegativeInt(s.baseSeq)) return noSuggestion(sessionId);
-  if (typeof s.text !== 'string' || s.text === '') return noSuggestion(sessionId);
+  // 「正文为空」与「正文类型不对」是**两件事**（#73）：前者结构完全合法，只是没有内容；
+  // 后者才是盘上那一份不可信。两者都构不成建议（处置一致：不恢复、不动盘），但**归因必须
+  // 分开**，且这个区分只能在这里做——上层再判一次就等于第二套口径（两套校验必然会漂）。
+  // 所以这里把「只有正文为空」当**数据**报出去（`emptyText`），由 `decidePersistedPush`
+  // 映射成 reason，`_push` 与 `_residual` 两格共用同一条判定链 ⇒ 同一档。
+  if (typeof s.text !== 'string') return noSuggestion(sessionId);
+  if (s.text === '') {
+    return { suggestion: null, sessionId, emptyText: { turn: s.turn, baseSeq: s.baseSeq } };
+  }
   if (typeof s.truncated !== 'boolean') return noSuggestion(sessionId);
   if (typeof s.acceptKey !== 'string' || s.acceptKey === '') return noSuggestion(sessionId);
   // 帧语义（#39）：这里的重建是**逐字段白名单**，不写下面两行就等于把 frame/final
@@ -257,6 +308,7 @@ export function parsePersistedPush(raw: string | undefined): {
       final,
     },
     sessionId,
+    emptyText: null,
   };
 }
 

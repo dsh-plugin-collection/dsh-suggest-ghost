@@ -447,10 +447,90 @@ await section(6, '懒恢复补判：会话启动后才进店 → 第一次 pull 
   await root[Symbol.asyncDispose]?.();
 });
 
+// —— 7. 「正文为空」与「载荷损坏」分归因（#73）——
+//
+// 沙箱实测（docs/real-session-harness.md §10）：手写一份 `text:""` 的终帧进 profile，
+// 留痕打的是 `reason=corrupt-payload` —— 那是「盘上载荷坏了」的意思，读的人会去怀疑写盘
+// 路径，而那笔写根本没坏：载荷结构完全合法，只是**没有正文**。这一小节钉三件事：
+//  ① 空正文走自己的档（`empty-text`），且**行为不变**（不恢复、不动盘）；
+//  ② 真损坏保持 `corrupt-payload`（不改名，旧留痕的检索习惯要保住）；
+//  ③ `_residual` 那一格同形 ⇒ 判成**同一档**，不许出现两套口径。
+await section(7, '空正文与真损坏分归因：留痕可区分、行为不变、两格同口径', async () => {
+  /** 结构完全合法、只有正文为空的终帧（属于本会话，回合 2 = 最后已完成回合）。 */
+  const emptyTextPush = JSON.stringify({
+    rev: 9,
+    suggestion: { version: 1, turn: 2, baseSeq: 3, text: '', truncated: false, acceptKey: 'Tab', frame: 1, final: true },
+    suggestionSessionId: SESSION,
+  });
+  /** 真损坏：同一条建议，只把 text 换成数字。 */
+  const damagedPush = JSON.stringify({
+    rev: 9,
+    suggestion: { version: 1, turn: 2, baseSeq: 3, text: 42, truncated: false, acceptKey: 'Tab', frame: 1, final: true },
+    suggestionSessionId: SESSION,
+  });
+
+  /**
+   * 按窗口取留痕。`globalThis.__ghostTrace` 是**跨小节累积**的全局缓冲，直接 filter 会把
+   * 前六小节打的 `persisted push skipped` 一起捞进来（第一版就这么红过一次：红在夹具上
+   * 而不是红在判据上，那种红没有价值）。所以每次 boot 前记起点，只断言这之后的行。
+   */
+  const traceWindow = () => {
+    const from = tracedFromApply().length;
+    return (marker) => {
+      const hit = tracedFromApply().slice(from).filter((l) => l.includes(marker));
+      assert.equal(hit.length, 1, `${marker} 在本次窗口内应当恰好一行，实得 ${JSON.stringify(hit)}`);
+      return hit[0];
+    };
+  };
+
+  // ① 空正文 ⇒ empty-text，且定位信息齐（会话 / turn / baseSeq / 字符数），**不打正文**。
+  const win1 = traceWindow();
+  const m1 = makeMedium({ 'suggest-ghost': { _push: emptyTextPush, _ops: 'null' } });
+  const p1 = await bootProcess(m1, { sessionId: SESSION, turns: 2, userTexts: ['第一句', '第二句'] });
+  const line1 = win1('persisted push skipped source=startup');
+  console.log(`     空正文留痕：${line1.slice(line1.indexOf('persisted'))}`);
+  assert.match(line1, /reason=empty-text/, `空正文必须走自己的档：${line1}`);
+  assert.ok(!/corrupt-payload/.test(line1), '不许再借道「载荷损坏」');
+  assert.match(line1, /turn=2/, '定位：turn');
+  assert.match(line1, /baseSeq=3/, '定位：baseSeq');
+  assert.match(line1, /chars=0/, '定位：字符数（空正文 = 0，旧写法这里全是 n/a）');
+  assert.match(line1, new RegExp(`session=${SESSION}`), '定位：会话');
+  assert.ok(!line1.includes('Tab'), '留痕不得把 acceptKey 之类的正文内容抄进去');
+  // 行为不变：不恢复、**不动盘**（既不重写也不清空）。
+  assert.equal(pushWrites(m1).length, 0, '空正文那一档不得动建议格');
+  assert.equal(p1.captured.scope.get()._push, emptyTextPush, '盘上载荷原样留着（归因改了，处置没改）');
+  await p1.root[Symbol.asyncDispose]?.();
+
+  // ② 真损坏 ⇒ 仍然 corrupt-payload，且两行留痕**逐字不同**（这才是检索得开的依据）。
+  const win2 = traceWindow();
+  const m2 = makeMedium({ 'suggest-ghost': { _push: damagedPush, _ops: 'null' } });
+  const p2 = await bootProcess(m2, { sessionId: SESSION, turns: 2, userTexts: ['第一句', '第二句'] });
+  const line2 = win2('persisted push skipped source=startup');
+  console.log(`     真损坏留痕：${line2.slice(line2.indexOf('persisted'))}`);
+  assert.match(line2, /reason=corrupt-payload/, `真损坏必须保持旧词（改名会废掉既有检索习惯）：${line2}`);
+  assert.notEqual(line1, line2, '两类留痕必须逐字不同');
+  assert.equal(pushWrites(m2).length, 0, '真损坏同样不动盘（本次只改归因，不改处置）');
+  await p2.root[Symbol.asyncDispose]?.();
+
+  // ③ 同一个空正文载荷搬到 `_residual` 那一格 ⇒ 必须判成**同一档**（不许两套口径）。
+  //    `_push` 置空，确保被判的就是残留格自己（两格都空时才是「无残留」）。
+  const residualCell = JSON.stringify({
+    suggestion: { version: 1, turn: 2, baseSeq: 3, text: '', truncated: false, acceptKey: 'Tab', frame: 1, final: true },
+    suggestionSessionId: SESSION,
+  });
+  const win3 = traceWindow();
+  const m3 = makeMedium({ 'suggest-ghost': { _push: 'null', _residual: residualCell, _ops: 'null' } });
+  const p3 = await bootProcess(m3, { sessionId: SESSION, turns: 2, userTexts: ['第一句', '第二句'] });
+  const line3 = win3('persisted push skipped source=startup');
+  console.log(`     残留格同档留痕：${line3.slice(line3.indexOf('persisted'))}`);
+  assert.match(line3, /reason=empty-text/, `_residual 里的空正文必须与建议格同一档：${line3}`);
+  await p3.root[Symbol.asyncDispose]?.();
+});
+
 console.log('');
 if (failures.length > 0) {
   const labeled = failures.map((f) => `小节 ${f.no}${f.knownIssue ? `（已知缺陷 #${f.knownIssue}）` : '（未预期）'}`);
-  console.error(`❌ coldstart e2e：${failures.length} / 6 小节红 —— ${labeled.join('、')}`);
+  console.error(`❌ coldstart e2e：${failures.length} / 7 小节红 —— ${labeled.join('、')}`);
   console.error('   红的小节不要用放宽断言换绿：小节 2 验的是「重启恢复盘上残留建议」这条产品语义，'
     + '它在 c3b6a80（0.1.7 volatile 适配）里随 `parsePersistedPush(scope.get()._push)` 一起被删掉、之后没接回来（#50）。');
   console.error('   另注：小节 3 现在是绿的，但它绿的原因是「压根没恢复」而不是「恢复后被回合语义判废」——'
