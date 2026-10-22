@@ -169,6 +169,15 @@ Three details that only surface when you try them:
   change no longer rewrites the suggestion cell; when both are dirty they are merged into a single
   `settings.update`. Absent cell = keep current value, never clear (a new client on an old host
   still has no `_hot` and must not wipe the hotness list).
+- **After a host upgrade, refresh the page** (no host restart needed). The client bundle is served by
+  that same host (`lib/client.js`), so version skew only affects **tabs that were already open before
+  the upgrade** — and the two cells behave differently there (verified against the old code, not
+  assumed): the **hotness list goes empty** (the old code maps an absent `hot` to `null`,
+  `src/client/index.ts:1840-1842` at `1c205d6`), while the **history ring merely stops updating**
+  (the old code treats an omitted `history` as keep-current). Suggestions are unaffected — they still
+  ride in `_push`. Neither means data loss: the authoritative store of the hotness table is the
+  `suggest_ghost_hotness` domain (`src/hotness-store.ts:44-45`) and `_hot` is only the snapshot handed
+  to the client, so a refresh brings both back.
 - **Do not treat "volatile fields are not persisted" as a guarantee**: this plugin's `_ops` / `_push` are written into the profile document, and the clear-after-consume write is refused as a nested transaction, so a payload stays on disk and a fresh instance replays it at boot (measured in an isolated instance: one leftover `complete` was consumed before any client connected). See the cold-start section above and issue #22.
 - **No polling on the client**: what `0.1.7` removed along with `settingsScope` is only `scope.subscribe`. The kernel has a separate Host→client event channel — `ctx.remote.$on('settings/document-updated')`, on dsh-api-remotes' forwarding allowlist (mode `emit`). The kernel's own settings page drives `SettingsDescribeMirror` off exactly that. This plugin subscribes the same way, so `describe()` is issued only when the host actually pushes `_push`, plus once at startup and once per `connection/reset`.
 
