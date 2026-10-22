@@ -36,6 +36,28 @@
  * - 启动时打印的 `dsh web:` URL 可能取自日志里的**旧**行（日志是追加写的，上一轮的行还在）。
  *   真实端口要用 pid 去 `ss -ltnp` 对。
  *
+ * ## 收尾：一条命令（Gitea #72）
+ *
+ * 沙箱会留下**两处**东西：沙箱目录（`--home`，默认 `~/dsh-sbx-<entry>`）与**工作区**
+ * （`--ws`，默认 `<--home>/ws`）。工作区默认**收在沙箱目录内部** ⇒ 删沙箱目录就一并带走。
+ * 这条是 #72 的结论：旧默认把工作区放在 `~/dsh-sbx-<entry>-ws`（**不在 `--home` 里**）⇒
+ * `rm -rf $SBX` 带不走它 ⇒ 每次用完都留下一个目录（**里面可能有凭据副本**）⇒ 「清掉了
+ * 还会再长出来」的根因之一；而且只看「`~/dsh-sbx*` 残留 0」就以为清干净了，其实工作区
+ * 还在另一个名字下。
+ *
+ * ```bash
+ * node scripts/dev-sandbox.mjs --cleanup     # 收尾：停实例 → 体检并删工作区 → 删沙箱目录 → 残留自检
+ * node scripts/dev-sandbox.mjs --residual    # 只做残留自检（只读，不删任何东西）
+ * ```
+ *
+ * `--cleanup` 的输出会**逐处**说明它动了哪里：删了哪两处、哪一处因为**脏/认不出**而
+ * **没删**（⇒ 退出码 1，不静默跳过）。删除工作区前必过两道闸：**确实是本沙箱建的**
+ * （本脚本的标记文件，或空 git 仓签名）+ **干净**（`git status --porcelain` 为空）；
+ * 有提交历史或含凭据副本的一律交给人判断（凭据只读键名，不打印值）。
+ *
+ * ⚠️ 工作区默认在沙箱目录**内部** ⇒ 它脏的时候**连沙箱目录也不删**（删它等于间接删掉
+ * 别人的工作区）——这时 `--cleanup` 会明确报出来，处理掉那个工作区再跑一次即可。
+ *
  * ## 三条实测踩过的坑（改回去就会再踩，实现里都留了注释）
  *
  * 1. **profile 里的 volatile 值是跨多行的单引号标量**（本仓 `_push` 实测跨 16~35 行，里面存着
@@ -73,7 +95,7 @@ import {
   readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 
 const argv = process.argv.slice(2);
 const opt = (name, dflt) => {
@@ -236,6 +258,34 @@ export function findEntryId(patchText, pkgName) {
   return null;
 }
 
+/**
+ * 找出**属于某个 DSH_HOME** 的进程（按 `/proc/<pid>/environ` 里的 `DSH_HOME` 认领）。
+ *
+ * 为什么不用 pidfile 认领：pidfile 里可能是 npx 包装进程的 pid（实测踩过三次：按它
+ * kill 之后真正的 node 子进程还活着占着端口 ⇒ 误判成「沙箱已停」）。按 DSH_HOME 反查
+ * 认的是**整棵进程树**，且天然只认自己的（别的沙箱/live 宿主的 DSH_HOME 不同）。
+ *
+ * @param {string} home - 要认领的 DSH_HOME 绝对路径。
+ * @returns {{ pid: number, cmd: string }[]}
+ */
+function pidsOfHome(home) {
+  let out = '';
+  try { out = execFileSync('sh', ['-c', 'ls /proc | grep -E "^[0-9]+$"'], { encoding: 'utf8' }); }
+  catch { return []; }
+  const mine = [];
+  for (const p of out.split('\n')) {
+    const n = p.trim();
+    if (n === '') continue;
+    let e = '';
+    try { e = readFileSync(`/proc/${n}/environ`, 'utf8'); } catch { continue; }
+    if (e.split('\0').includes(`DSH_HOME=${home}`)) {
+      try { mine.push({ pid: Number(n), cmd: readFileSync(`/proc/${n}/cmdline`, 'utf8').replace(/\0/g, ' ').trim() }); }
+      catch { /* 已退出 */ }
+    }
+  }
+  return mine;
+}
+
 // 只有直接执行才跑主流程：否则 `import { stripKeyBlock }` 会顺手起一个实例，纯函数就没法测。
 const invokedDirectly = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`;
 if (invokedDirectly) main();
@@ -262,7 +312,33 @@ function main() {
   const short = (entryCfg || pkgName.split('/').pop() || pkgName).replace(/^dsh-/, '');
 
   const HOME_ = resolve(opt('home', join(homedir(), `dsh-sbx-${short}`)));
-  const WS = resolve(opt('ws', join(homedir(), `dsh-sbx-${short}-ws`)));
+  /**
+   * 工作区目录（**本仓口径：收在沙箱目录内部**，Gitea #72）。
+   *
+   * #72 的结论：旧默认把工作区建在 `~/dsh-sbx-<entry>-ws`（**不在 `--home` 里**）⇒
+   * `rm -rf $SBX` 带不走它 ⇒ 每次用完沙箱都留下一个目录，而那个目录里可能有凭据副本
+   * ⇒ 「清掉了还会再长出来」的根因之一；而且只看「`~/dsh-sbx*` 残留 0」就以为清干净了，
+   * 其实工作区还在另一个名字下。
+   *
+   * **为什么可以收进来（选 (b) 而不是 (a) 的依据）**：
+   *  - 它与 `--deploy <dir>` **毫无关系**：那条路装的是 `opt('deploy')` 指向的**某个
+   *    worktree** 里的 `lib/`，复制到 `join(HOME_, 'plugin')/lib`（全程在 `--home` 内），
+   *    从不碰 WS ⇒ (b) 不会把「用户指定的部署源」和「沙箱自建的副本」混在一棵树里。
+   *  - WS 的**真实用途是别的脚本的夹具**：`scripts/hot-yield-ratio.mjs` 往里写
+   *    `note.txt`、再把路径打进 client 的「工作区选择器」（它**显式传 `--ws`**，
+   *    不受这里的默认值影响；它自己也管这个目录的生死）。
+   *  - dev-sandbox 自己对 WS **只创建不使用**（历史上三个版本都只有 `mkdir` + `git init`）
+   *    ⇒ 收进 `--home` 不丢任何功能。
+   *
+   * ⚠️ 因此**显式传 `--ws <dir>` 的用法不变**（那是调用方自己的目录，本脚本只保证它
+   * 存在；收尾时也只有「确实是本沙箱建的且干净」才会删，见 `--cleanup`）。
+   */
+  const WS = resolve(opt('ws', join(HOME_, 'ws')));
+  /**
+   * 旧默认位置（#72 之前）：收尾时要**一并查**——老版本留下的目录不会自己消失，
+   * 而它恰好是「`~/dsh-sbx*` 为 0 却没清干净」的那个漏网之处。
+   */
+  const WS_LEGACY = resolve(join(homedir(), `dsh-sbx-${short}-ws`));
   const GUI_PORT = String(opt('gui-port', '0'));
   const PROFILE = join(HOME_, 'profiles', 'web');
   const PLUGIN = join(HOME_, 'plugin');
@@ -279,6 +355,155 @@ function main() {
   function asArray(v) { return Array.isArray(v) ? v.map(String) : []; }
 
   if (GUI_PORT !== '0' && portInUse(Number(GUI_PORT))) die(`--gui-port ${GUI_PORT} 已被占用`);
+
+  // ── 收尾与残留自检（#72）────────────────────────────────────────────────────
+  //
+  // `--cleanup`：**只收尾，不建沙箱、不启实例**（收尾前跑一次正常启动会把刚建的沙箱
+  // 又删一遍，那不是收尾）。它做四件事，输出必须让人看出**它动了哪两处**：
+  //   ① 停实例（只杀 DSH_HOME 认领到的那些 ⇒ 不会误杀 live 宿主或别人的沙箱）；
+  //   ② 体检工作区（**不许删别人的工作区**：见下面两道闸），能删才删；
+  //   ③ 删沙箱目录（工作区默认在里面 ⇒ 它脏时这一步也要停手）；
+  //   ④ 残留自检：**两处**都查（`~/dsh-sbx*` 与 `~/dsh-sbx-*-ws`）。
+  //
+  // `--residual`：只做 ④（只读，不删任何东西）——用来回答「到底清干净了没」。
+  const WS_MARKER = '.dsh-sandbox-ws';
+  const CREDENTIAL_FILES = ['.credentials.yaml', 'env.local'];
+
+  /**
+   * 凭据文件里的**键名**（只取顶层键；值一律不进输出）。
+   *
+   * 口径见 `docs/real-session-harness.md` §6：**只读键名，不打印任何值**。
+   */
+  const credentialKeyNames = (file) => {
+    try {
+      const keys = [];
+      for (const line of readFileSync(file, 'utf8').split('\n')) {
+        const m = /^([A-Za-z0-9_][A-Za-z0-9_.\-]*):/.exec(line);
+        if (m !== null) keys.push(m[1]);
+      }
+      return keys;
+    } catch { return []; }
+  };
+
+  /**
+   * 工作区体检：是不是本沙箱建的、干净不干净、有没有凭据副本。
+   *
+   * **两道闸**（#72 的硬要求：不许删别人的工作区）：
+   *  ① 「确实是本沙箱建的」：有本脚本写的标记文件，或**空 git 仓签名**（无提交、无远端、
+   *     工作树里没有别的文件）——后者正是 #72 之前那个旧脚本留下的形状（只 mkdir + git init）。
+   *  ② 「干净」：`git status --porcelain` 为空（**标记文件本身不算脏**）。
+   * 另外：工作区里**有提交**或**含凭据副本** ⇒ 也不自动删（前者里面可能有别人的工作，
+   * 后者按「确认无凭据再删」的口径交给人）。
+   */
+  const inspectWorkspace = (dir) => {
+    const info = {
+      dir, exists: false, ours: false, clean: false, hasCommit: false,
+      why: '', dirty: [], credentialFiles: [], credentialKeys: [],
+    };
+    if (!lstatSafe(dir)) return info;
+    info.exists = true;
+    const isRepo = (() => {
+      try { execFileSync('git', ['-C', dir, 'rev-parse', '--git-dir'], { stdio: 'ignore' }); return true; }
+      catch { return false; }
+    })();
+    if (!isRepo) { info.why = '不是 git 仓（无法确认是本沙箱建的）'; return info; }
+    const hasMarker = lstatSafe(join(dir, WS_MARKER));
+    let porcelain = '';
+    try { porcelain = execFileSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' }); } catch { porcelain = ''; }
+    info.dirty = porcelain.split('\n').filter((l) => l.trim() !== '' && !l.trim().endsWith(WS_MARKER));
+    try { execFileSync('git', ['-C', dir, 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore' }); info.hasCommit = true; } catch { info.hasCommit = false; }
+    let remotes = 0;
+    try { remotes = execFileSync('git', ['-C', dir, 'remote'], { encoding: 'utf8' }).split('\n').filter((l) => l.trim() !== '').length; } catch { remotes = 0; }
+    info.ours = hasMarker || (!info.hasCommit && remotes === 0 && info.dirty.length === 0);
+    info.clean = info.dirty.length === 0;
+    for (const f of CREDENTIAL_FILES) {
+      if (!lstatSafe(join(dir, f))) continue;
+      info.credentialFiles.push(f);
+      info.credentialKeys.push(...credentialKeyNames(join(dir, f)));
+    }
+    if (!info.ours) info.why = '不像本沙箱建的（既没有本脚本的标记，也不是空 git 仓）';
+    else if (!info.clean) info.why = `有未提交内容（${info.dirty.slice(0, 3).join(' ')}${info.dirty.length > 3 ? ' …' : ''}）`;
+    else if (info.hasCommit) info.why = '有提交历史（里面可能有别人的工作）';
+    else if (info.credentialFiles.length > 0) info.why = `含凭据副本 ${info.credentialFiles.join(', ')}（键名 ${info.credentialKeys.join(',') || '无'}）⇒ 人工确认后再删`;
+    return info;
+  };
+
+  /**
+   * 残留自检：**两处**都要查（#72 的原话：只看 `~/dsh-sbx*` 为 0 就以为清干净了，
+   * 其实工作区还在另一个名字下）。
+   *
+   * 三处一起报：本次的 `--home` 目录 + `~/dsh-sbx*`（不含 `-ws`）+ `~/dsh-sbx*-ws`。
+   */
+  const residualReport = () => {
+    const home = homedir();
+    let names = [];
+    try { names = readdirSync(home); } catch { names = []; }
+    const sandboxDirs = names.filter((n) => n.startsWith('dsh-sbx') && !/-ws$/.test(n)).sort();
+    const wsDirs = names.filter((n) => /^dsh-sbx.*-ws$/.test(n)).sort();
+    const homeIsUnderHome = HOME_.startsWith(home + sep);
+    say(`残留自检：本次 --home ${HOME_} ${lstatSafe(HOME_) ? '仍在' : '已无'}；`
+      + `~/dsh-sbx*（不含 -ws）${sandboxDirs.length} 个；~/dsh-sbx*-ws ${wsDirs.length} 个`);
+    for (const n of [...sandboxDirs, ...wsDirs]) {
+      const dir = join(home, n);
+      const creds = CREDENTIAL_FILES.filter((f) => lstatSafe(join(dir, f)));
+      const keys = creds.flatMap((f) => credentialKeyNames(join(dir, f)));
+      // 沙箱目录里那个**默认位置**的工作区也要报出来（它不再以 `~/dsh-sbx*-ws`
+      // 的名字出现了，但仍然是「两处」之一 ⇒ 漏了它就等于又漏一次 #72）。
+      const inner = lstatSafe(join(dir, 'ws')) ? '，含工作区 ws/' : '';
+      say(`  · ${n}${creds.length > 0 ? `（含凭据副本 ${creds.join(', ')}；键名 ${keys.join(',') || '无'}）` : ''}${inner}`);
+    }
+    if (sandboxDirs.length === 0 && wsDirs.length === 0 && !homeIsUnderHome) say('  两处都是 0 ⇒ 清干净了');
+    return sandboxDirs.length === 0 && wsDirs.length === 0;
+  };
+
+  /**
+   * 收尾：停实例 → 体检并删工作区 → 删沙箱目录 → 残留自检。
+   * @returns {number} 退出码：有东西被拒绝删（脏/不认识的）⇒ 1（**不许静默跳过**）。
+   */
+  const cleanupSandbox = () => {
+    console.log('');
+    say('收尾：停实例 → 体检工作区 → 删沙箱目录 → 残留自检');
+    const pids = pidsOfHome(HOME_);
+    let killed = 0;
+    for (const p of pids) {
+      try { process.kill(p.pid, 'SIGTERM'); killed += 1; } catch { /* 已退出 */ }
+    }
+    say(killed > 0
+      ? `已停实例：${killed} 个进程（按 DSH_HOME=${HOME_} 认领，只杀自己的）`
+      : '没有在跑的实例（按 DSH_HOME 反查为空）');
+    let refused = 0;
+    const infos = [...new Set([WS, WS_LEGACY])].map(inspectWorkspace);
+    for (const info of infos) {
+      if (!info.exists) { say(`工作区 ${info.dir}：不存在（无需处理）`); continue; }
+      if (!info.ours || !info.clean || info.hasCommit || info.credentialFiles.length > 0) {
+        refused += 1;
+        say(`⚠ 工作区 ${info.dir} 未删：${info.why}`);
+        continue;
+      }
+      rmSync(info.dir, { recursive: true, force: true });
+      say(`已删工作区 ${info.dir}`);
+    }
+    // 工作区默认在沙箱目录**内部** ⇒ 它脏的时候连沙箱目录也不能删（否则等于间接删掉
+    // 别人的工作区）。这时明确报出来，并让退出码非 0。
+    const dirtyInside = infos.find((i) => i.exists && i.dir.startsWith(HOME_ + sep) && (!i.clean || i.hasCommit));
+    if (dirtyInside !== undefined) {
+      refused += 1;
+      say(`⚠ 沙箱目录 ${HOME_} 未删：里面有未提交的工作区 ${dirtyInside.dir}（${dirtyInside.why}）`
+        + ' ⇒ 删它等于删掉别人的工作区；处理掉那个工作区再跑一次收尾');
+    } else if (lstatSafe(HOME_)) {
+      rmSync(HOME_, { recursive: true, force: true });
+      say(`已删沙箱目录 ${HOME_}（里面有一份 .credentials.yaml 凭据副本）`);
+    } else {
+      say(`沙箱目录 ${HOME_}：不存在（无需处理）`);
+    }
+    console.log('');
+    residualReport();
+    if (refused > 0) say(`⚠ 有 ${refused} 处拒绝删除（见上面的原因）—— 退出码 1，不静默跳过`);
+    return refused > 0 ? 1 : 0;
+  };
+
+  if (flag('cleanup')) process.exit(cleanupSandbox());
+  if (flag('residual')) { console.log(''); residualReport(); process.exit(0); }
 
   let entryId = entryCfg;
   if (!flag('deploy')) {
@@ -407,6 +632,11 @@ function main() {
   mkdirSync(WS, { recursive: true });
   try { execFileSync('git', ['-C', WS, 'rev-parse', '--git-dir'], { stdio: 'ignore' }); }
   catch { try { execFileSync('git', ['-C', WS, 'init', '-q'], { stdio: 'ignore' }); } catch { /* 非致命 */ } }
+  // 标记文件：收尾时据此判断「这个工作区**确实是本沙箱建的**」（#72 的硬要求：不许删
+  // 别人的工作区 ⇒ 删除前必须能证明它是我们的、且干净）。
+  // 故意放在工作树里（不是 `.git/` 里）：它要能被 `git status --porcelain` 看见，
+  // 收尾时才能把它从「脏」里**排除**（否则自己写的标记会让自己永远「脏」）。
+  try { writeFileSync(join(WS, WS_MARKER), `home=${HOME_}\ncreated=${new Date().toISOString()}\n`); } catch { /* 非致命 */ }
 
   const env = { ...process.env, DSH_HOME: HOME_ };
   const envFile = join(homedir(), '.dsh', 'env.local');
@@ -440,23 +670,7 @@ function main() {
    */
   const pidFile = join(HOME_, 'sbx.pid');
   writeFileSync(pidFile, `${child.pid}\n`);
-  const realPids = () => {
-    let out = '';
-    try { out = execFileSync('sh', ['-c', 'ls /proc | grep -E "^[0-9]+$"'], { encoding: 'utf8' }); }
-    catch { return []; }
-    const mine = [];
-    for (const p of out.split('\n')) {
-      const n = p.trim();
-      if (n === '') continue;
-      let e = '';
-      try { e = readFileSync(`/proc/${n}/environ`, 'utf8'); } catch { continue; }
-      if (e.split('\0').includes(`DSH_HOME=${HOME_}`)) {
-        try { mine.push({ pid: Number(n), cmd: readFileSync(`/proc/${n}/cmdline`, 'utf8').replace(/\0/g, ' ').trim() }); }
-        catch { /* 已退出 */ }
-      }
-    }
-    return mine;
-  };
+  const realPids = () => pidsOfHome(HOME_);
   const settlePid = () => {
     const mine = realPids().filter((x) => x.cmd.includes('.bin/dsh'));
     if (mine.length > 0) {

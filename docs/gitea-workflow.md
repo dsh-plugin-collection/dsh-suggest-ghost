@@ -103,7 +103,18 @@ tea api "/repos/<owner>/<repo>/issues/<编号>/comments?limit=100" \
   两条它自带的坑：
   1. **它无参数即创建并启动一个实例**（不是校验脚本）⇒ 批量挑脚本跑之前先排掉非 `*-smoke.mjs`；
   2. `pkill -f <模式>` 的模式串会匹配到调用方自己的命令行 ⇒ 会把自己那条命令杀掉。
-  用完关掉、删掉沙箱目录（**里面有一份 `.credentials.yaml` 副本**，凭据留在磁盘上比删掉更糟）。
+  用完**一条命令**收尾（停实例 → 体检并删工作区 → 删沙箱目录 → 两处残留自检）：
+
+  ```bash
+  node scripts/dev-sandbox.mjs --cleanup
+  ```
+
+  它删**两处**：沙箱目录 `--home`（**里面有一份 `.credentials.yaml` 副本**，凭据留在磁盘上比删掉更糟）
+  与**工作区** `--ws`（默认 `<--home>/ws`；旧默认在 `~/dsh-sbx-<entry>-ws`、**不在** `--home` 里 ⇒
+  手工 `rm -rf` 沙箱带不走它 ⇒ 每次用完都残留一个目录，**里面可能有凭据副本**，Gitea #72）。
+  工作区脏了（`git status --porcelain` 非空）或认不出是本沙箱建的 ⇒ **不删并明确报出来**
+  （退出码 1）；工作区默认在沙箱目录内部 ⇒ 它脏的时候**连沙箱目录也不删**。
+  只看残留不删东西：`node scripts/dev-sandbox.mjs --residual`（`~/dsh-sbx*` 与 `~/dsh-sbx-*-ws` 两处都查）。
 
 - **回收 worktree 前要确认两件事**：工作树干净，且**内容**已进 main。
   cherry-pick 进去的分支不是 main 的祖先，`merge-base --is-ancestor` 会判"未合并"，
