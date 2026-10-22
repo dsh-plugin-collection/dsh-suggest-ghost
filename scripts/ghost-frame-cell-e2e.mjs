@@ -163,10 +163,19 @@ function makeFakeHost() {
   let revision = 0;
   const listeners = [];
   const snapshot = { draft: '', draftRev: 4 };
-  const sessionRow = { id: 's1', retainedBy: { mainView: 1 } };
+  // 两条会话行，mainView 记在哪条上，`currentSessionIdOf` 就认哪条 —— 场景 6 要在
+  // 运行中把它从 s1 挪到 sA，用来验「切回归属会话立即可用」这半边。
+  const rows = {
+    s1: { id: 's1', retainedBy: { mainView: 1 } },
+    [RESIDUAL_OWNER]: { id: RESIDUAL_OWNER, retainedBy: {} },
+  };
   const sessionStore = {
-    getSnapshot: () => ({ byId: { s1: sessionRow } }),
+    getSnapshot: () => ({ byId: structuredClone(rows) }),
     subscribe: () => () => {},
+  };
+  /** 切换主视图会话（模拟用户切标签页；宿主侧就是一次 list store 变更）。 */
+  const setCurrentSession = (id) => {
+    for (const key of Object.keys(rows)) rows[key].retainedBy = key === id ? { mainView: 1 } : {};
   };
   const actx = { get: (name) => (name === 'conversation' ? conversationFace : undefined) };
   const conversationFace = {
@@ -222,12 +231,13 @@ function makeFakeHost() {
     revision += 1;
     for (const cb of listeners) cb('suggest-ghost', revision);
   };
-  return { ctx, emit, getRevision: () => revision, doc };
+  return { ctx, emit, getRevision: () => revision, doc, setCurrentSession };
 }
 
 const snapshotOf = (stats) => ({
   applies: stats.applies, parses: stats.parses, frameRuns: stats.frameRuns,
   cellSkips: stats.cellSkips, suggestionRefSwaps: stats.suggestionRefSwaps,
+  ownerHidden: stats.ownerHidden, llmGhostOffered: stats.llmGhostOffered,
 });
 const delta = (before, after) => Object.fromEntries(
   Object.keys(after).map((k) => [k, after[k] - before[k]]));
@@ -235,6 +245,9 @@ const delta = (before, after) => Object.fromEntries(
 // ── 3. 跑三场景 ───────────────────────────────────────────────────────────
 const SUGGESTION_A = JSON.stringify({ suggestion: { version: 1, turn: 1, baseSeq: 3, text: '跑一下冒烟', truncated: false, acceptKey: 'Tab', frame: 1, final: true }, suggestionSessionId: 's1' });
 const SUGGESTION_B = JSON.stringify({ suggestion: { version: 1, turn: 2, baseSeq: 9, text: '把构建脚本改一下', truncated: false, acceptKey: 'Tab', frame: 1, final: true }, suggestionSessionId: 's1' });
+/** 残留 / 建议的归属会话（场景 6 用它验客户端归属守卫）。 */
+const RESIDUAL_OWNER = 'session-A';
+
 const HOT_1 = JSON.stringify({ hot: [{ text: '跑一下冒烟', count: 1 }], history: ['跑一下冒烟'], historySessionId: 's1' });
 const HOT_2 = JSON.stringify({ hot: [{ text: '跑一下冒烟', count: 2 }, { text: '把构建脚本改一下', count: 1 }], history: ['跑一下冒烟', '把构建脚本改一下'], historySessionId: 's1' });
 // 场景 4 用的第三份热度载荷：必须与 HOT_2 **不同**（否则 `_hot` 那格也没变，
@@ -366,6 +379,38 @@ if (loaded === null) {
     + '（这条只证「本次连打过程中**客户端读侧**循环没被挤死」，不证所有路径都不紧循环——'
     + '宿主写侧那条 `.finally` 微任务链由 scripts/hmr-write-loop-smoke.mjs 覆盖，'
     + '本 harness 喂内存 settings 面、假 mutate 不 emit，结构上照不到它。）');
+
+  // ── 场景 6：客户端归属守卫（#56 的第 3 条断言，跑的是真客户端产物）──────────
+  //
+  // 任务书说这条「注释里这么写，但要用断言证」。载荷里带着**属于另一会话**的建议
+  // （#56 之后这是常态：未判定的残留就按这条老路带出），必须做到两件事：
+  //  - 当前会话不是它的主人 ⇒ **隐藏**（不产出幽灵，免得 B 的输入框里冒出 A 的话）；
+  //  - 切到主人会话 ⇒ **立即可用**（不必等宿主再推一次——再推一次可能就是几秒到几十秒）。
+  // 观测点 = `ownerHidden` 与 `llmGhostOffered` 这一对（两者互斥，见 `pushCellStats` 注释）。
+  const foreignSuggestion = JSON.stringify({
+    rev: 42,
+    suggestion: { version: 1, turn: 1, baseSeq: 2, text: '把构建脚本改一下', truncated: false, acceptKey: 'Tab', frame: 1, final: true },
+    suggestionSessionId: RESIDUAL_OWNER,
+  });
+  const beforeGuard = snapshotOf(stats);
+  host.emit({ _push: foreignSuggestion });
+  await sleep(30);
+  const hidden = delta(beforeGuard, snapshotOf(stats));
+  const hideOk = hidden.ownerHidden === 1 && hidden.llmGhostOffered === 0 && hidden.parses === 1;
+
+  // 切回归属会话：内容一个字节都没再推（`parses` 不该再涨），但幽灵必须立刻可用。
+  const beforeSwitch = snapshotOf(stats);
+  host.setCurrentSession(RESIDUAL_OWNER);
+  host.emit({ _hot: HOT_1 });           // 一次纯热度变更：只为把事件节律走完，不碰建议格
+  await sleep(30);
+  const shown = delta(beforeSwitch, snapshotOf(stats));
+  const showOk = shown.llmGhostOffered === 1 && shown.ownerHidden === 0 && shown.parses === 0;
+  record('场景 6 归属守卫：别人的建议在当前会话被隐藏、切回主人会话立即可用（零重推）',
+    hideOk && showOk ? STATUS.PASS : STATUS.FAIL,
+    `B 在场（s1）：${JSON.stringify(hidden)}；期望 ownerHidden:1、llmGhostOffered:0、parses:1\n`
+    + `切回 A（未重推建议格）：${JSON.stringify(shown)}；期望 llmGhostOffered:1、ownerHidden:0、parses:0\n`
+    + '（`parses:0` 是关键那一半：可用性不是靠再解析一次载荷得来的，而是同一条载荷换会话就成立\n'
+    + ' ⇒ 这正是 #56 那个修复在客户端侧的全部代价：零额外写、零额外推。）');
 
   const sanity = stats.applies >= 5 + BURST;
   record(`前置自检：客户端真的收到并处理了每一次格变更（applies ≥ ${5 + BURST}）`,

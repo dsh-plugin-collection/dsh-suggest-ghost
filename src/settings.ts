@@ -103,12 +103,34 @@ export interface GhostHotPayload {
   readonly historySessionId?: string;
 }
 
-/** `_push` / `_hot` / `_ops` 在 settings 里的传输形状（三个 JSON 字符串）。 */
+/** 一条**未判定归属的残留**（#56：`_residual` 格的内容）。 */
+export interface GhostResidualPayload {
+  /** 残留的那条建议（原样，不改写、不重新判定）。 */
+  readonly suggestion: unknown;
+  /** 它属于哪个会话；判定要等该会话进店，故此刻**尚未判定**。 */
+  readonly sessionId: string;
+}
+
+/**
+ * `_push` / `_hot` / `_residual` / `_ops` 在 settings 里的传输形状（四个 JSON 字符串）。
+ *
+ * `_residual`（#56）是**宿主自用格**：装「读到过、但因为所属会话始终没进店而判不了」的
+ * 那一条建议。它存在的唯一理由是**建议格只有一个槽位**——`suggestionFieldsFor`
+ * （`src/coldstart.ts:327`）里当前会话的建议优先占格，所以「把残留当成别的会话的建议
+ * 一起带出去」只在当前会话**没有**建议时成立；B 跑过一轮之后那条路就塞不下了。
+ * 有了自己的一格，保护才是**构造性**的：别的会话的任何动作只写 `_push`（与 `_hot`），
+ * 碰不到 `_residual` ⇒ 不需要「写的时候记得带上残留」这种人工纪律。
+ *
+ * 客户端**完全不读**这一格（未知键天然忽略），因此它是零改动的；登记在
+ * `live-settings.ts` 的 `TRANSPORT_KEYS` 里，不会被当成配置值读进 `effective()`。
+ */
 export interface SuggestGhostSettings {
   /** host → client 的实时推送载荷·建议格（见 `GhostPushPayload`）。 */
   _push: string;
   /** host → client 的实时推送载荷·热度格（见 `GhostHotPayload`）。 */
   _hot: string;
+  /** host 自用·未判定残留格（见 `GhostResidualPayload`）。#56。 */
+  _residual: string;
   /** client → host 的热度管理操作队列（见 `parseHotnessOps`）。 */
   _ops: string;
 }

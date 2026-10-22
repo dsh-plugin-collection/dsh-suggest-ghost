@@ -335,20 +335,25 @@ run('设置页字段集合与基线一致（#35 之后共 27 项，含两个推�
   const editableFields = [...editableBlock.matchAll(fieldPattern)].map((m) => m[1]);
   // 基线：main=7e4fe13 的 25 个字段（含 _ops/_push 两个传输载体）+ #35 明确新增的两个
   // 推理档位（`suggestionReasoningEffort` / `completionReasoningEffort`）
-  // + #36 建议 2 新增的第三个传输载体 `_hot`（热度格）= 28 项。
+  // + #36 建议 2 新增的第三个传输载体 `_hot`（热度格）
+  // + #56 新增的第四个传输载体 `_residual`（未判定残留格，宿主自用、客户端不读）= 29 项。
   // 顺序按源码声明顺序断言，改顺序也会红——那是设置页的呈现顺序。
   // 这条断言的用途没变：**新增任何一个字段都必须先登记到这里**，而登记这一步会逼着你
   // 去看下面那半段（live-settings 键表）——#35 的改动正是同时动了 schema、WebUI 表单、
   // live-settings 键表与 generate 的两处 readVolatile，四处漏一处就是「设置页改了不生效」。
-  // `_hot` 与 `_ops`/`_push` 同理要进 `TRANSPORT_KEYS` 白名单，否则整段 JSON 会被
+  // `_hot` / `_residual` 与 `_ops`/`_push` 同理要进 `TRANSPORT_KEYS` 白名单，否则整段 JSON 会被
   // `pickLiveSettings` 当配置值读进 effective()（钉在 scripts/payload-split-smoke.mjs）。
+  // 登记 `_residual` 的**理由**（不是为了让链变绿）：它是传输载体、不是设置项 ——
+  // 客户端不读它、设置页也不该出现一个 JSON 输入框。漏登记的后果是加载期不变量直接抛
+  // （`live-settings.ts` 那段 `transport field must not be a setting key` 的反向检查），
+  // 所以这条基线断言与那条不变量是同一件事的两道闸。
   const BASELINE_FIELDS = [
     'maxInputBytes', 'maxOutputTokens', 'timeoutMs', 'maxRecentTurns', 'maxTranscriptChars',
     'contextSummaryEnabled', 'contextSummaryChars', 'maxSuggestionChars', 'provider', 'model',
     'llmEnabled', 'suggestionReasoningEffort', 'historyEnabled', 'historyCrossSession',
     'historyMaxEntries', 'historyMinChars',
     'inlineEnabled', 'inlineDelayMs', 'inlineMinChars', 'inlineMaxChars', 'completionReasoningEffort',
-    'wordAccept', 'acceptKey', 'languageMode', 'uiLocaleWeight', '_ops', '_push', '_hot',
+    'wordAccept', 'acceptKey', 'languageMode', 'uiLocaleWeight', '_ops', '_push', '_hot', '_residual',
   ];
   assert.deepEqual(
     editableFields,
