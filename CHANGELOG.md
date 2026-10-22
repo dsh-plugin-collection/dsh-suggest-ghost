@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-22
+
+**本版是行为版**（不是补丁版）：一轮针对「幽灵文本一次性呈现」的链路改造 —— 终帧契约 / 载荷按格拆分 / 热度格写合并窗口 / 让路 / 未判定残留载体 / 冷启动回读。其中含客户端判据与传输载荷形状的变化，升级后建议按 `docs/real-session-harness.md` 的口径复验一轮真实回合。
+
+
 ### 新增
 
 - **幽灵文本的「终态帧」契约与客户端判据**（#38 #39）。`_push` 的 suggestion 载荷新增 `frame`
