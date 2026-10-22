@@ -336,6 +336,12 @@ All notable changes to this project will be documented in this file.
     （`dsh-headless/lib/index.js:28-34`，config 无 keep-alive）⇒ `turn/end` 之后进程立刻退出 ⇒ 插件回合后
     那次异步调用拿不到执行时间（探针实测：`HT ENTER` 进了，`push landed` 一条没有，盘上三格计数全 0）
   - **端口以日志里那行 `dsh web:` 为准**：`--rewrite` 改的是 profile 里那条，不是实例实际服务的端口
+- **「空正文的终帧」是**双重不可达**（#67 / #53 的 DOM 项已收口）：产出侧 `generateSuggestion` 在空或被过滤时
+  返回 `suggestion: undefined` ⇒ `buildPushPayload` 写 `suggestion: null` ⇒ 宿主**永远不发**空正文终帧；
+  回读侧把 `text === ''` 判成「无建议」⇒ `persisted push skipped … reason=corrupt-payload`，不动盘。
+  真实 DOM 实测：overlay 节点根本没挂、placeholder 仍是 `display=flow-root / visibility=visible /
+  opacity=1`、插件相关 console error 0 ⇒ 担心的「幽灵没画、占位文案被藏」的空白输入框**没有出现**
+  - **端口以日志里那行 `dsh web:` 为准**：`--rewrite` 改的是 profile 里那条，不是实例实际服务的端口
 
 ### 修复
 
