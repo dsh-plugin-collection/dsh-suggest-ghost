@@ -481,7 +481,7 @@ if (!existsSync(indexPath)) {
 }
 
 // ── (a3) 端到端「这一行真的被打出来」——本脚本不覆盖，说清为什么不覆盖 ─────────
-record('(a3) 本次运行是否真的打出留痕行', STATUS.NC,
+record('(a3) 本次运行是否真的打出留痕行（本脚本口径外，已由 ghost-frame-real-e2e.mjs 覆盖）', STATUS.NC,
   '缺前置：需要一次真实回合（apply() 在场 + 真 LLM 流）。本脚本直接调 generate*，'
   + '接线层不在场，所以 stdout 里必然没有这行——实测本次捕获 ' + capturedLines.length + ' 行、'
   + `抽到的键集合=[${[...traceKeysIn(capturedLines)].sort().join(', ') || '空'}]。\n`
@@ -489,8 +489,9 @@ record('(a3) 本次运行是否真的打出留痕行', STATUS.NC,
   + '注入假 llm、伪造 session.requestHeader() 供 routeOf、再喂一个 turn/end，'
   + '成本数倍，而它多证明的只有「apply 跑过」——与上面的 (a2) 静态在场断言重叠。'
   + 'lead 口径：要做就做成第二条独立脚本。\n'
-  + '现场怎么补：沙箱 tee 日志里 grep completion generated / suggestion generated 这两个前缀，'
-  + '键名清单以 package.json 的 sandbox.greps 为准。');
+  + '现场怎么补：已由 **scripts/ghost-frame-real-e2e.mjs** 补上（真 Context + 内存 settings 面 + '
+  + '假 llm 作为 llm 服务 + 真喂一个 turn/end，断言这两行真的出现且 11 个键的值符合契约）。'
+  + '两条分工：这里证「值算得对、打点还在」，那里证「接线层真打了」。');
 
 // ── 3. (b) 载荷里的 frame/final（#41）──────────────────────────────────────
 //
