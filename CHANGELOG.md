@@ -343,6 +343,17 @@ All notable changes to this project will be documented in this file.
   opacity=1`、插件相关 console error 0 ⇒ 担心的「幽灵没画、占位文案被藏」的空白输入框**没有出现**
   - **端口以日志里那行 `dsh web:` 为准**：`--rewrite` 改的是 profile 里那条，不是实例实际服务的端口
 
+- **`scripts/hot-yield-ratio.mjs`**：零依赖的真会话驱动（自己起沙箱、自己读 `logs/sbx.log` 取 URL+token、
+  **同进程内用 CDP**（Node 内置 WebSocket）操作 headless chromium）⇒ **token 明文彻底不进 transcript**
+  （输出全过 `redact()`，并自打「明文进 stdout 次数 = 0」）。**不接测试链**（它要花真回合）。
+  实测结论见 #63：**让路在单人流量下没有分母** —— 真实读数 `pull 19 / complete 3 / push landed 18 /
+  hot push landed 11`，而 **`hot push coalesced = 0`、`hot push yielded on input = 0`**，且**每一行落地留痕
+  都带 `coalesced=0`** ⇒ 合并窗口从未攒出 pending 热度快照 ⇒ 「应当让路的次数」为 0 ⇒ 性质那半句
+  （让路写次数 ≤ 待写变化数）在真实宿主里同样成立（0 让路、0 多余写）
+  - 顺带记下五个驱动真坑：`--patch` 加不了插件条目、首屏引导模态叠多层盖住工作区、全局找「打开」会命中侧栏
+    「余额 打开 DeepSeek 充值页」、受控路径框吃不下合成事件与 `insertText`（改点目录行）、Lexical 只认 `char` 事件
+  - 一条清理教训：**`pkill -f` 的模式串不得与执行它的命令行共串**（否则会把自己的 shell 杀掉）
+
 ### 修复
 
 - **HMR 事务内写失败退化成微任务紧循环（2026-10-22 事故：tee 日志 23 GB、事件循环卡死）**。
