@@ -1054,6 +1054,7 @@ function applyBody(ctx: Context): void {
     'stale-frame': null,
     'form-hold': null,
     'deferred-repaint': null,
+    'push-cell': null,
   };
   /**
    * 打一行留痕（同一理由连续到达只打第一行）。
@@ -1821,11 +1822,13 @@ function applyBody(ctx: Context): void {
           const rev = typeof entry.revision === 'number' ? entry.revision : 0;
           if (rev === lastRevision) return;
           lastRevision = rev;
+          pushCellStats.applies += 1;
           const v = (entry.value ?? {}) as Record<string, unknown>;
           const pushRaw = typeof v._push === 'string' ? v._push : '';
           const pushCellChanged = pushRaw !== lastPushRaw;
           let pushed: PushedPayload | null;
           if (pushCellChanged) {
+            pushCellStats.parses += 1;
             lastPushRaw = pushRaw;
             pushed = null;
             if (pushRaw !== '') {
@@ -1838,6 +1841,7 @@ function applyBody(ctx: Context): void {
             lastPushed = pushed;
           } else {
             // 建议格逐字未变 ⇒ 连 parse 都不做，直接沿用上次的产物（对象引用也不换）。
+            pushCellStats.cellSkips += 1;
             pushed = lastPushed;
           }
           // 热度格（`_hot`）：与 `_push` **各自解析、各自判变**。解析失败/整格缺省都
@@ -1868,6 +1872,7 @@ function applyBody(ctx: Context): void {
           // 把终帧判成「没变化」而丢掉。
           let frames: ReturnType<typeof resolvePayloadFrames>;
           if (pushCellChanged || lastFrames === null) {
+            pushCellStats.frameRuns += 1;
             frames = resolvePayloadFrames({
               ledger: frameLedger,
               pushed,
@@ -1879,6 +1884,10 @@ function applyBody(ctx: Context): void {
             // 建议格没变 ⇒ 帧判据一行都不重跑（台账不动、对象引用不换、`traceClear` 不触发）。
             frames = lastFrames;
           }
+          // 读侧工作量的现场证据：只在**理由变化**时打一行，且只打次数（无正文）。
+          traceOnce('push-cell', pushCellChanged ? 'suggestion-cell-changed' : 'hot-cell-only',
+            ` parses=${pushCellStats.parses} frameRuns=${pushCellStats.frameRuns}`
+            + ` cellSkips=${pushCellStats.cellSkips} applies=${pushCellStats.applies}`);
           if (!frames.accept) {
             traceOnce('stale-frame', frames.outcome,
               ` bucket=${String(frames.bucket)} ${frameHintFields(frames.suggestionFrame)}`
@@ -1935,6 +1944,8 @@ function applyBody(ctx: Context): void {
           // 保留的就是同一个数组引用，一次比较即命中）。
           if (configValuesEqual(next, settings)) return;
           // settings 实际变更 → 失效所有归一化/打分缓存，避免返回陈旧结果。
+          // 纯读比较：新对象里的建议是不是同一个引用（不动任何判据分支）。
+          if (next.suggestion !== settings.suggestion) pushCellStats.suggestionRefSwaps += 1;
           settingsEpoch++;
           clearNormalizeCache();
           hotCountsCache = null;
@@ -2417,5 +2428,52 @@ function remoteSettingsScope(
 function apply(ctx: Context): void {
   applyInner(ctx);
 }
+
+/**
+ * 建议格（`_push`）的**读侧工作量计数**（Gitea #54）。
+ *
+ * ## 为什么要有它
+ *
+ * #36 建议 2 把 `_push` 拆成两格之后，唯一还没被行为侧证过的收益就是：
+ * 「一次纯热度变化不该让建议格重新解析一遍、重跑一遍帧判据、动一次帧台账、
+ * 换一次建议对象引用」。这句话要能被**证伪**，就得有个可数的东西。
+ *
+ * ## 为什么不能用 `renderHits`
+ *
+ * 幽灵内容的重算缓存条件是 `(draft, settingsEpoch, composing, running, currentId)` 全等，
+ * 而热度列表与历史环**本来就参与**候选排序（`computeGhostContent` 的 history 分支与打分），
+ * 所以热度一变 ⇒ `configValuesEqual` 为假 ⇒ `settingsEpoch++` ⇒ 缓存失效 ⇒ 幽灵重算。
+ * **那是语义上正确的行为**，不是缺陷。用它当证据就会把「正确的重算」和「不该发生的重复解析」
+ * 混成一团（这条口径 lead 在 #41 与 CHANGELOG 上公开更正过）。
+ *
+ * ## 三条设计约束
+ *
+ *  1. **只增不减**：断言比较的是差值（before/after），不是绝对值；重启页面才归零。
+ *  2. **计数器打在决策分支上，不打在结果上**：`parses` 只在 `pushCellChanged` 那一支加，
+ *     `frameRuns` 只在真的调用 `resolvePayloadFrames` 那一支加。改判据语义做不到「顺手」
+ *     把计数加对——这正是可证伪性的来源。
+ *  3. **留痕只打次数与原因，不打正文**（与 `#39` 的隐私口径一致，见 `traceOnce`）。
+ *
+ * `cellSkips` = 文档 revision 变了、但 `_push` 原文逐字没变的那几次——
+ * 现场形态就是「只有热度格 `_hot` 在动」。
+ */
+export const pushCellStats = {
+  /** 走进解析段的次数（`rev !== lastRevision` 之后、按格判重之前）。 */
+  applies: 0,
+  /** 真的对 `_push` 做了 `JSON.parse` 的次数。 */
+  parses: 0,
+  /** 真的重跑 `resolvePayloadFrames`（含读写帧台账）的次数。 */
+  frameRuns: 0,
+  /** 建议格原文未变 ⇒ 整段跳过解析与帧判定的次数。 */
+  cellSkips: 0,
+  /**
+   * 建议对象的**引用**被换掉的次数。
+   *
+   * 这一条才配得上「不换建议对象引用」那句收益：`parses` 归零只证明没重新 parse，
+   * 引用没换才是「下游拿到的还是同一个对象」（`ghostContent` 的缓存与 `saveToCache`
+   * 都按引用读它）。判据是一次纯读比较，不动任何决策分支。
+   */
+  suggestionRefSwaps: 0,
+};
 
 export { apply, inject, name };
