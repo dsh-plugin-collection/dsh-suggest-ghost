@@ -1367,9 +1367,16 @@ function applyBody(ctx: Context): void {
     // 对会话快照里已移除的 turnEnds）。
     const suggestion = settings.suggestion;
     if (suggestion === null || suggestion === undefined) return null;
-    const stale = snapshot.running
-      || (settings.suggestionSessionId !== null && settings.suggestionSessionId !== currentId);
-    if (stale) return null;
+    const ownerMismatch = settings.suggestionSessionId !== null
+      && settings.suggestionSessionId !== currentId;
+    const stale = snapshot.running || ownerMismatch;
+    if (stale) {
+      // 只在「因归属被藏」这一支计数：running 那一支是另一回事（回合还在跑）。
+      // 纯观测，判据本身一字未改。
+      if (!snapshot.running && ownerMismatch) pushCellStats.ownerHidden += 1;
+      return null;
+    }
+    pushCellStats.llmGhostOffered += 1;
     // 帧提示随内容一起交给采纳链（#38）：provisional 帧可以显示，但不许采纳。
     return { kind: 'llm', text: suggestion.text, acceptKey: suggestion.acceptKey, frame: settings.suggestionFrame };
   };
@@ -2474,6 +2481,20 @@ export const pushCellStats = {
    * 都按引用读它）。判据是一次纯读比较，不动任何决策分支。
    */
   suggestionRefSwaps: 0,
+  /**
+   * 一条建议**因为归属不是当前会话**而被隐藏的次数（#56 的观测点）。
+   *
+   * 这条计数存在的唯一理由：载荷里**可以**带着别的会话的建议（`suggestionFieldsFor` 的
+   * 既设计），而 #56 之后它更常出现——未判定的残留就是「归属还没判」的那一种。要让
+   * 「B 在场时隐藏 A 的残留、切回 A 立即可用」这条**可断言**，就得有个能数的东西；
+   * 只读 `settings.suggestionSessionId` 与 `currentId` 的关系，不改判据。
+   *
+   * 与 `llmGhostOffered` 配对读：一场「带归属别的会话的建议」应当是
+   * `ownerHidden +1 且 llmGhostOffered +0`；切到那个会话之后应当反过来。
+   */
+  ownerHidden: 0,
+  /** 建议格真的产出一条可显示的 LLM 幽灵的次数（`ownerHidden` 的反向观测点）。 */
+  llmGhostOffered: 0,
 };
 
 export { apply, inject, name };
