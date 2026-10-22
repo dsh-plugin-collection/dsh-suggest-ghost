@@ -159,8 +159,11 @@ const cellsOf = (w) => ({
 /** 推送写（排除只动 `_ops` 的那种清空写）。 */
 const pushWrites = (ws) => ws.map(cellsOf).filter((c) => c.push !== null || c.hot !== null);
 
+/** 全程写留痕（`medium.writes` 会被 bootProcess 清空，跨「重启」的核对项必须自己攒）。 */
+const allWrites = [];
 const table = [];
 const record = (scenario, writes) => {
+  allWrites.push(...writes);
   const cells = pushWrites(writes);
   table.push({
     场景: scenario,
@@ -266,6 +269,46 @@ const before5 = medium.writes.length;
 await clientOp(proc2.settings, [{ op: 'pull', sessionId: SESSION }], 50);
 const p5 = record('⑤ 重启 + 第一次 pull', medium.writes.slice(before5));
 
+/**
+ * 无信息量的重复写（#56 与节流的共同基线项）。
+ *
+ * 口径必须是「**去掉 rev 之后**逐字相同」：rev 每写一次就 +1，它是给客户端的排序/诊断标识，
+ * 不是信息。拿原始字节比原始字节 ⇒ 任何两次写都「不一样」，这个数会恒等于 0%，然后被读成
+ * 「没有浪费」—— 那正是要避免的假阴性。反过来，按格判重成立时它**必须是 0**，所以这条
+ * 断言式的计数是判重的自证，不是收益上界。
+ */
+const stripRev = (raw) => {
+  if (typeof raw !== 'string' || raw === '' || raw === 'null') return null;
+  try {
+    const box = JSON.parse(raw);
+    delete box.rev;
+    return JSON.stringify(box);
+  } catch {
+    return raw;
+  }
+};
+const audit = (() => {
+  let redundant = 0;
+  let cellWrites = 0;
+  let hotOnlyWrites = 0;
+  let pushWritesTotal = 0;
+  const lastByCell = {};
+  for (const w of allWrites) {
+    for (const cell of ['_push', '_hot']) {
+      const info = stripRev(w.patch[cell]);
+      if (info === null) continue;
+      cellWrites += 1;
+      if (lastByCell[cell] === info) redundant += 1;
+      lastByCell[cell] = info;
+    }
+    const cells = pushWrites([w])[0];
+    if (cells === undefined) continue;
+    pushWritesTotal += 1;
+    if (cells.push === null && cells.hot !== null) hotOnlyWrites += 1;
+  }
+  return { redundant, cellWrites, hotOnlyWrites, pushWritesTotal };
+})();
+
 restoreAndReport();
 
 function restoreAndReport() {
@@ -279,6 +322,10 @@ function restoreAndReport() {
   console.log(`主指标 · 建议格被重写次数：${[...p1, ...p2Ref, ...p3, ...p4, ...p5].filter((c) => c.push !== null).length} / ${table.length} 个场景`
     + ` · 建议格字节：${suggestionBytes.length ? `${Math.min(...suggestionBytes)}–${Math.max(...suggestionBytes)} B` : 'n/a'}`);
   console.log(`热度格字节随回合增长：${[...p1, ...p2Ref, ...p3, ...p4, ...p5].filter((c) => c.hot !== null).map((c) => c.hot).join(' → ') || 'n/a'}`);
+  // 两个数分开看：左边（lead 的原始口径）按格判重成立时必须是 0；真正决定节流上界的是
+  // 右边 —— 只有「只由热度格驱动的写」能被窗口吃掉，携带建议格的写必须落。
+  console.log(`无信息量重复写（去 rev 后与上次落盘逐字相同）：${audit.redundant} / ${audit.cellWrites} 格次`);
+  console.log(`只由热度格驱动的写：${audit.hotOnlyWrites} / ${audit.pushWritesTotal} 次 ⇒ 节流的上界`);
   console.log('留痕样本（最后 6 条 landed / refused）：');
   for (const l of traced.filter((x) => /landed|refused/.test(x)).slice(-6)) console.log(`  ${l}`);
 }

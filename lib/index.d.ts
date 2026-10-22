@@ -306,5 +306,6 @@ export declare const name = "dsh-suggest-ghost";
  * 快照，不会丢数据。
  */
 export declare const HOT_DRAIN_MAX_ATTEMPTS = 3;
+/** 热度格写合并窗口的长度在此 re-export，冒烟从 `lib/index.js` 读它更顺手。 */
+export { HOT_PUSH_WINDOW_MS, decideHotPush } from './deferred-writes.js';
 export declare function apply(ctx: Context, config: GenerateConfig): void;
-export {};
