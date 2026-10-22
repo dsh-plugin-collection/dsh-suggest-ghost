@@ -214,8 +214,10 @@ scripts/             smoke tests and session log replay
 
 ### Read this before touching the settings channel
 
-`_ops` / `_push` / `_hot` are the only ways this plugin talks to the host (the last two are the
-host→client cells), and three separate bugs came
+`_ops` / `_push` / `_hot` / `_residual` are every channel this plugin writes into settings
+(`_push` and `_hot` are the two host→client cells the client reads; `_residual` is a
+**host-internal** cell holding a suggestion whose session never checked in, #56 — the client
+never reads it, so it stays out of the projection surface), and three separate bugs came
 from that channel's semantics, not from business logic: `mutate()`'s third argument means "the
 revision I read" rather than "the value I want to overwrite", so a refused write can look like a
 successful one; a zod schema and a TS union are two separate truths, so adding an operation to only
