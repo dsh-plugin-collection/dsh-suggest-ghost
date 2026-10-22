@@ -372,7 +372,39 @@ function main() {
   //
   // `--residual`：只做 ④（只读，不删任何东西）——用来回答「到底清干净了没」。
   const WS_MARKER = '.dsh-sandbox-ws';
+  /**
+   * 沙箱目录里的「本沙箱元信息」标记（#83）。
+   *
+   * 记的是**工作区的真实路径** ⇒ `--cleanup` 读它就知道工作区在哪，工作区在
+   * `<home>` 之外（历史遗留的 `~/dsh-sbx-<entry>-ws`、或显式 `--ws <dir>`）也一样。
+   *
+   * ⚠️ 为什么写在**沙箱目录**里而不是工作区里：写在工作区里就成了「要先知道路径
+   * 才能读到路径」⇒ 而路径正是我们缺的那一环。
+   */
+  const HOME_MARKER = '.dsh-sandbox-home';
   const CREDENTIAL_FILES = ['.credentials.yaml', 'env.local'];
+
+  /**
+   * 读沙箱目录里的「本沙箱元信息」标记 ⇒ 取出**工作区的真实路径**（#83）。
+   * @returns {string|null} 记录的工作区路径；没有标记/读不出来 ⇒ null。
+   */
+  const readHomeMarkerWs = () => {
+    try {
+      const text = readFileSync(join(HOME_, HOME_MARKER), 'utf8');
+      for (const line of text.split('\n')) {
+        const m = /^ws=(.+)$/.exec(line.trim());
+        if (m !== null && m[1].trim() !== '') return resolve(m[1].trim());
+      }
+      return null;
+    } catch { return null; }
+  };
+
+  /** 写下本沙箱的元信息（**工作区的真实路径**）⇒ 收尾时不管工作区在哪都能找到它。 */
+  const writeHomeMarker = () => {
+    try {
+      writeFileSync(join(HOME_, HOME_MARKER), `home=${HOME_}\nws=${WS}\ncreated=${new Date().toISOString()}\n`);
+    } catch { /* 非致命：没有它就退回通配兜底 */ }
+  };
 
   /**
    * 凭据文件里的**键名**（只取顶层键；值一律不进输出）。
@@ -486,93 +518,17 @@ function main() {
   };
 
   /**
-   * 残留自检：**两处**都要查（#72 的原话：只看 `~/dsh-sbx*` 为 0 就以为清干净了，
-   * 其实工作区还在另一个名字下）。
+   * 护栏判据（**不退出**）：返回「不能删」的原因列表，空数组 = 可以删。
    *
-   * 三处一起报：本次的 `--home` 目录 + `~/dsh-sbx*`（不含 `-ws`）+ `~/dsh-sbx*-ws`。
-   */
-  const residualReport = () => {
-    const home = homedir();
-    let names = [];
-    try { names = readdirSync(home); } catch { names = []; }
-    const sandboxDirs = names.filter((n) => n.startsWith('dsh-sbx') && !/-ws$/.test(n)).sort();
-    const wsDirs = names.filter((n) => /^dsh-sbx.*-ws$/.test(n)).sort();
-    const homeIsUnderHome = HOME_.startsWith(home + sep);
-    say(`残留自检：本次 --home ${HOME_} ${lstatSafe(HOME_) ? '仍在' : '已无'}；`
-      + `~/dsh-sbx*（不含 -ws）${sandboxDirs.length} 个；~/dsh-sbx*-ws ${wsDirs.length} 个`);
-    for (const n of [...sandboxDirs, ...wsDirs]) {
-      const dir = join(home, n);
-      const creds = CREDENTIAL_FILES.filter((f) => lstatSafe(join(dir, f)));
-      const keys = creds.flatMap((f) => credentialKeyNames(join(dir, f)));
-      // 沙箱目录里那个**默认位置**的工作区也要报出来（它不再以 `~/dsh-sbx*-ws`
-      // 的名字出现了，但仍然是「两处」之一 ⇒ 漏了它就等于又漏一次 #72）。
-      const inner = lstatSafe(join(dir, 'ws')) ? '，含工作区 ws/' : '';
-      say(`  · ${n}${creds.length > 0 ? `（含凭据副本 ${creds.join(', ')}；键名 ${keys.join(',') || '无'}）` : ''}${inner}`);
-    }
-    if (sandboxDirs.length === 0 && wsDirs.length === 0 && !homeIsUnderHome) say('  两处都是 0 ⇒ 清干净了');
-    return sandboxDirs.length === 0 && wsDirs.length === 0;
-  };
-
-  /**
-   * 收尾：停实例 → 体检并删工作区 → 删沙箱目录 → 残留自检。
-   * @returns {number} 退出码：有东西被拒绝删（脏/不认识的）⇒ 1（**不许静默跳过**）。
-   */
-  const cleanupSandbox = () => {
-    console.log('');
-    // 护栏先行：**在停实例与任何删除之前**先证明「要删的是沙箱自己的目录」。
-    // 放晚了就成了「先删了工作区、再发现沙箱目录不该删」——那已经删出去了。
-    assertHomeIsDeletable();
-    say('收尾：停实例 → 体检工作区 → 删沙箱目录 → 残留自检');
-    const pids = pidsOfHome(HOME_);
-    let killed = 0;
-    for (const p of pids) {
-      try { process.kill(p.pid, 'SIGTERM'); killed += 1; } catch { /* 已退出 */ }
-    }
-    say(killed > 0
-      ? `已停实例：${killed} 个进程（按 DSH_HOME=${HOME_} 认领，只杀自己的）`
-      : '没有在跑的实例（按 DSH_HOME 反查为空）');
-    let refused = 0;
-    const infos = [...new Set([WS, WS_LEGACY])].map(inspectWorkspace);
-    for (const info of infos) {
-      if (!info.exists) { say(`工作区 ${info.dir}：不存在（无需处理）`); continue; }
-      if (!info.ours || !info.clean || info.hasCommit || info.credentialFiles.length > 0) {
-        refused += 1;
-        say(`⚠ 工作区 ${info.dir} 未删：${info.why}`);
-        continue;
-      }
-      assertDeletablePath(info.dir, '工作区');
-      rmSync(info.dir, { recursive: true, force: true });
-      say(`已删工作区 ${info.dir}`);
-    }
-    // 工作区默认在沙箱目录**内部** ⇒ 它脏的时候连沙箱目录也不能删（否则等于间接删掉
-    // 别人的工作区）。这时明确报出来，并让退出码非 0。
-    const dirtyInside = infos.find((i) => i.exists && i.dir.startsWith(HOME_ + sep) && (!i.clean || i.hasCommit));
-    if (dirtyInside !== undefined) {
-      refused += 1;
-      say(`⚠ 沙箱目录 ${HOME_} 未删：里面有未提交的工作区 ${dirtyInside.dir}（${dirtyInside.why}）`
-        + ' ⇒ 删它等于删掉别人的工作区；处理掉那个工作区再跑一次收尾');
-    } else if (lstatSafe(HOME_)) {
-      rmSync(HOME_, { recursive: true, force: true });
-      say(`已删沙箱目录 ${HOME_}（里面是**沙箱自带的凭据副本**，与 ~/.dsh/.credentials.yaml 无关——那份未动）`);
-    } else {
-      say(`沙箱目录 ${HOME_}：不存在（无需处理）`);
-    }
-    console.log('');
-    residualReport();
-    if (refused > 0) say(`⚠ 有 ${refused} 处拒绝删除（见上面的原因）—— 退出码 1，不静默跳过`);
-    return refused > 0 ? 1 : 0;
-  };
-
-  /**
-   * 删除前的护栏（fail-closed）：只允许删「沙箱自己的」路径。
+   * 为什么要「不退出」这一版：残留枚举里**通配扫到的每一处**都要过同一道护栏，
+   * 而其中一处不合格时，正确反应是「这一处不删 + 报出来 + 退出码 1」，不是让整条
+   * 命令死掉（那样后面几处永远看不到）。`assertDeletablePath` 仍是「不合格就 die」
+   * 的那版，用在**本次 --home**（它不通过 = 整条命令的前提不成立）。
    *
-   * `--cleanup` 是本 PR **新增**的一条以「删除」为名的路径 ⇒ 它有权删东西，就必须先证明
-   * 删的是沙箱自己的目录。任一条不满足 ⇒ **直接 die，一个字都不删**：
-   *  - 不是主目录本身、不是 `~/.dsh`、也不是 `~/.dsh` 的**祖先**目录（`~`、`/`……）
-   *  - 不是仓库目录（自身带 `.git` 的也算）
-   *  - 形状对：要么是 `--home` **显式给出**的，要么**正好等于**默认的 `~/dsh-sbx-<entry>`
+   * ⚠️ 这份判据**不含**「自己带 .git」那条：工作区**本来就是**脚本 git init 出来的
+   * 仓 ⇒ 那条只在「沙箱目录」这一种目标上成立（见 `assertHomeIsDeletable`）。
    */
-  const assertDeletablePath = (target, what) => {
+  const deletablePathProblems = (target) => {
     const t = resolve(target);
     const homeDir = resolve(homedir());
     const live = resolve(join(homeDir, '.dsh'));
@@ -582,6 +538,12 @@ function main() {
     if (t === live) problems.push('它是 live 宿主的 ~/.dsh');
     if (live.startsWith(t + sep)) problems.push('它是 ~/.dsh 的祖先目录（live 的状态在它下面）');
     if (t === repoDir) problems.push('它是仓库目录');
+    return problems;
+  };
+
+  const assertDeletablePath = (target, what) => {
+    const t = resolve(target);
+    const problems = deletablePathProblems(t);
     if (problems.length > 0) {
       die(`拒绝删除${what} ${t}：${problems.join('；')}\n`
         + '      沙箱目录必须是「--home 显式给出的」或「正好等于默认的 ~/dsh-sbx-<entry>」那种专用目录，\n'
@@ -590,7 +552,9 @@ function main() {
     return t;
   };
 
-  /** 沙箱目录专属的那一条：在通用护栏之外，还要「形状对」。 */
+  /**
+   * 沙箱目录专属的那一条：在通用护栏之外，还要「形状对」且**自己不是仓库**。
+   */
   const assertHomeIsDeletable = () => {
     const t = assertDeletablePath(HOME_, '沙箱目录');
     // 沙箱目录自己带 .git ⇒ 它是个仓库目录（不是沙箱）⇒ 拒。
@@ -604,8 +568,178 @@ function main() {
     return t;
   };
 
+  /**
+   * 残留枚举（`--cleanup` 与 `--residual` 的**唯一**来源 ⇒ 两份报告不会漂开）。
+   *
+   * #83 的教训：工作区**不一定**在 `<home>/ws`（历史遗留的 `~/dsh-sbx-<entry>-ws`、
+   * 或显式 `--ws <dir>` 指到别处）⇒ 认死 `<home>/ws` 就会「报出残留、却删不掉」。
+   * ⇒ 枚举四处来源：
+   *  ① 本次 `--home` 的沙箱目录；
+   *  ② **沙箱目录里记着的真实工作区路径**（可能在 `<home>` 之外）；
+   *  ③ 新默认位置 `<home>/ws`；
+   *  ④ 旧默认位置 `~/dsh-sbx-<entry>-ws`；
+   *  ⑤ 通配兜底 `~/dsh-sbx-*-ws`（每一处**照旧过同一道闸门与护栏**）；
+   *  ⑥ 别处的沙箱目录（**不归本命令管** ⇒ 不删，只报并给删除方式）。
+   *
+   * 每一处带一个**处置**：`absent`（不存在）/ `delete`（闸门与护栏都过了）/
+   * `refuse`（过不了 ⇒ 不删 + 报出 + 退出码 1）/ `keep`（不归本命令管）。
+   */
+  const enumerateResiduals = () => {
+    const home = homedir();
+    const seen = new Set();
+    const out = [];
+    const add = (path, kind, scope) => {
+      const p = resolve(path);
+      if (seen.has(p)) return;
+      seen.add(p);
+      out.push({ path: p, kind, scope, verdict: 'absent', reason: '', how: '' });
+    };
+    // ① 本 entry 的沙箱目录
+    add(HOME_, 'sandbox-home', 'own');
+    // ② 标记文件里记着的**真实工作区路径**
+    const recorded = readHomeMarkerWs();
+    if (recorded !== null) add(recorded, 'workspace', 'own');
+    // ③ 新默认位置 <home>/ws
+    add(join(HOME_, 'ws'), 'workspace', 'own');
+    // ④ 旧默认位置 ~/dsh-sbx-<entry>-ws
+    add(WS_LEGACY, 'workspace', 'own');
+    let names = [];
+    try { names = readdirSync(home); } catch { names = []; }
+    // ⑤ 通配兜底：家目录下的其它工作区（每一处照旧过同一道闸门与护栏）
+    for (const name of names) {
+      if (!/^dsh-sbx.*-ws$/.test(name)) continue;
+      add(join(home, name), 'workspace', 'candidate');
+    }
+    // ⑥ 别处的沙箱目录（不是本 entry 的 ⇒ **不删**，只报并给删除方式）
+    for (const name of names) {
+      if (!name.startsWith('dsh-sbx') || /-ws$/.test(name)) continue;
+      add(join(home, name), 'sandbox-home', 'foreign');
+    }
+    return out;
+  };
+
+  /**
+   * 给一处残留定处置（闸门 + 护栏，**一条都不许放宽**）。
+   *
+   * 闸门沿用 #72 的两套：工作区走 `inspectWorkspace`（标记文件/空 git 仓签名 +
+   * 干净 + 无提交 + 无远端 + 无凭据，**查不出来即拒绝**），沙箱目录另加
+   * 「自己带 .git ⇒ 那是仓库目录不是沙箱目录」。
+   */
+  const judgeResidual = (rec) => {
+    if (!lstatSafe(rec.path)) { rec.verdict = 'absent'; return rec; }
+    if (rec.scope === 'foreign') {
+      rec.verdict = 'keep';
+      rec.reason = '它不是本 entry 的沙箱目录（本命令不删别处的东西）';
+      rec.how = `确认里面没有你要留的东西后手动删：rm -rf ${rec.path}`;
+      return rec;
+    }
+    const problems = deletablePathProblems(rec.path);
+    if (problems.length > 0) {
+      rec.verdict = 'refuse';
+      rec.reason = `护栏不许删：${problems.join('；')}`;
+      rec.how = '这条路径不是沙箱自己的目录，请人工判断后再处理';
+      return rec;
+    }
+    if (rec.kind === 'sandbox-home') {
+      rec.verdict = 'delete';
+      rec.reason = '本 entry 的沙箱目录';
+      return rec;
+    }
+    const info = inspectWorkspace(rec.path);
+    if (!info.exists) { rec.verdict = 'absent'; return rec; }
+    if (!info.ours || !info.clean || info.hasCommit || info.hasRemote || info.credentialFiles.length > 0) {
+      rec.verdict = 'refuse';
+      rec.reason = info.why;
+      rec.how = `确认那里的内容不要了之后手动删：rm -rf ${rec.path}`;
+      return rec;
+    }
+    rec.verdict = 'delete';
+    rec.reason = '本沙箱建的工作区，且干净';
+    return rec;
+  };
+
+  /**
+   * 残留报告（`--cleanup` 与 `--residual` **同一份** ⇒ 不会漂开）。
+   *
+   * ⚠️ 「报告与能力一致」：凡是**没删掉**的，每一处都必须写清
+   * 「这条命令不会删它，原因 X，删除方式 Y」⇒ 不许留「报了残留却退出码 0」那种
+   * 自相矛盾的形态（那正是 #83 的现场）。
+   *
+   * @param {object[]} recs - 枚举并判定过的残留。
+   * @param {'cleanup'|'residual'} mode - 只读模式不删，只说「会删」。
+   * @returns {number} 还剩几处（>0 ⇒ 退出码 1，与报告一致）。
+   */
+  const reportResiduals = (recs, mode) => {
+    const left = recs.filter((r) => r.verdict === 'refuse' || r.verdict === 'keep');
+    const willDelete = recs.filter((r) => r.verdict === 'delete' && mode === 'residual');
+    const kinds = (list) => ({
+      home: list.filter((r) => r.kind === 'sandbox-home').length,
+      ws: list.filter((r) => r.kind === 'workspace').length,
+    });
+    const l = kinds(left);
+    say(`残留自检（--cleanup 与 --residual 同源）：还剩 ${left.length} 处`
+      + `（沙箱目录 ${l.home} / 工作区 ${l.ws}）；会删（--cleanup 时）${willDelete.length} 处`);
+    for (const r of willDelete) {
+      say(`  · ${r.path} —— 会在 --cleanup 时删掉（${r.reason}）`);
+    }
+    for (const r of left) {
+      say(`  · ${r.path} —— 这条命令不会删它：${r.reason}；删除方式：${r.how}`);
+    }
+    if (left.length === 0 && willDelete.length === 0) say('  两处都是 0 ⇒ 清干净了');
+    return left.length;
+  };
+
+  /**
+   * 收尾：停实例 → 枚举残留 → 能删的删 → 同源报告。
+   * @returns {number} 退出码：还有残留 ⇒ 1（与报告一致，**不许静默跳过**）。
+   */
+  const cleanupSandbox = () => {
+    console.log('');
+    // 护栏先行：**在停实例与任何删除之前**先证明「要删的是沙箱自己的目录」。
+    // 放晚了就成了「先删了工作区、再发现沙箱目录不该删」——那已经删出去了。
+    assertHomeIsDeletable();
+    say('收尾：停实例 → 枚举残留 → 能删的删 → 残留自检');
+    const pids = pidsOfHome(HOME_);
+    let killed = 0;
+    for (const p of pids) {
+      try { process.kill(p.pid, 'SIGTERM'); killed += 1; } catch { /* 已退出 */ }
+    }
+    say(killed > 0
+      ? `已停实例：${killed} 个进程（按 DSH_HOME=${HOME_} 认领，只杀自己的）`
+      : '没有在跑的实例（按 DSH_HOME 反查为空）');
+    const recs = enumerateResiduals().map(judgeResidual);
+    // 沙箱目录里若有一个**被拒删**的工作区 ⇒ 沙箱目录也不删（#72 的口径：删它等于
+    // 间接删掉别人的工作区）。
+    const innerRefused = recs.find((r) => r.kind === 'workspace' && r.verdict === 'refuse' && r.path.startsWith(HOME_ + sep));
+    const homeRec = recs.find((r) => r.kind === 'sandbox-home' && r.scope === 'own');
+    if (homeRec !== undefined && homeRec.verdict === 'delete' && innerRefused !== undefined) {
+      homeRec.verdict = 'refuse';
+      homeRec.reason = `里面有未提交的工作区 ${innerRefused.path}（${innerRefused.reason}）`;
+      homeRec.how = '处理掉那个工作区再跑一次收尾';
+    }
+    // 先删工作区、后删沙箱目录（顺序反了，删沙箱目录时就看不见里面那个工作区了）。
+    for (const r of recs) {
+      if (r.verdict !== 'delete' || r.kind !== 'workspace') continue;
+      rmSync(r.path, { recursive: true, force: true });
+      r.verdict = 'deleted';
+      say(`已删工作区 ${r.path}`);
+    }
+    if (homeRec !== undefined && homeRec.verdict === 'delete' && lstatSafe(homeRec.path)) {
+      rmSync(homeRec.path, { recursive: true, force: true });
+      homeRec.verdict = 'deleted';
+      say(`已删沙箱目录 ${homeRec.path}（里面是**沙箱自带的凭据副本**，与 ~/.dsh/.credentials.yaml 无关——那份未动）`);
+    }
+    console.log('');
+    return reportResiduals(recs, 'cleanup') > 0 ? 1 : 0;
+  };
+
   if (flag('cleanup')) process.exit(cleanupSandbox());
-  if (flag('residual')) { console.log(''); residualReport(); process.exit(0); }
+  if (flag('residual')) {
+    console.log('');
+    const recs = enumerateResiduals().map(judgeResidual);
+    // 与 --cleanup **同一份**枚举与判定 ⇒ 只读模式下「会删/不会删」的结论一致。
+    process.exit(reportResiduals(recs, 'residual') > 0 ? 1 : 0);
+  }
 
   let entryId = entryCfg;
   if (!flag('deploy')) {
@@ -613,6 +747,7 @@ function main() {
     assertHomeIsDeletable();
     rmSync(HOME_, { recursive: true, force: true });
     mkdirSync(PROFILE, { recursive: true });             // 漏了它，copyFileSync 直接 ENOENT
+    writeHomeMarker();                                   // 记下工作区的真实路径（#83）
     mkdirSync(join(HOME_, 'logs'), { recursive: true }); // 建错位置会让启动崩在 spawn 之后
     for (const f of ['package.json', 'cordis.yml', 'compatibility.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'cordis.patch.yml']) {
       const src = join(LIVE_PROFILE, f);
@@ -741,6 +876,8 @@ function main() {
   // 故意放在工作树里（不是 `.git/` 里）：它要能被 `git status --porcelain` 看见，
   // 收尾时才能把它从「脏」里**排除**（否则自己写的标记会让自己永远「脏」）。
   try { writeFileSync(join(WS, WS_MARKER), `home=${HOME_}\ncreated=${new Date().toISOString()}\n`); } catch { /* 非致命 */ }
+  // 沙箱目录那份标记也更新一次（`--deploy` 那条路不重建沙箱 ⇒ 标记得跟着当次的 --ws 走）。
+  writeHomeMarker();
 
   const env = { ...process.env, DSH_HOME: HOME_ };
   const envFile = join(homedir(), '.dsh', 'env.local');
