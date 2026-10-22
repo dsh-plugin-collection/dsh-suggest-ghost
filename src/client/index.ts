@@ -29,8 +29,8 @@
 
 import type {} from '@deepseek-ai/dsh-client-ui-conversation';
 import type { Context } from '@deepseek-ai/cordis';
-import type { SuggestGhostProjection, SuggestGhostSuggested } from '../domain.ts';
-import { clearNormalizeCache, commonPrefixLength, extractHistory, historySuggestion, normalizeForMatch, stripCommandPrefix } from './history.ts';
+import type { SuggestGhostProjection, SuggestGhostSuggested } from '../domain.js';
+import { clearNormalizeCache, commonPrefixLength, extractHistory, historySuggestion, normalizeForMatch, stripCommandPrefix } from './history.js';
 import {
   acceptTarget,
   buildFullAccept,
@@ -47,10 +47,10 @@ import {
   type DraftSnapshot,
   type FrameHint,
   type FrameLedger,
-} from './accept-guard.ts';
-import { alignCompletion, decideInlineForm } from './completion-align.ts';
-import { buildOpsPayload, createSeqSource } from './ops-envelope.ts';
-import { nextAcceptChunk } from './chunk.ts';
+} from './accept-guard.js';
+import { alignCompletion, decideInlineForm } from './completion-align.js';
+import { buildOpsPayload, createSeqSource } from './ops-envelope.js';
+import { nextAcceptChunk } from './chunk.js';
 import {
   anchorMovedBeyond,
   configValuesEqual,
@@ -68,8 +68,8 @@ import {
   type InlineArmState,
   type OverlayShape,
   type TallyState,
-} from './inline-arm-policy.ts';
-import { keyCodeOf } from './keyspec.ts';
+} from './inline-arm-policy.js';
+import { keyCodeOf } from './keyspec.js';
 /**
  * 远程 `mutate` 兑现值的分类与写后判定（纯函数模块）。#16 的实质就落在「兑现 ≠ 落盘」
  * 这一层判定上，所以它必须能离线驱动测试（`scripts/ops-write-verify-smoke.mjs`），
@@ -82,10 +82,10 @@ import {
   unwrapMutateResult,
   verdictFromView,
   type WriteVerdict,
-} from './settings-result.ts';
-import { SuggestGhostCard } from './settings-card.tsx';
-import type { PluginSettingsScope } from './settings-scope.ts';
-import type { LocaleFaceLike } from './useGhostT.ts';
+} from './settings-result.js';
+import { SuggestGhostCard } from './settings-card.js';
+import type { PluginSettingsScope } from './settings-scope.js';
+import type { LocaleFaceLike } from './useGhostT.js';
 
 /**
  * 宿主可观察快照的最小结构视图。不从 @deepseek-ai/dsh-client-runtime 导入：
@@ -120,6 +120,78 @@ interface InputFaceLike {
  */
 interface SessionListSnapshotLike {
   byId: Record<string, { id: string; retainedBy?: Record<string, number | undefined> }>;
+}
+
+/**
+ * 宿主**客户端** sessions 服务的最小面（#81：只补类型面，不动任何判据逻辑）。
+ *
+ * ## 为什么在插件侧声明，而不是直接吃宿主的类型
+ * `ctx.get('sessions')` 在类型上被解析成 `@deepseek-ai/dsh-session` 的**服务端**
+ * `SessionStore`——那里 `list()` 是个方法、且没有 `scope`/`sessionOf`。而浏览器里运行时
+ * 拿到的是宿主**客户端**服务（`@deepseek-ai/dsh-api-session-controller` 的 client sessions
+ * service）。该包**不在本仓 devDeps**（实测 `require.resolve` 三个宿主客户端包全部失败），
+ * 而客户端必须保持**零内核导入**（本文件头注释；`lib/client.js` 实测不含任何
+ * `@deepseek-ai/*` 运行时引用）⇒ 出路只有像既有的 `RemoteLike` / `InputFaceLike` /
+ * `SessionListSnapshotLike` 一样声明本地最小面。
+ *
+ * ## 成员出处（能实证的都给行号）
+ *  - `list`        ← `…/dsh-api-session-controller/lib/types/client/sessions/service.d.ts:99`
+ *                     `readonly list: SnapshotStore<SessionListState>`
+ *  - `scope(id)`   ← 同文件 `:213` `scope(id: SessionId): AgentContext | undefined`
+ *  - `sessionOf`   ← 同文件 `:238` `sessionOf(ctx: Context): SessionFace | undefined`
+ *  - `faceOf(key)` ← `…/client/sessions/projection-store.d.ts:70`
+ *                     `faceOf(key: string): ObservableSnapshot<unknown>`
+ *    最后这条是关键：宿主返回的类型名**就叫 `ObservableSnapshot`**，与本文件上方那个本地
+ *    接口同名同形 ⇒ 不是我把形状安到宿主头上。
+ *
+ * ## **推断**的部分（写明，不混进上面）
+ * `SnapshotStore` / `ObservableSnapshot` 的**成员形状**（`getSnapshot()` + `subscribe(listener)`
+ * 返回退订函数）读不到源：`@deepseek-ai/dsh-client-store` 在本机宿主目录与主仓
+ * node_modules 里**均未找到**（查过 `.pnpm` 顶层与 `@deepseek-ai/` 目录）。两条独立佐证
+ * 支撑该形状：① `bound.projectionFace` 早就是本地 `ObservableSnapshot<unknown>`，且
+ * `resolve()` 里的生产路径真的对它 `.subscribe()`；② `list.subscribe` 的返回值被当退订函数
+ * 成对使用（`unList()`）。⇒ 哪天宿主改了形状，这里会以**编译期报错**而不是运行时
+ * `undefined` 暴露 —— 这正是本块想要的失效方向。
+ *
+ * **刻意只声明用到的成员**：以后要碰 `ids` / `phase` 等未声明成员会在编译期红，而不是
+ * 悄悄拿到 `undefined`。
+ */
+interface ClientSessionsSurface {
+  readonly list: ObservableSnapshot<SessionListSnapshotLike>;
+  scope(id: string): ClientAgentContextLike | undefined;
+  sessionOf(ctx: ClientAgentContextLike): ClientSessionFaceLike | undefined;
+}
+
+/** 会话级 fiber 上下文；本插件只用到它的 `get('conversation')`。 */
+interface ClientAgentContextLike {
+  get(name: 'conversation'): ClientConversationLike | undefined;
+}
+
+/** 宿主输入机所在服务；只用到 `input.for(ctx)`（返回值下游本就有 `as unknown as` 收口）。 */
+interface ClientConversationLike {
+  readonly input: { for(ctx: ClientAgentContextLike): unknown };
+}
+
+/** 只用到 `projections.faceOf(key)`，返回类型直接照抄宿主声明。 */
+interface ClientSessionFaceLike {
+  readonly projections: { faceOf(key: string): ObservableSnapshot<unknown> };
+}
+
+/**
+ * 客户端连接代际事件（#81）。宿主在 `dsh-client-connection/lib/types/client/index.d.ts:12-19`
+ * 就是用下面这个形状声明它的（本块与之**同形同义**，不是自创），运行时由
+ * `dsh-api-gateway/lib/client.browser.js:1640` 在连接建立后 emit，宿主自家客户端包也有
+ * 三处同款监听。**因此 `ctx.on('connection/reset')` 一直是合法写法** —— 它报 TS2345 只是因为
+ * 那个包不在本仓 devDeps、augmentation 进不来（`require.resolve` 实测失败）。
+ *
+ * ⚠️ 若将来把 `@deepseek-ai/dsh-client-connection` 加进 devDeps，**删掉本块**改用宿主声明：
+ * 事件表这种面一旦有两份真相，就会把「谁改了事件名」变成查不出的问题。
+ */
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /** 一个新的连接代际建立： wire 派生的缓存必须重拉（长生命周期流自理恢复）。 */
+    'connection/reset'(): void;
+  }
 }
 
 /** 当前（主视图）会话 id；没有会话打开时为 undefined。 */
@@ -989,7 +1061,13 @@ function applyInner(ctx: Context): void {
 
 /** applyInner 的主体（原函数体）。 */
 function applyBody(ctx: Context): void {
-  const sessions = ctx.get('sessions');
+  /**
+   * `as unknown as ClientSessionsSurface` 是**类型面**修正，不是逻辑修正（#81）：
+   * 拿到的对象运行时一直是宿主客户端服务，只是 tsc 顺着内核服务映射把它读成了服务端
+   * `SessionStore`。断言写在**取得这一处**而不是每个调用点，是为了让「面接错」只剩一个
+   * 可审的落点；`undefined` 分支保持原样，早退判据一字未动。
+   */
+  const sessions = ctx.get('sessions') as unknown as ClientSessionsSurface | undefined;
   if (sessions === undefined) return;
   const overlay = new GhostOverlay();
   let lastSessionId: string | undefined;
