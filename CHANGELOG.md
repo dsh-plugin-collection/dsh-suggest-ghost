@@ -363,6 +363,22 @@ All notable changes to this project will be documented in this file.
     `3/2 = 1.50` 这种不可能的数）；沙箱 bundle 带进来的 `auto-continue` 插件会自己发「继续」、它的回合末尾同样
     写热度、同样开窗口 ⇒ 观测到的窗口并非本次编排开的 ⇒ 按「**已执行 ≠ 已归因**」如实收口，**不把 6 当命中率报**
 
+- **留痕把「正文为空」与「载荷损坏」分档**（#73）：此前 `corrupt-payload` 同时描述两种性质不同的情况
+  （JSON 解析不了/字段类型不对；以及**结构合法、只是正文为空** ⇒ `src/coldstart.ts` 把 `text === ''`
+  判成「无建议」）⇒ 读到它的人会去怀疑写盘路径（实测排障时真的被误导过一次：沙箱里手写 `text:""` 的终帧
+  ⇒ 留痕看着像盘上载荷坏了）
+  - **分档而不改名**：真损坏保持 `corrupt-payload`（旧留痕的检索习惯不动）；正文为空得到 **`empty-text`**；
+    **处置一字未动**（不恢复、不动盘）；三档优先级也保持原样（`sessionId === null` 仍**先**判
+    `session-mismatch`，否则「归属不上的空正文」会从旧档漂到新档）
+  - **`empty-text` 的留痕带定位**：`turn` / `baseSeq` / `chars` / `session`（**不打正文**）⇒
+    三条实测：空正文 `turn=2 baseSeq=3 chars=0`；真损坏 `turn=n/a baseSeq=n/a chars=n/a`；残留格同档
+  - **「两格同一档」是构造性的**：分类只做在 `parsePersistedPush` 一处、以**数据**返回
+    （新增 `emptyText: {turn, baseSeq} | null`），`decidePersistedPush` 只映射 reason ⇒ `_push` 与 `_residual`
+    共用同一条链，**不靠人记住别写第二套校验**
+  - 回归：`coldstart-smoke` 第 12 节 + `coldstart-e2e` 新增小节 7（三次独立 boot 逐字比留痕）；三档都断言
+    「不动建议格」（写次数为 0 且盘上原文逐字未变）；变异自证的特异性也对（并回两档 ⇒ 冒烟+e2e 红；
+    不打定位 ⇒ 只有 e2e 红）
+
 ### 修复
 
 - **HMR 事务内写失败退化成微任务紧循环（2026-10-22 事故：tee 日志 23 GB、事件循环卡死）**。
