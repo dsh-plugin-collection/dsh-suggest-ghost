@@ -178,12 +178,19 @@ Three details that only surface when you try them:
   ride in `_push`. Neither means data loss: the authoritative store of the hotness table is the
   `suggest_ghost_hotness` domain (`src/hotness-store.ts:44-45`) and `_hot` is only the snapshot handed
   to the client, so a refresh brings both back.
-- **A 1000ms write-coalescing window on the hotness cell**: several hotness/history changes
-  within one window land as a single write. Writes that carry the **suggestion cell are never
-  delayed** by it, and a `pull` answer, the post-restore re-push, and plugin unload all force the
-  current snapshot out. The observable cost is that the hotness list can lag by up to
-  ~window + one pump tick (≤1.5s) — it affects hotness **ordering** (history-candidate scoring),
-  never the suggestion itself.
+- **Hot-cell write-coalescing window (1000 ms)**: only **hot-only** changes are coalesced (rapid
+  typing, a burst of ops); the **suggestion cell is always written immediately** and is never
+  delayed by the window, and a `pull` yields it (its answer carries the current hotness). The
+  post-restore re-push and plugin unload also bypass the window. **User-visible cost**: the hot
+  table's **ranking** may lag by ≤1.5 s — **the suggestion itself is unaffected**. Measured on real
+  session logs with the pure scoring function (**120 sessions / 8134 judgements**): the
+  unconditional rate of "nothing offered this time" is ≈ **0.033 %** (3 cases), while a snapshot
+  lagging a **whole turn** costs 12.6 % — the visible cost of a staleness window depends on the
+  ratio *user input cadence ÷ staleness bound* (measured here: median inter-input gap 341 s, only
+  0.29 % ≤ 1.5 s), **not on the window size itself**. Recompute with
+  `node --experimental-strip-types scripts/hot-window-staleness.mjs` /
+  `scripts/hot-window-timeline.mjs` (deliberately **not** wired into `test:smoke`). Under
+  programmatic bursts (adjacent inputs ≤1.5 s) that 12.6 % becomes a real cost — see issue #63.
 - **Do not treat "volatile fields are not persisted" as a guarantee**: this plugin's `_ops` / `_push` are written into the profile document, and the clear-after-consume write is refused as a nested transaction, so a payload stays on disk and a fresh instance replays it at boot (measured in an isolated instance: one leftover `complete` was consumed before any client connected). See the cold-start section above and issue #22.
 - **No polling on the client**: what `0.1.7` removed along with `settingsScope` is only `scope.subscribe`. The kernel has a separate Host→client event channel — `ctx.remote.$on('settings/document-updated')`, on dsh-api-remotes' forwarding allowlist (mode `emit`). The kernel's own settings page drives `SettingsDescribeMirror` off exactly that. This plugin subscribes the same way, so `describe()` is issued only when the host actually pushes `_push`, plus once at startup and once per `connection/reset`.
 
@@ -207,8 +214,10 @@ scripts/             smoke tests and session log replay
 
 ### Read this before touching the settings channel
 
-`_ops` / `_push` / `_hot` are the only ways this plugin talks to the host (the last two are the
-host→client cells), and three separate bugs came
+`_ops` / `_push` / `_hot` / `_residual` are every channel this plugin writes into settings
+(`_push` and `_hot` are the two host→client cells the client reads; `_residual` is a
+**host-internal** cell holding a suggestion whose session never checked in, #56 — the client
+never reads it, so it stays out of the projection surface), and three separate bugs came
 from that channel's semantics, not from business logic: `mutate()`'s third argument means "the
 revision I read" rather than "the value I want to overwrite", so a refused write can look like a
 successful one; a zod schema and a TS union are two separate truths, so adding an operation to only
@@ -221,6 +230,10 @@ transaction survives `await`, so deferring by a tick does not escape it). A sepa
 explains why traces have to go to stdout: `ctx.logger` writes nowhere in a healthy process, so the only
 runtime-visible channel is `console.log` tee'd into the host log, and this plugin tags those traces with
 `[dsh-suggest-ghost][ops-trace]` to keep them distinguishable from debug noise.
+
+Contribution flow on Gitea (the correct `tea comment` form and why the wrong one
+fails silently, branch/PR rules, `lib/` and main-checkout discipline) lives in
+[docs/gitea-workflow.md](docs/gitea-workflow.md).
 
 [docs/internals-cordis-settings-pitfalls.md](docs/internals-cordis-settings-pitfalls.md) covers
 each as symptom, root cause, correct usage, wrong usage, with file:line and commit evidence. Every
