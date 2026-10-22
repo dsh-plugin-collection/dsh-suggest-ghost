@@ -305,6 +305,16 @@ All notable changes to this project will be documented in this file.
   - 客户端只加两个**只读**计数（`ownerHidden` / `llmGhostOffered`）与一条归属守卫场景（B 在场隐藏 A 的残留、
     切回 A 立即可用且**不重推**）⇒ 判据语义未动
 
+- **新增 `docs/gitea-workflow.md`**：本仓交付路径上的**两条会静默失败的坑**与协作约定。① **发评论的正确形式是
+  `tea comment -r <repo> <编号> "<正文>"`**，错误形式 `tea issues comment add …` 在本机 tea 上**退出码 0**、
+  把 issue 列表当结果打出来、**评论没进服务器** ⇒ 这条形式**不能靠「跑一遍看有没有报错」验证**（报错本来
+  就不是它的失败模式）；且**发完必须回读**，唯一可靠的回读是 API（`tea issues -o json` 的 `comments` 字段恒为
+  空数组，用它复核会得出**反向**的错误结论）。② **`lib/` 是入库产物**（多分支各自重建必然冲突 ⇒ 由 lead 在
+  main 上统一重建）⇒ **冒烟导入的是 `lib/` 不是 `src/`**，「变异没让断言变红」多半是忘了重建，而不是断言无效
+  （本仓这两天真实踩过两次）。另含：origin-only / 禁 `git add -A` / 主仓是 live 那份 / worktree 里 pnpm 不可用
+  的替代命令 / `dev-sandbox.mjs` 无参即启动实例 / 回收 worktree 时 cherry-pick 分支要用**空 diff** 判等价 /
+  断言三态口径（NOT-COVERED 不许写成通过）与两条变异口径
+
 ### 修复
 
 - **HMR 事务内写失败退化成微任务紧循环（2026-10-22 事故：tee 日志 23 GB、事件循环卡死）**。
