@@ -180,7 +180,9 @@ Three details that only surface when you try them:
   to the client, so a refresh brings both back.
 - **Hot-cell write-coalescing window (1000 ms)**: only **hot-only** changes are coalesced (rapid
   typing, a burst of ops); the **suggestion cell is always written immediately** and is never
-  delayed by the window, and a `pull` yields it (its answer carries the current hotness). The
+  delayed by the window, and **both `pull` and `complete` (the op the client sends while
+  composing) yield it** — the window is abandoned exactly when someone is about to use the hot
+  table. The
   post-restore re-push and plugin unload also bypass the window. **User-visible cost**: the hot
   table's **ranking** may lag by ≤1.5 s — **the suggestion itself is unaffected**. Measured on real
   session logs with the pure scoring function (**120 sessions / 8134 judgements**): the
