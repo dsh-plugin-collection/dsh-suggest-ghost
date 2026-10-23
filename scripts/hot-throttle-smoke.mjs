@@ -288,8 +288,15 @@ runGate('6) 卸载前强刷热度 + whenReady 补推带 hotNow（两条都在代
     '卸载路径里没有「把挂起的热度刷出去」⇒ 最后一段热度会随进程消失（判据 4）');
   const whenReady = hostSource.slice(hostSource.indexOf('persistence.whenReady'), hostSource.indexOf('persistence.whenReady') + 900);
   assert.ok(/hotNow: true/.test(whenReady), 'whenReady 那次修正被窗口拖后 = 客户端多看一个窗口的不完整快照（判据 5）');
-  const pull = hostSource.slice(hostSource.indexOf('ops consumed: pull'), hostSource.indexOf('ops consumed: pull') + 700);
-  assert.ok(/hotNow: true/.test(pull), 'pull 应答没有让路（判据 2 的代码不在了）');
+  // 锚点从「固定 700 字符切窗」换成「pull 那行之后**第一笔** pushToClient」。判据 2 说的是
+  // 「pull 的应答要让路」，切窗宽度与这条语义无关：留痕行一变长就把 `hotNow` 切到窗外假红
+  // （2026-10-23 给 pull 加同会话重复计数时正好撞上，实测差 2 个字符）。
+  // 变异自证：删掉应答那处的 `{ hotNow: true }` ⇒ 本条红；把 pull 留痕整行删掉 ⇒ 本条报
+  // 「没有载体」而不是静默通过。
+  const pullAt = hostSource.indexOf('ops consumed: pull');
+  const answerAt = hostSource.indexOf('pushToClient(', pullAt);
+  assert.ok(pullAt > 0 && answerAt > pullAt, '找不到 pull 消费行或它的应答调用 ⇒ 本条没有载体');
+  assert.ok(/hotNow: true/.test(hostSource.slice(answerAt, answerAt + 120)), 'pull 应答没有让路（判据 2 的代码不在了）');
 });
 
 console.log = realLog;

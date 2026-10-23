@@ -333,4 +333,14 @@ export declare const name = "dsh-suggest-ghost";
 export declare const HOT_DRAIN_MAX_ATTEMPTS = 3;
 /** 热度格写合并窗口的长度在此 re-export，冒烟从 `lib/index.js` 读它更顺手。 */
 export { HOT_PUSH_WINDOW_MS, decideHotPush } from './deferred-writes.js';
+/**
+ * pull 消费行的同一会话连续重复留痕间隔（2026-10-23 降噪，见
+ * `consumeOps` 里的计数段）。
+ *
+ * 取 5 的理由是它对上了客户端的退避阶梯：`PULL_MAX_ATTEMPTS=4` + 首发 = **一个阶梯
+ * 正好 5 条 pull**，所以 `#1` 与 `#5` 各打一行——第一行证明「这个会话开始对账了」，
+ * 第五行证明「它把重试预算跑满了、宿主应答没被确认」。中间的 2/3/4 条是同一条消息
+ * 的复读（宿主侧动作逐字相同），把它们并掉不丢任何判据。
+ */
+export declare const PULL_REPEAT_TRACE_EVERY = 5;
 export declare function apply(ctx: Context, config: GenerateConfig): void;

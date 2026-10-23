@@ -70,6 +70,11 @@ import { parseHotnessOps, setupHotnessPersistence } from './hotness-store.js';
 import type { ParsedOpsResult } from './hotness-store.js';
 import { applySuggestGhostProjection, initSuggestGhostProjection, suggestGhostSchema } from './projection.js';
 import { EMPTY_PUSH, mergeLiveConfig, SUGGEST_GHOST_NAMESPACE } from './settings.js';
+import {
+  initialRepeatTraceGate,
+  repeatTraceSuffix,
+  stepRepeatTrace,
+} from './trace-gate.js';
 import { PROJECTION_KEY } from './domain.js';
 import type { SuggestGhostProjection } from './domain.js';
 
@@ -333,6 +338,17 @@ export const HOT_DRAIN_MAX_ATTEMPTS = 3;
 export { HOT_PUSH_WINDOW_MS, decideHotPush } from './deferred-writes.js';
 
 /**
+ * pull 消费行的同一会话连续重复留痕间隔（2026-10-23 降噪，见
+ * `consumeOps` 里的计数段）。
+ *
+ * 取 5 的理由是它对上了客户端的退避阶梯：`PULL_MAX_ATTEMPTS=4` + 首发 = **一个阶梯
+ * 正好 5 条 pull**，所以 `#1` 与 `#5` 各打一行——第一行证明「这个会话开始对账了」，
+ * 第五行证明「它把重试预算跑满了、宿主应答没被确认」。中间的 2/3/4 条是同一条消息
+ * 的复读（宿主侧动作逐字相同），把它们并掉不丢任何判据。
+ */
+export const PULL_REPEAT_TRACE_EVERY = 5;
+
+/**
  * 挂载插件：监听完成回合、按会话生成建议、注册投影单元，并把配置暴露
  * 到 WebUI 设置页（settings 命名空间，live 生效）。
  * @param ctx - 提供 LLM 与会话服务的 cordis 上下文。
@@ -567,6 +583,13 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   /** `hotness ops applied` 行的闸门状态（判据见 consumeOps 内注释）。 */
   let hotAppliedSeen = 0;
   let lastTracedTableSize = -1;
+  /**
+   * pull 消费行的同会话连续重复计数（判据与取数依据见 {@link PULL_REPEAT_TRACE_EVERY}）。
+   *
+   * 只记**最后一个被 pull 的会话**（key 变化即重新开门，无需 Map、也不封顶：值域是
+   * 「一次进程内的连续重复次数」，不是会话数量）。闸门本体是纯函数，见 `src/trace-gate.ts`。
+   */
+  let pullRepeatGate = initialRepeatTraceGate();
   /**
    * client 最后一次 `_ops` 写入捎带的 UI 语言（'zh' | 'en'）。
    * host 重启后为空，client 下次 pull 会重新捎带；语言检测时作为先验加成。
@@ -1960,12 +1983,20 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           }
           if (payload === null) return; // 这次写只带了热度格：没有建议格可排队
           if (triage.disposition === 'queue') {
-            // 带续写的丢弃**不节流**：每 50 次才记一条，而恰恰是这一次丢了用户等的东西；
-            // 被 #2..#49 吞掉就等于把 #15 的结论又藏回去了。
-            if (carriesCompletion) {
-              traceOps(`push write refused (${triage.cls}) rev=${rev} carriedCompletion=1 after=${Date.now() - pushStartedAt}ms: ${text}`);
-            }
-            traceFault(triage.kind, `push write refused (${triage.label}) (rev=${rev} queued${carriesCompletion ? ' carriedCompletion=1' : ''}): ${text}`,
+            // **一次被拒只留一行**（2026-10-23 live：54 次被拒 = **107 行**，同一件事打两行）。
+            // 旧实现那两行各有存在理由，合并后两个要件都还在这一行里：
+            //  - `after=…ms`：#39 的时长合法性断言（`hmr-write-loop-smoke` A3/A3b/A3c 按
+            //    `/push write refused .*carriedCompletion=1/` 找载体并**要求 `after=` 在场**，
+            //    缺键会读成通过，所以那三条专门钉过它）。
+            //  - `kind #N` 计数桶 + `every=1`：带续写的丢弃**不节流**——每 50 次才记一条会把
+            //    「这一次丢了用户正等的东西」藏回 #2..#49 里（#15 的教训）。
+            // 类别串从 `triage.cls`（`structural-refusal`）换成 `triage.label`（人话），与
+            // 另一条被拒留痕（`push to client failed (…)`）同口径。改串是安全的：
+            // `sandbox.greps` 里根本没有 `push write refused` 这一条（只有 `hot write refused`
+            // 与 `push refused inside settings transaction`），`push-failure-triage-smoke`
+            // 断言的是分诊函数返回的 `cls`/`kind`，不是报文里的字面串。
+            traceFault(triage.kind,
+              `push write refused (${triage.label}) (rev=${rev} queued${carriesCompletion ? ` carriedCompletion=1 after=${Date.now() - pushStartedAt}ms` : ''}): ${text}`,
               carriesCompletion ? 1 : 50);
             // **主路径：排队补写**（建议格走 #47 那条硬化路径，语义未动）。
             // 排队之后**不**清指纹：载荷已经在槽里，清了指纹反而让同一内容的下一次推送
@@ -2490,7 +2521,16 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     }
     for (const op of ops) {
       if (op.op === 'pull') {
-        traceOps(`ops consumed: pull session=${op.sessionId} (应答走 pushToClient)`);
+        // 同一会话连续重复只留阶梯的头尾（`#1` 与 `pulls=5`），中间三条并掉：宿主侧对
+        // 每条 pull 的动作逐字相同，而 live 日志 229/665 行的占比就压在这句话的复读上。
+        // **应答一次都没少发**（下面照旧），少打的只是留痕；重复次数进报文 ⇒
+        // 「客户端没确认对账」从刷屏变成一行带数字的证据。闸门本体见 `src/trace-gate.ts`。
+        const pullStep = stepRepeatTrace(pullRepeatGate, op.sessionId, PULL_REPEAT_TRACE_EVERY);
+        pullRepeatGate = pullStep.gate;
+        if (pullStep.print) {
+          traceOps(`ops consumed: pull session=${op.sessionId} (应答走 pushToClient)${
+            repeatTraceSuffix('pulls', pullStep.seen, '客户端未确认对账')}`);
+        }
         // **回读态补判**（#50）：启动那一刻会话可能还没进店（宿主的持久化懒恢复），
         // 判不了盘上残留建议的新旧；此刻 client 正在问这个会话，它一定在店了 ⇒
         // 现在判。判出可恢复就接回追踪态，于是**这次 pull 的应答自然带上它**——

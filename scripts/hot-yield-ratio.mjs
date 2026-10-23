@@ -785,6 +785,11 @@ try {
       yielded: lines.filter((l) => l.includes('hot push yielded on input')).length,
       coalesced: lines.filter((l) => l.includes('hot push coalesced')).length,
       hot: lines.filter((l) => /ops-trace\] (hot push landed|push landed)/.test(l)).length,
+      // ⚠️ **口径变了**（2026-10-23，`PULL_REPEAT_TRACE_EVERY`）：同一会话连着 5 条 pull
+      // （客户端一整个退避阶梯）现在只打 2 行 ⇒ 这个计数是**下限**，不再等于 pull 事件数。
+      // 要事件数请读带计数的那几行：每出现一行 `[pulls=5：…]` 就代表第 5 条，未打出的
+      // 2/3/4 是同一会话的复读（宿主动作逐字相同）。这里保持「行数」原语义不改——
+      // 本脚本用它对齐「arm 之前有没有 pull」，那是存在性判据，不是计数判据。
       pull: lines.filter((l) => l.includes('ops consumed: pull')).length,
     };
   };

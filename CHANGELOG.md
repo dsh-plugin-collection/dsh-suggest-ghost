@@ -25,6 +25,56 @@ All notable changes to this project will be documented in this file.
     44 → 45 项）；夹具只假在"open 被拒"这一层，重试/状态/留痕/上限计数全是被测真代码
 
 ### 修复
+- **宿主留痕仍占满终端：一次数行数的复算 + 两处形状修正**（2026-10-23，用户「你看看现在
+  这个插件依然有很多的日志」）。`~/.dsh/dsh-web.log` 665 行里本插件占约 600 行，按形态数：
+
+  | 留痕 | 行数 | 这次动没动 |
+  | --- | --- | --- |
+  | `ops consumed: pull …` | **229** | 加同会话重复闸（`#1` + 每 5 条一行带计数） |
+  | `push write refused …` | **107**（= 54 次被拒 × 2 行） | 合并成一行 |
+  | `hot push landed via deferred pump` | 88 | 未动（见下面的「没动的三条」） |
+  | `ops consumed: complete …` | 60 | 未动（三个 harness 按每 op 一行断言） |
+  | `deferred push landed rev=…` | 54 | 未动（与上面 54 次被拒一一对应） |
+
+  - **`ops consumed: pull` 的 229 行是同一句话的复读**：18 个会话、每个会话连着 **5 条**，
+    正好是客户端一个完整的退避阶梯（`PULL_MAX_ATTEMPTS=4` + 首发），而**一个阶梯里只有
+    第 1 条前后有写落地**，后面 4 条宿主一个字节都不写（按格判重：载荷内容没变）。中间
+    那 3 条在宿主侧的动作逐字相同 ⇒ 判据从「每条 pull 一行」改成「同会话连续重复只留
+    头尾」，闸门本体抽成纯函数 `src/trace-gate.ts` 的 `stepRepeatTrace`（与客户端
+    `stepReasonGate` 同族）。**重复变成报文里的计数而不是静音**（#17 的口径）：
+    `[pulls=5：客户端未确认对账]` 这一行比原来 5 行更好读，而 `#1` 无条件放行 ⇒ 三个按
+    「每 op 一行」断言的 harness 载体不丢。
+  - **一次被拒打两行**（54 次 = 107 行）：`traceOps` 那行带 `after=…ms`（#39 时长合法性
+    断言要它），`traceFault` 那行带 `kind #N` 计数桶，两行说的是同一件事。合并进
+    `traceFault` 一条，两个要件都保住（`carriedCompletion=1 after=…ms` 进报文、
+    `every=1` 继续不节流——带续写的丢弃恰恰不能等 50 次才记，#15 的教训）。
+  - 回归：`trace-gate-smoke` 从 14 组加到 **20 组**（量纲锚点 `PULL_REPEAT_TRACE_EVERY
+    === PULL_MAX_ATTEMPTS + 1`、一个阶梯 5 条 ⇒ 2 行、`every=1` 的**变异自证**回到 5 行、
+    key 变化必开门、229 行现场回放 ≤ 一半、以及「`ops consumed: pull` 字面串在宿主源码里
+    只许出现一处」）。最后这条是本轮**自己踩出来的**：`hot-throttle-smoke` 用
+    `indexOf('ops consumed: pull') + 700` 定位应答让路那段，我把这条串写进注释 ⇒ 锚点落到
+    注释上、判据空转；固定字符窗本身也是同一类脆断（新留痕行让 `hotNow` 刚好滑到 702
+    字符处），已把那处改成「留痕行之后的**第一笔** `pushToClient`」的语义锚点。
+  - **没动的三条，因为它们不是留痕问题**：`hot push landed via deferred pump`(88) +
+    `deferred push landed`(54) 是「即时写被 HMR 事务拒绝 ⇒ 由事务外泵补写」这条链的**成功**
+    半边，压掉它们就把 #15/#18 的验收证据一起压掉；真正的上游是**应答写建在事务内**
+    （每次 pull 应答先被拒、再等 500ms 泵 + 0.2~1.6s 写，客户端因此必然打空重试）与
+    **pull 的应答确认契约**（客户端只认 `historySessionId === pending.sessionId`）。
+  - **现场复测（宿主 15:01 热重载后的窗口，389 行）**：旧的第二行形态 **0 条**；`pull` 行
+    64 条里 29 条带计数 ⇒ 同一阶梯的复读确实被压掉了（换成旧形态约 180 条）。但**总行率
+    没降**：同一窗口里 `hot push landed via deferred pump` 57 + `push write refused` 52 +
+    `deferred push landed` 52 = 161 行，全在「即时写被事务拒 → 泵补写」那条链上。本轮只把
+    日志形状改对，没把噪声源关掉——这话说在前面，免得下一轮又按「降噪」去找新闸。
+  - 上游三条已由 `scripts/pull-ack-smoke.mjs`（六场景 22 组 + 变异对照）与
+    `docs/pull-ack-investigation.md` 钉死，**都成立、互不蕴含**：
+    **B** `ctx.sessions.get` 只认 `enter()` 过的活会话（侧栏/懒恢复的查不到）⇒ 应答里
+    `history` 与 `historySessionId` 两键一起缺席 ⇒ 按现判据永不收敛；
+    **D/E** `hotSigOf` 的 `historyKey` 把「无环」与「空环」都折成 `∅` ⇒ 两份应答指纹逐字
+    相同 `<HOT>∅<T>0<HIST>∅` ⇒ **换会话一个字节都不写**（B 缺的是载荷字段，D/E 缺的是那次写）；
+    **F** #89 的 `hotUsable` 在恢复 pending 期把**整格** `_hot` 扣住，而 ack 的 `history`
+    就住在这格。修法是最小契约的两半（载荷里带会话身份 + 判重认这个身份，pull 应答绕过按格
+    判重）——「只做一半」已被变异实测否掉：M2 单独只红 B、M4 单独只红 E。三条各自是行为
+    改造，不在本条偷偷做；本轮让 `pulls=5` 先当上游问题的现场计数器。
 
 - **设置卡两个「最少输入字符」同名，用户与排障者都读错了对象**（2026-10-23，用户指出
   「一个 3 一个 4，你看不到吗」——我上一条回复把它误诊成「3 没保存」）。卡片里
