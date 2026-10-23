@@ -39,6 +39,39 @@ interface HotEntryRecord {
 /** 恢复时防御性截断：与 recordUserText 的上限一致，异常大记录直接跳过。 */
 const RECORD_TEXT_MAX_CHARS = 2000;
 
+/**
+ * 热表恢复流程的**正面留痕**通道（#88）。
+ *
+ * 为什么走 console 而不是 `ctx.logger`：#88 的诊断里，「日志里没有那行 warn」被当成过
+ * 证据两次，而两次都错 —— 单一 exporter 会丢 info/debug，而错误消息里含
+ * `dsh-suggest-ghost:` 子串会造成假阳性。⇒ **拿"某字符串没出现"当证据是不可靠的**，
+ * 所以这里给恢复流程配上必然出现的正向锚点：缺哪一行，就直接看出卡在哪一步。
+ * 前缀与 `ops-trace` 一致 ⇒ 现有的 grep 口径不用改。
+ */
+const hotnessTrace = (message: string): void => {
+  console.log(`[dsh-suggest-ghost][ops-trace] ${message}`);
+};
+
+/**
+ * 域名被前一个句柄占着时 `open()` 会**同步拒绝**（`dsh-storage-domain/lib/index.js:356`
+ * 的 `already-open`）。热重载的时序是「新 fiber 先 apply、旧 fiber 的 dispose 后跑」
+ * （沙箱实测顺序：`restored → close()`），所以这是**必然短暂成立**的状态，不是配置错误。
+ * ⇒ 有界重试：等到旧句柄释放。上限见下（不能无限，更不能tight-loop）。
+ */
+const HOTNESS_OPEN_RETRY_MS = 150;
+const HOTNESS_OPEN_MAX_ATTEMPTS = 40;
+
+/**
+ * 「没有持久层会来」的宽限期（#88）。
+ *
+ * 为什么需要它：`ctx.inject(['storageDomain'])` 在**没挂这个服务的组合**里永远不触发
+ * （`payload-split-smoke` 的夹具就是这种，且注释明说「夹具里没有 storageDomain 可恢复热表」）。
+ * 若 `pending` 没有出口，那种组合下热度格会被永久扣住 ⇒ 卡片停在空表、盘上那一格再也不更新
+ * —— 比原 bug 更糟。⇒ 宽限期内没人来要句柄，就判定 `unavailable`（内存态即权威，格子照常说话）。
+ * 用 timer 而不是同步检查：服务可能在插件之后才挂载。
+ */
+const HOTNESS_RESTORE_GRACE_MS = 5000;
+
 /** 域声明：名字须匹配 UNIT_NAME_RE（小写字母开头的 [a-z0-9_]）。
  * `pinned` 为可选字段（v1 内演进，不 bump 版本——旧介质照常打开）。 */
 const hotnessDomainSpec = defineDomain({
@@ -68,6 +101,19 @@ export interface HotnessOpsPayload {
 export interface HotnessPersistence {
   /** 持久域是否已就绪（open + 恢复合并完成）；未就绪时 flush 只保留脏标记。 */
   readonly ready: boolean;
+  /**
+   * 历史频次**是否真的灌回来了**（#88）。
+   *
+   * 与 `ready` 的区别就是要害：`ready` 表示「恢复阶段结束了」（open 失败降级也算结束），
+   * `restored` 只在恢复合并真的跑过时为 true。消费方（`src/index.ts` 的热度格）必须看后者
+   * —— 否则热重载后的恢复窗口里会把「还没恢复」当「真的空」发给客户端与盘上，
+   * 用户看到的「共 0 条」就是这么来的（盘上 2000 条其实一条没少）。
+   */
+  readonly restored: boolean;
+  /** 见 `restoreStatus` 的三态注释：消费方按 `pending` 与否决定这一格说还是不说。 */
+  readonly status: 'pending' | 'restored' | 'unavailable';
+  /** `!ready` 期间被脏上限护栏丢掉的累积（次数 / 总条数）。护栏本身保留，但不再静默。 */
+  readonly dirtyCapCleared: { readonly clears: number; readonly dropped: number };
   /**
    * 恢复阶段结束的信号：domain open + 恢复合并完成时兑现，open 失败（降级为
    * 纯内存）时同样兑现——两种结局都意味着「热度表已不会再被异步改写」。宿主
@@ -102,6 +148,34 @@ export function setupHotnessPersistence(ctx: Context): {
   let domain: HotnessDomain | null = null;
   /** 恢复合并完成前的脏标记先攒着（否则 live 计数会以「缺历史频次」的值抢先落盘）。 */
   let ready = false;
+  /**
+   * **是否真的把历史频次灌回来了**（#88 的核心区分）。
+   *
+   * `ready` 只表示「恢复阶段结束了」——降级（open 失败、无 storageDomain）同样会结束它，
+   * 于是 `size === 0` 既可能是「还没恢复」也可能是「用户真的没有热表」，消费方分不出来，
+   * 卡片就在热重载后显示「共 0 条」（盘上 2000 条一条没少）。
+   * ⇒ `restored` 只在恢复合并真的跑过时为 true；`snapshot()`/`size` 交给消费方之前必须看它。
+   */
+  let restored = false;
+  /**
+   * 恢复阶段的状态（#88）—— **三态**，两态不够：
+   *  - `pending`：还在等句柄（重试中）⇒ 消费方**不许**把 `snapshot()`/`size` 当权威发出去，
+   *    那正是「共 0 条」症状的成因；
+   *  - `restored`：历史频次真的灌回来了；
+   *  - `unavailable`：环境没有持久层，或重试到上限仍拿不到句柄 ⇒ **内存态就是全部真相**，
+   *    此时照常发布才是正确行为（极简 headless 组合下不发热度格会把卡片永久钉在空表）。
+   */
+  // 默认 **unavailable**：没有人在恢复 ⇒ 内存态就是权威，热度格照常发布（今天的行为）。
+  // 只有当注入回调真的拿到 facility、开始要句柄时，才转成 `pending` —— 那一刻起
+  // `snapshot()` 的空表才「不代表用户没有热表」。反过来默认 pending 会把
+  // 没挂 storageDomain 的组合（极简 headless、以及 `payload-split-smoke` 的夹具）
+  // 永久扣住格子，比原 bug 更糟。
+  let restoreStatus: 'pending' | 'restored' | 'unavailable' = 'unavailable';
+  /** 是否已经真的向 facility 要过句柄（宽限期判据用）。 */
+  let openAttempted = false;
+  /** `!ready` 期间脏标记撞到硬上限被清空的次数与条数（那条护栏本来静默丢弃，#88 要求留痕）。 */
+  let dirtyCapClears = 0;
+  let dirtyCapDropped = 0;
   /** whenReady 的兑现柄：恢复阶段（成功或降级）结束时调用一次。 */
   let settleReady: () => void = () => {};
   const whenReady = new Promise<void>((resolve) => {
@@ -114,10 +188,29 @@ export function setupHotnessPersistence(ctx: Context): {
     // 都会消费，到不了这个量级。即使 open 稍后成功，恢复合并（restoreEntry 的
     // merge 分支）会重新标记脏值，清空不丢正确性；最多损失 open 前的删除标记
     // （已淘汰条目下次重启多活一轮，有界churn，无害）。
-    if (!ready && dirty.size >= HOT_TABLE_MAX_ENTRIES * 2) dirty.clear();
+    if (!ready && dirty.size >= HOT_TABLE_MAX_ENTRIES * 2) {
+      // 这条护栏把「长期不就绪」变成**静默丢弃累积**（#88）：清空照旧，但必须留痕 + 计数，
+      // 否则症状只会以「热表莫名变空」的形式浮出来，查不到丢在哪一步。
+      dirtyCapClears += 1;
+      dirtyCapDropped += dirty.size;
+      hotnessTrace(`hotness dirty cap cleared: n=${dirty.size} limit=${HOT_TABLE_MAX_ENTRIES * 2}`
+        + ` clears=${dirtyCapClears} droppedTotal=${dirtyCapDropped}`);
+      dirty.clear();
+    }
     dirty.set(text, entry);
   };
   const hotness = new HotnessTable(onChange);
+  // 兜底：若某个组合里回调拿到了 facility 却卡在别处（永远没走到 open），也别把格子扣死。
+  const grace = setTimeout(() => {
+    if (restoreStatus === 'pending') {
+      restoreStatus = 'unavailable';
+      hotnessTrace(`hotness restore grace elapsed ms=${HOTNESS_RESTORE_GRACE_MS} openAttempted=0`
+        + ' ⇒ 这组宿主没有持久层可等，内存态即权威，热度格照常发布');
+      settleReady();
+    }
+  }, HOTNESS_RESTORE_GRACE_MS);
+  // 不让它把进程/事件循环钉住（冒烟与单测里 context 是手搓的，没有正常的卸载路径）。
+  grace.unref?.();
 
   const flush = async (): Promise<void> => {
     const table = entries;
@@ -162,10 +255,41 @@ export function setupHotnessPersistence(ctx: Context): {
         const facility = (sctx as { storageDomain?: DomainFacility }).storageDomain;
         // 服务在但域不可用：同样是「不会再被异步改写」的终局，兑现信号。
         if (facility === undefined) {
+          // 没有持久层：内存态即权威。但必须说一声，且 `restored` 保持 false ——
+          // 消费方要能把「环境没持久层」与「重载竞态没等到释放」分开呈现。
+          hotnessTrace('hotness domain unavailable: no storageDomain facility');
+          restoreStatus = 'unavailable';
           settleReady();
           return;
         }
-        const opened = await facility.open(hotnessDomainSpec);
+        // ⚠️ #88：同名域是**独占**的（`dsh-storage-domain/lib/index.js:356` 抛 `already-open`），
+        // 而热重载的时序是「新 fiber 先 apply、旧 fiber 的 dispose 后跑」（沙箱探针实测顺序：
+        // `restored → close()`）⇒ 被拒是**常态**，不是配置错误。原实现一把抓住就降级为纯内存，
+        // 于是 `ready=true` 而 `size=0`，与「用户真的没有热表」完全同形（卡片「共 0 条」就是这么来的）。
+        // ⇒ 有界重试：每 150ms 试一次，最多 40 次（≈6s）。
+        // 为什么必须**有界**且每轮都 await 一个 timer：本仓被「失败→立刻重试」的微任务紧循环
+        // 烧过 23 GB 日志（`scripts/hmr-write-loop-smoke.mjs` 就是那次的事后护栏）。
+        openAttempted = true;
+        clearTimeout(grace);
+        // 从这里开始才叫「恢复在飞行中」：此时表里还没有历史频次，发出去就是盖掉用户的数据。
+        restoreStatus = 'pending';
+        let opened = null;
+        let attempt = 0;
+        for (;;) {
+          attempt += 1;
+          try {
+            opened = await facility.open(hotnessDomainSpec);
+            break;
+          } catch (error) {
+            const reason = String((error as Error)?.message ?? error).slice(0, 60);
+            if (attempt >= HOTNESS_OPEN_MAX_ATTEMPTS) throw new Error(`open rejected after ${attempt} attempts: ${reason}`);
+            if (attempt === 1 || attempt % 10 === 0) {
+              hotnessTrace(`hotness domain busy, retrying attempt=${attempt} reason=${reason}`);
+            }
+            await new Promise((r) => setTimeout(r, HOTNESS_OPEN_RETRY_MS));
+          }
+        }
+        hotnessTrace(`hotness domain opened attempt=${attempt}`);
         const table = opened.table('entries');
         // 恢复：count 降序截断到容量上限（防御历史超限 / 未来上限调小），合并进活表。
         const records = [...table.entries()]
@@ -175,12 +299,21 @@ export function setupHotnessPersistence(ctx: Context): {
         for (const record of records) hotness.restoreEntry(record.text, record.count, record.pinned === true);
         entries = table;
         domain = opened;
+        // 恢复条数必须打出来：#88 的「共 0 条」到底是没恢复、还是恢复了却被当空发出去，靠这行分。
+        hotnessTrace(`hotness restored n=${records.length} tableSize=${hotness.size}`);
+        restored = true;
+        restoreStatus = 'restored';
         ready = true;
         // 卸载兜底挂在注入派生 fiber 上：storageDomain 卸载或插件卸载都会触发。
         ctx.effect(() => () => void close());
+        hotnessTrace(`hotness ready dirty=${dirty.size} restored=${restored}`);
         void flush(); // 补写 open 窗口期累积的 live 记账与恢复合并值
         settleReady(); // 恢复合并已完成：消费方（index.ts）据此补推完整快照
       } catch (error) {
+        // 重试也没拿到句柄 ⇒ 仍然降级，但留一行正面痕：这是 #88 里唯一能把「放弃」与
+        // 「根本没持久层」「恢复成功」三者分开的锚点。
+        hotnessTrace(`hotness restore FAILED, staying in-memory: ${String((error as Error)?.message ?? error).slice(0, 90)}`);
+        restoreStatus = 'unavailable'; // 放弃之后内存态即权威，格子要照常说话
         ctx.logger.warn(`dsh-suggest-ghost: hotness persistence unavailable, staying in-memory: ${String(error)}`);
         settleReady(); // 降级同样终结恢复阶段：内存态即权威，消费方无需再等
       }
@@ -192,6 +325,16 @@ export function setupHotnessPersistence(ctx: Context): {
     persistence: {
       get ready(): boolean {
         return ready;
+      },
+      // #88：这两个是消费方唯一能区分「还没恢复」与「真的空」的口子。
+      get restored(): boolean {
+        return restored;
+      },
+      get status(): 'pending' | 'restored' | 'unavailable' {
+        return restoreStatus;
+      },
+      get dirtyCapCleared(): { clears: number; dropped: number } {
+        return { clears: dirtyCapClears, dropped: dirtyCapDropped };
       },
       whenReady,
       flush,

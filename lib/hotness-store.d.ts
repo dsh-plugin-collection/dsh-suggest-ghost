@@ -30,6 +30,22 @@ export interface HotnessPersistence {
     /** 持久域是否已就绪（open + 恢复合并完成）；未就绪时 flush 只保留脏标记。 */
     readonly ready: boolean;
     /**
+     * 历史频次**是否真的灌回来了**（#88）。
+     *
+     * 与 `ready` 的区别就是要害：`ready` 表示「恢复阶段结束了」（open 失败降级也算结束），
+     * `restored` 只在恢复合并真的跑过时为 true。消费方（`src/index.ts` 的热度格）必须看后者
+     * —— 否则热重载后的恢复窗口里会把「还没恢复」当「真的空」发给客户端与盘上，
+     * 用户看到的「共 0 条」就是这么来的（盘上 2000 条其实一条没少）。
+     */
+    readonly restored: boolean;
+    /** 见 `restoreStatus` 的三态注释：消费方按 `pending` 与否决定这一格说还是不说。 */
+    readonly status: 'pending' | 'restored' | 'unavailable';
+    /** `!ready` 期间被脏上限护栏丢掉的累积（次数 / 总条数）。护栏本身保留，但不再静默。 */
+    readonly dirtyCapCleared: {
+        readonly clears: number;
+        readonly dropped: number;
+    };
+    /**
      * 恢复阶段结束的信号：domain open + 恢复合并完成时兑现，open 失败（降级为
      * 纯内存）时同样兑现——两种结局都意味着「热度表已不会再被异步改写」。宿主
      * 未挂 storageDomain 时永不兑现：那种组合下没有异步恢复可等，启动瞬间的
