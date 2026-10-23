@@ -45,6 +45,11 @@ tea api "/repos/<owner>/<repo>/issues/<编号>/comments?limit=100" \
 ⚠️ **不要用 `tea issues -o json` 的 `comments` 字段做回读**：实测那个字段恒为空数组，
 用它复核会得出"评论没发出去"的错误结论（反过来也验证不了发出去了）。只有 API 那条路径可信。
 
+⚠️ **也别"顺手改精确"成 `/pulls/<编号>/comments`**：本机 Gitea 上那个路径实测返回
+`{"message":"not found"}`（2026-10-23，回读 PR #93 的评论时踩的）。PR 的评论仍然读上面那条
+`/issues/<编号>/comments`——这台实例上 PR 编号与 issue 编号同一套。**注意它的失败形态**：
+用 pulls 路径回读会得到 404，而评论其实已经发出去了；拿"回读失败"当"发送失败"就是二次误判。
+
 ---
 
 ## 2. 分支与 PR
