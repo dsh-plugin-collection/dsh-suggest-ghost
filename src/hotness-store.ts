@@ -48,15 +48,37 @@ const RECORD_TEXT_MAX_CHARS = 2000;
  * 所以这里给恢复流程配上必然出现的正向锚点：缺哪一行，就直接看出卡在哪一步。
  * 前缀与 `ops-trace` 一致 ⇒ 现有的 grep 口径不用改。
  */
-const hotnessTrace = (message: string): void => {
+const hotnessTraceLine = (message: string): void => {
   console.log(`[dsh-suggest-ghost][ops-trace] ${message}`);
 };
 
 /**
+ * **fiber 序号**：每次 `setupHotnessPersistence()` 调用（= 每次 `apply()` 挂载）取一个。
+ *
+ * 为什么需要：live 日志里 42 行 `apply called` 长得一模一样，而恢复流程的每一行也只写
+ * 「domain busy / opened / closed」——**分不清是谁在开、谁在关、谁卡住了**。没有身份就没有
+ * 因果：`hotness domain close requested` 到底对应哪一次 `opened`，只能靠猜。这次调查要回答的
+ * 正是「持有者到底有没有释放」，所以先把 fiber 身份补上。
+ * ⚠️ 计数在**模块顶层**，而 partialReload 会重新求值本模块（实测：每次重载的
+ * `artifact mtime=` 都变）⇒ 序号是「每个模块实例内递增」，不是全进程唯一。跨重载配对要靠
+ * `mtime` + 序号一起看，别把两段的 `fiber=1` 当成同一个持有者。
+ */
+let FIBER_SEQ = 0;
+
+/**
  * 域名被前一个句柄占着时 `open()` 会**同步拒绝**（`dsh-storage-domain/lib/index.js:356`
- * 的 `already-open`）。热重载的时序是「新 fiber 先 apply、旧 fiber 的 dispose 后跑」
- * （沙箱实测顺序：`restored → close()`），所以这是**必然短暂成立**的状态，不是配置错误。
- * ⇒ 有界重试：等到旧句柄释放。上限见下（不能无限，更不能tight-loop）。
+ * 的 `already-open`）。⇒ 被拒是**常态**，不是配置错误 ⇒ 有界重试：等到旧句柄释放。
+ *
+ * 时序口径已在沙箱重测（2026-10-23，`--watch` + 真改 `lib/index.js` 内容触发 partialReload）：
+ * 正常路径上一笔重载的顺序是 `… ready → hotness domain closed → apply called（新 mtime）→
+ * opened attempt=1`，也就是**旧 fiber 的 disposer 跑在新 fiber 重试之前**，重载后一次就开上。
+ * 旧注释写的「新 fiber 先 apply、旧 fiber 的 dispose 后跑」是更早一次探针的读数，当时
+ * `close()` 这侧一个字都不落（本行留痕 `hotness domain closed` 就是补上的那块表），
+ * 所以那个先后关系**测不准**，不该继续当依据引用。
+ * ⚠️ 这条只证明「无流量的沙箱里 disposer 会跑」，**不**证明 live 进程里那个卡住的持有者
+ * 是被同一条路径放开的——live 的 6 次重载 0 次 open 成功，与新加的 `closed` 留痕对一下
+ * 才知道差在哪（要么持有者的 disposer 根本没跑，要么它 `await flush()` 挂住了）。
+ * 上限见下（不能无限，更不能 tight-loop）。
  */
 const HOTNESS_OPEN_RETRY_MS = 150;
 const HOTNESS_OPEN_MAX_ATTEMPTS = 40;
@@ -142,6 +164,12 @@ export function setupHotnessPersistence(ctx: Context): {
   hotness: HotnessTable;
   persistence: HotnessPersistence;
 } {
+  // 本 fiber 的留痕通道：每条自动带 `fiber=<序号>`，让「谁开的、谁关的、谁卡住的」可对得上。
+  const fiberId = FIBER_SEQ + 1;
+  FIBER_SEQ = fiberId;
+  const hotnessTrace = (message: string): void => {
+    hotnessTraceLine(`fiber=${fiberId} ${message}`);
+  };
   /** 脏标记：text → 最新记账值（null = 待删除）。flush 前累积，flush 取快照清空。 */
   const dirty = new Map<string, Readonly<{ count: number; lastSeq: number; pinned: boolean }> | null>();
   let entries: EntriesTable | null = null;
@@ -232,6 +260,13 @@ export function setupHotnessPersistence(ctx: Context): {
   };
 
   const close = async (): Promise<void> => {
+    // **进入即留痕**：上一行 `closed` 是在 `finally` 里打的，所以「一次都没出现」有两种
+    // 完全相反的含义——① disposer 根本没跑（宿主 reload 路径不回收旧 fiber 的 effect，#17
+    // 的僵尸同族）；② 跑了但**卡在 `await flush()` / `runClose()` 的写链上**，于是
+    // `onClosed()` 里的 `reserved.delete` 永远轮不到 ⇒ 域名被一个"还在关闭中"的句柄永久占住。
+    // 现场 live 进程 08:44 那笔重载**只有** ①/② 里的某一种会发生（沙箱里 `closed` 正常打出），
+    // 两者修法不同，所以这两行是分叉判据，不是啰嗦。
+    hotnessTrace(`hotness domain close requested owned=${domain ? 1 : 0} ready=${ready} status=${restoreStatus}`);
     try {
       await flush();
     } finally {
@@ -244,6 +279,17 @@ export function setupHotnessPersistence(ctx: Context): {
       } catch (error) {
         ctx.logger.warn(`dsh-suggest-ghost: hotness domain close failed: ${String(error)}`);
       }
+      // **这行是 #88 的续查工具，不是装饰**：现场 6 次热重载里 `hotness domain opened`
+      // 出现 **0** 次、`restore FAILED` 10 次、`domain busy` 重试 28 次 —— 也就是新 fiber
+      // 重试满 40×150ms≈6s 也没拿到域名。三种可能只靠那侧的留痕**分不开**：
+      //  (i) 旧 fiber 的 `ctx.effect` disposer 在 partialReload 路径上根本不跑（与 #17 的
+      //      僵尸 root 监听同族）；
+      //  (ii) 跑了但没释放名字（`dsh-storage-domain` 的 `onClosed` 挂钩失效）；
+      //  (iii) 跑了但跑得比 6s 预算晚。
+      // 宿主侧 `close()` **确实**会把名字从 `reserved` 里摘掉（`dsh-storage-domain/lib/index.js:385-386`
+      // 构造 Domain 时传 `onClosed = () => { domains.delete; reserved.delete }`），所以 (ii)
+      // 的先验最低——但没有这行留痕，先验就不是证据。
+      hotnessTrace(`hotness domain closed released=${closing ? 1 : 0} size=${hotness.size} status=${restoreStatus}`);
     }
   };
 
@@ -263,10 +309,12 @@ export function setupHotnessPersistence(ctx: Context): {
           return;
         }
         // ⚠️ #88：同名域是**独占**的（`dsh-storage-domain/lib/index.js:356` 抛 `already-open`），
-        // 而热重载的时序是「新 fiber 先 apply、旧 fiber 的 dispose 后跑」（沙箱探针实测顺序：
-        // `restored → close()`）⇒ 被拒是**常态**，不是配置错误。原实现一把抓住就降级为纯内存，
-        // 于是 `ready=true` 而 `size=0`，与「用户真的没有热表」完全同形（卡片「共 0 条」就是这么来的）。
-        // ⇒ 有界重试：每 150ms 试一次，最多 40 次（≈6s）。
+        // 热重载期间被拒是**常态**，不是配置错误 ⇒ 有界重试：每 150ms 一次，最多 40 次（≈6s）。
+        // 原实现一把抓住就降级为纯内存，于是 `ready=true` 而 `size=0`，与「用户真的没有热表」
+        // 完全同形（卡片「共 0 条」就是这么来的）。
+        // ⚠️ 时序口径已在沙箱重测（见本文件顶部 `HOTNESS_OPEN_RETRY_MS` 上方那段）：干净重载里
+        // 旧 fiber 的 `close()` 跑在**新 fiber 重试之前**，一次就 open 上；旧注释引用的
+        // 「新 apply 先、旧 dispose 后」当时 `close()` 那侧没有任何留痕，测不准，别再当依据。
         // 为什么必须**有界**且每轮都 await 一个 timer：本仓被「失败→立刻重试」的微任务紧循环
         // 烧过 23 GB 日志（`scripts/hmr-write-loop-smoke.mjs` 就是那次的事后护栏）。
         openAttempted = true;
@@ -290,6 +338,24 @@ export function setupHotnessPersistence(ctx: Context): {
           }
         }
         hotnessTrace(`hotness domain opened attempt=${attempt}`);
+        // ⚠️ **顺序就是修复本体**（2026-10-23 现场：42 次 `apply called`、`opened` 0 次、
+        // `close requested` / `closed` 也 0 次。⚠️ 那个持有者产生于这两行留痕装上**之前**，
+        // 所以「它没注册钩子」与「注册了但 disposer 没跑」已经无法区分；本仓能确定的只有
+        // 「这段顺序确实留了一个『拿到名字却没挂钩子』的窗口，一旦被踩就是永久占用」。
+        // 沙箱对照证明 disposer 本身正常：一笔干净重载是
+        // `ready → closed released=1 → apply(新 mtime) → opened attempt=1`）。
+        // 旧写法在 `open()` 成功之后才读表、解析、合并，**最后**才 `ctx.effect(...)`；而
+        // `open()` 一返回名字就归本 fiber 所有 ⇒ 从那一刻到注册钩子之间任何一步抛
+        // （`opened.table()`、record 解析、`restoreEntry`）都会被外层 catch 接住、降级成
+        // 「staying in-memory」，域名于是被一个无人认领的句柄**永久占住**——与 live 现象一致。
+        // ⇒ 先认领、先挂释放钩子，再做任何可能抛的事。**其余判据一字未动**：状态机
+        // （`pending`/`restored`/`unavailable`）、发布口径、`ready` 时机全部保持原样，
+        // 这条修复只改「谁在什么时候负责 close」。
+        domain = opened;
+        // 卸载兜底挂在注入派生 fiber 上：storageDomain 卸载或插件卸载都会触发。
+        // 带名字注册：cordis 的 effect 名会出现在诊断面上，测试也据此**只挑自己那一个**
+        // （同一个 root 上还有 `ctx.plugin()` 之类的别人家的钩子，一起跑会把 fiber 也拆了）。
+        ctx.effect(() => () => void close(), 'hotness domain close');
         const table = opened.table('entries');
         // 恢复：count 降序截断到容量上限（防御历史超限 / 未来上限调小），合并进活表。
         const records = [...table.entries()]
@@ -298,14 +364,11 @@ export function setupHotnessPersistence(ctx: Context): {
           .slice(0, HOT_TABLE_MAX_ENTRIES);
         for (const record of records) hotness.restoreEntry(record.text, record.count, record.pinned === true);
         entries = table;
-        domain = opened;
         // 恢复条数必须打出来：#88 的「共 0 条」到底是没恢复、还是恢复了却被当空发出去，靠这行分。
         hotnessTrace(`hotness restored n=${records.length} tableSize=${hotness.size}`);
         restored = true;
         restoreStatus = 'restored';
         ready = true;
-        // 卸载兜底挂在注入派生 fiber 上：storageDomain 卸载或插件卸载都会触发。
-        ctx.effect(() => () => void close());
         hotnessTrace(`hotness ready dirty=${dirty.size} restored=${restored}`);
         void flush(); // 补写 open 窗口期累积的 live 记账与恢复合并值
         settleReady(); // 恢复合并已完成：消费方（index.ts）据此补推完整快照

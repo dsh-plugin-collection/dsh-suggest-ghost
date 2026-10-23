@@ -6,6 +6,47 @@ All notable changes to this project will be documented in this file.
 
 ### 修复
 
+- **`open()` 成功到注册释放钩子之间有一段可以抛的窗口，踩到就把域名永久占死**
+  （2026-10-23，用户选了「先查 storage domain 泄漏」）。现场：live 进程 42 行 `apply called`、
+  `hotness domain opened` **0 行**、`hotness restore FAILED` 若干，而盘上
+  `~/.dsh/storages/suggest_ghost_hotness.json` 仍有 2000 条 / 570KB —— 也就是**这个进程的持久化
+  是断的**，每次挂载都从空表重新累积（现场 `tableSize` 从 0 涨到 14），#88 想防的「共 0 条」
+  症状在真正意义上发生。
+  - **先杀死的是我自己的假设**。我原来写成「宿主 partialReload 不回收旧 fiber 的 `ctx.effect`
+    disposer（与 #17 僵尸 root 监听同族）」，两条实测把它推翻了：
+    ① 沙箱（`dev-sandbox --watch` + 真改 `lib/` 内容触发一笔干净重载）的顺序是
+    `ready → hotness domain closed released=1 → apply called(新 mtime) → opened attempt=1`
+    ⇒ **disposer 会跑，而且跑在新 fiber 重试之前**；
+    ② 补上「进入即留痕」的 `close requested` 之后 live 依然 0 行 —— 不是钩子跑了没输出，
+    而是**那个持有者根本没有钩子可跑**。
+  - **根因是顺序，在本仓这一侧**：`open()` 一返回，名字就归本 fiber 所有，而旧实现要等
+    读完表、解析完 record、合并进活表之后才 `ctx.effect(() => close())`。中间任何一步抛
+    ⇒ 被外层 catch 接住、降级成「staying in-memory」⇒ 域名被一个**无人认领**的句柄永久占住。
+    宿主那侧的释放语义是对的（`dsh-storage-domain/lib/index.js:385-386`：构造 Domain 时把
+    `domains.delete + reserved.delete` 作为 `onClosed` 传入，`close()` 幂等）。
+  - 修复（**只改注册时机；状态机 / 发布口径 / `ready` 时机一字未动**）：`open()` 成功后立刻
+    `domain = opened` + `ctx.effect(..., 'hotness domain close')`，再做任何可能抛的事。带名字
+    注册是为了让诊断面认得出是谁挂的钩子，也让测试能只挑自己那一个。
+  - 补的留痕（三条，都是这次调查的仪器）：`fiber=<n>` 前缀（42 行一模一样的 `apply called`
+    之间分不清「谁开的、谁关的、谁卡住」；序号在模块顶层，partialReload 会重新求值模块，
+    所以它是**每模块实例**递增，跨重载配对要连 `mtime` 一起看）、`close requested owned=…`
+    （进入即打：上一行 `closed` 在 `finally` 里，「一次都没出现」对「没跑」与「跑了但卡在
+    flush/写链」两种成因同形）、以及修正 `HOTNESS_OPEN_RETRY_MS` 上方那段引用旧探针读数的
+    时序注释（当时 `close()` 那侧没有任何留痕，那个先后关系**测不准**，不该继续当依据引用）。
+  - 回归：`hotness-reload-restore-smoke` 4 → **5 组**，第 5 组两半都要过（钩子已注册 **且**
+    跑完后名字真能腾出来——只断言前者会放过「注册了但 close 坏掉」）。**变异自证**：把
+    `domain = opened` + 注册挪回恢复之后 ⇒ 只有第 5 组红、其余四组全绿，rc=1。
+  - ⚠️ 这条回归写了三版才真红过，两版都是**夹具自己的错**，记下来免得下次再犯：
+    ① 夹具把 `d.table` 永久替换成抛错，而宿主 `runClose()` 内部也要取表 ⇒ 连 `close()` 都被
+    夹具弄坏，测的是夹具不是产品；改成只炸第一口、把真实实现留给 close。
+    ② cordis 的 `ctx.effect(factory)` 是**注册当场调用 factory、拿返回值当 disposer**；
+    第一版收的是 factory 本身，于是「跑钩子」只是又跑一次工厂、`close` 一次都没被调用，
+    把正确的产品代码读成「注册了却腾不出名字」。
+  - **live 那个已经卡死的持有者不会自愈**：它产生于新留痕装上**之前**，所以「它是没注册钩子」
+    还是「注册了但 disposer 没跑」**已经无法证实**——能证实的只有「新代码里这段窗口不存在了」。
+    要清掉现场那个，要么重启进程，要么另做「重试到上限后经 `facility.get(name)` 认领那个无人
+    认领的句柄」的兜底（宿主把该方法标为 diagnostic surface，属另一条设计取舍，本轮不偷偷做）。
+
 - **热重载不再把"没恢复成的空热表"当权威发布**（#88）：宿主侧插件被 HMR 热重载时，`dsh-storage-domain`
   的**同名域独占**会让新 fiber 的 `open()` 直接被拒（`domain 'suggest_ghost_hotness' is already open`），
   旧实现是 `catch` 一把抓住就 `settleReady()` ⇒ `ready=true` 且表是空的 ⇒ 卡片显示「共 0 条」，而这份空表
