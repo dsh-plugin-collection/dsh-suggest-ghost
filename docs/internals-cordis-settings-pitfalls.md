@@ -312,6 +312,41 @@ issue #20 只记到了第 1 条的一半）：
 - **失败留痕必须节流**：走 `traceFault`（同类第一条 + 每 N 条带计数），不许在失败分支里用
   无条件的 `traceOps`。紧循环下「每圈一行」比循环本身更快耗尽磁盘。
 
+**事务外锚点会被 HMR 重载毒化**（2026-10-22 现场，0.7.1）。上面那条「补写只能从事务外锚点发起」
+只保证了**boot 期**：agent 改插件源码 → 重建 `lib/` → HMR `partialReload` 重跑 `apply()`，而那次
+apply 可能**本身就在配置写入事务里**。此时新建的 `setInterval` 捕获 `store=true`，泵从此每笔都被
+`nested` 拒（现场：`deferred push write refused again in the apply()-time pump`）。有界重试把日志限住了，
+但**功能是全断的**：pull 应答、续写、`_ops` 清空都补不进去 → 客户端反复 pull、`_ops` revision 一路涨
+→ 与客户端并发的 complete 写抢 revision → 用户看到 `_ops write conflict retries exhausted` 与
+`completion not shown`。两层处理（`src/index.ts` 的 `runOutsideHmrTransaction` / `deferredPumpPoisoned`）：
+
+1. **建泵时切出事务**：宿主提供 `root.get('hmr').executing` 时，在它的 `exit(cb)` 里建定时器
+   （实测退路表：`executing.exit(() => 写)` OK、bump revision）。取不到就原样建，不把私有面当契约。
+2. **兜底重建**：泵写拿到结构性拒绝 ⇒ 标记毒化；下一次**可证明在事务外**的回调（`session/event`、
+   任何即时写成功、`persistence.whenReady`）重建定时器。**绝不在失败回调里重建**——那里建出来的
+   定时器捕获的是同一个 `store=true`，只会再造一个同样失败的泵。
+   回归：`scripts/pump-hmr-escape-smoke.mjs`（有 `exit` 时第一次 pull 就补写成功）与
+   `scripts/pump-rearm-smoke.mjs`（无 `exit` 时先毒化、再由会话事件恢复并真实落盘）。
+
+**客户端 `_ops` 的 CAS 写入必须串行**。`describe 取 revision → mutate(expected)` 在同一页有两条写入源
+（输入停顿的 `complete`、会话对账的 `pull`）时会自己抢自己；宿主消费后写回空值还会再 +1 revision。
+`src/client/ops-write-queue.ts` 因此是**唯一入口**：至多一个在途、FIFO，`complete` 排队中 last-wins
+（被取代 = 未发送，不是写失败），冲突用 25/50/100/200ms 退避（共 5 次）。串行化的新风险由
+**单项 8s 看门狗**兜住：一条永不兑现的 RPC 会占死唯一的在途槽，超时后该项判 `false`、放行后续
+（代价是可能与迟到 run 短暂并发，迟到的是旧载荷，宿主去重 + `seq` 单调兜住）。回归见
+`scripts/ops-write-queue-smoke.mjs`。**别绕过队列直接 `mutate(..., ['_ops'])`**，也别把 last-wins 的
+`false` 当写失败去重发。
+
+**槽队列 + 「有空才轮到」两个局部有界的规则能拼出全局活锁**（2026-10-22 live，同上第二条的
+宿主半边）。泵每 tick 只补一个槽、`_hot` 只在队列空时补——各自都「有界」；但 pull 洪水让
+clearOps 槽永远有下一条 ⇒ `_hot` 永不落地 ⇒ 客户端对账判不出完成 ⇒ 继续 pull ⇒ 洪水维持。
+规则：**任何「靠边等空窗」的写，必须同时在别的写成功回调上搭便车**，否则空窗可能永不出现。
+落点与红线见 `src/index.ts` 的 `tryDrainHotPayload`：搭便车只挂在**可证明事务外**的回调上
+（pump 写成功的 finally；写成功本身证明 `store` 不是 true），绝不挂在 `drainHotFromPump` 自己
+的 finally（「失败重排 + finally 再写」= 23 GB 紧循环的原始形状），也不挂 `flushPush` 的
+（那可能在事务内，烧预算还误标毒化）。回归 `scripts/hot-starvation-smoke.mjs` + 静态守卫在
+`scripts/deferred-writes-smoke.mjs`。
+
 回归：`scripts/hmr-write-loop-smoke.mjs`（A 组复刻事务内 pull、B 组泵也写不进）自带 2000 行
 保险丝；`scripts/deferred-writes-smoke.mjs` 有两条静态守卫（`.finally` 不得因热度槽再 flush、
 热度补写必须走 `drainHotFromPump` 且有上限）。

@@ -62,11 +62,14 @@ import {
   settleInlineTimer,
   shouldSkipDeferredRepaint,
   stepReasonGate,
+  stepSlotEmit,
+  initialSlotEmitGate,
   stepTally,
   type AnchorPoint,
   type InlineArmGhostKind,
   type InlineArmState,
   type OverlayShape,
+  type SlotEmitGate,
   type TallyState,
 } from './inline-arm-policy.js';
 import { keyCodeOf } from './keyspec.js';
@@ -77,12 +80,15 @@ import { keyCodeOf } from './keyspec.js';
  */
 import {
   isConflictRefusal,
+  opsConflictBackoffMs,
+  opsConflictRetryAllowed,
   readRejection,
   settleWriteVerdict,
   unwrapMutateResult,
   verdictFromView,
   type WriteVerdict,
 } from './settings-result.js';
+import { OpsWriteQueue, type OpsWriteKind } from './ops-write-queue.js';
 import { SuggestGhostCard } from './settings-card.js';
 import type { PluginSettingsScope } from './settings-scope.js';
 import type { LocaleFaceLike } from './useGhostT.js';
@@ -338,9 +344,18 @@ const SETTINGS_SECTION_ID = 'suggest-ghost';
 /** 设置页导航文案（跟随宿主界面语言；无 locale 服务时回退中文）。 */
 const SECTION_LABELS = { zh: '输入预测', en: 'Input prediction' } as const;
 /** 未获应答的 pull 最多重试次数（host 可能回一份不含历史的载荷；上限防自旋）。 */
-const PULL_MAX_ATTEMPTS = 5;
-/** pull 重试的基础退避（毫秒），第 n 次退避 = 基础值 × 2^n。 */
-const PULL_RETRY_BASE_MS = 200;
+const PULL_MAX_ATTEMPTS = 4;
+/**
+ * pull 重试的基础退避（毫秒），第 n 次退避 = 基础值 × 2^n ⇒ 600/1200/2400/4800。
+ *
+ * 2026-10-22 从 200 提到 600 的依据（live 实测的应答路径）：pull 落在 settings 事件
+ * 回调里 ⇒ 应答的即时写**必然**被 HMR 事务拒绝 ⇒ 排进泵 ⇒ 下一个 500ms tick 才开写 ⇒
+ * 单次写实测 writeMs 0.2~1.6s。也就是说**最早的一拍应答 ≈ 0.7~2.1s 后**，旧值 200ms 的
+ * 头两次重试必然打空——而每次打空都是「客户端一次写 + 宿主一轮消费 + 应答/clear 至多
+ * 两笔写」，revision 被自己人的重试顶高，反过来把同页/同 ns 的 complete 写撞成
+ * `conflict retries exhausted`。重试不是免费的，第一次也要等得起。
+ */
+const PULL_RETRY_BASE_MS = 600;
 
 /** 插件名（与 manifest id 一致）。 */
 const name = 'dsh-suggest-ghost';
@@ -1135,7 +1150,30 @@ function applyBody(ctx: Context): void {
     'push-cell': null,
   };
   /**
-   * 打一行留痕（同一理由连续到达只打第一行）。
+   * 槽级冷却状态（与 `traceGates` 正交：理由闸管「同理由连打」，冷却闸管「换理由连打」）。
+   * 2026-10-22 现场：`push-cell` 的 hot-cell-only ↔ suggestion-cell-changed 交替把理由闸
+   * 每次都被骗过，控制台又成组刷。判据本体是 `stepSlotEmit`（纯函数，trace-gate 冒烟驱动）。
+   */
+  const traceSlotGates: Record<string, SlotEmitGate> = {};
+  /**
+   * **常态证据槽**：这些行是「判据在跑、优化在场」的工作量证据（push-cell 的
+   * parses/cellSkips、inline 计时器的取消理由、延迟重绘），**不是故障**。
+   * 2026-10-22 二次校准：冷却闸（5s/行）钉住后它们仍在正常使用的页签里按事件节奏
+   * 持续出现——对「控制台该是安静的」这个预期仍然太吵。降级到 `console.log`：
+   * Chrome 默认级别含 Info ⇒ log 仍可见；只有 Verbose 档（console.debug）默认隐藏（devtools 勾 Verbose 即可见，诊断能力不删只改门），
+   * 冷却闸照旧（Verbose 级别下也不至于刷屏）。#39 的「摘空输出」教训针对的是
+   * **故障路径不可见**，常态证据不在其列。
+   */
+  const ROUTINE_TRACE_SLOTS: ReadonlySet<string> = new Set([
+    'push-cell',
+    'inline-arm-cancel',
+    'deferred-repaint',
+  ]);
+  /**
+   * 打一行留痕（同一理由连续到达只打第一行；**不同理由也每 slot 每 5s 至多一行**，
+   * 冷却期内最新一份攒成 pending、冷却结束后放行——新理由不丢，只迟到）。
+   * 通道按槽分：故障槽 warn（默认可见），常态证据槽 debug（默认隐藏，见
+   * {@link ROUTINE_TRACE_SLOTS}）。
    *
    * 隐私口径与 `completion not shown` 那行一致（index.ts 里既有的写法）：
    * **只打字符数与原因，不打正文**，故调用方传进来的 `fields` 不得含草稿/建议文本。
@@ -1143,12 +1181,17 @@ function applyBody(ctx: Context): void {
   const traceOnce = (slot: string, reason: string, fields: string): void => {
     const step = stepReasonGate(traceGates[slot] ?? null, reason);
     traceGates[slot] = step.last;
-    if (!step.print) return;
-    console.warn(`${OPS_TRACE_PREFIX} ${slot}: reason=${reason}${fields === '' ? '' : ` ${fields}`}`);
+    const out = stepSlotEmit(traceSlotGates[slot] ?? initialSlotEmitGate(), Date.now(), step.print, reason, fields);
+    traceSlotGates[slot] = out.gate;
+    if (out.emit === null) return;
+    const line = `${OPS_TRACE_PREFIX} ${slot}: reason=${out.emit.reason}${out.emit.fields === '' ? '' : ` ${out.emit.fields}`}`;
+    if (ROUTINE_TRACE_SLOTS.has(slot)) console.debug(line);
+    else console.warn(line);
   };
-  /** 判据通过 / 状态解除时重新开门（静默）。 */
+  /** 判据通过 / 状态解除时重新开门（静默；攒着的 pending 一并作废——问题已解除就不该再迟到地打它）。 */
   const traceClear = (slot: string, reason: string | null): void => {
     traceGates[slot] = stepReasonGate(traceGates[slot] ?? null, reason).last;
+    traceSlotGates[slot] = initialSlotEmitGate();
   };
   let composing = false;
 
@@ -1352,12 +1395,19 @@ function applyBody(ctx: Context): void {
         if (skipReason !== lastCompletionSkip) {
           lastCompletionSkip = skipReason;
           // 只按**理由变化**打（本函数每帧都跑，一次输入能刷上百次；不这么做就是重造 #21）。
-          // 用 `console.warn` 而非 `console.log`：浏览器控制台的默认级别会滤掉 log，
-          // 而这条是**语义留痕**，不是调试噪声 —— 它把"载荷没到 / 到了但属于别的会话 /
-          // 草稿与载荷无法对齐 / 文本为空"分开。少了它，用户报"停顿后没东西"时客户端侧
-          // 完全不可观测（实测：宿主已推送成功，客户端无任何线索）。
+          // 通道（2026-10-22 三次校准）：整行走 `console.debug`（默认隐藏，Verbose 全量
+          // 可见）。上一版按「草稿够不够长」分 warn/log 被实测驳回：`draftChars=521
+          // reason=none` 也刷屏——「载荷还没到」在生成耗时 1.1~17s 的现实里是**瞬态**，
+          // 单条事件分不出「还没到」与「永不到」，把它标成故障级别就是噪声源。#39 的
+          // 验收要的是**这行存在**（排查"停顿后没东西"时把"没到 / 别的会话 / 对不齐 /
+          // 空文本"分开），不是它默认可见；理由变化闸照旧。
           // 只打字符数，不打草稿正文（与宿主侧同款隐私约束）。
-          console.warn(
+          // 通道回到 warn（2026-10-23：上一轮整体降 debug 是降过头了）。判据：这条正是
+          // 「幽灵为什么不出」的**第一诊断行**，且天然低频——只在理由**变化**时打一条
+          // （`lastCompletionSkip` 闸），不是 push-cell 那种事件节奏刷屏。常态证据降
+          // Verbose、诊断主行留 warn，两类的边界以「用户来报障时先看哪行」为准。
+          const sink = console.warn;
+          sink(
             `[dsh-suggest-ghost][ops-trace] completion not shown: reason=${skipReason}`
             + ` draftChars=${draft.length} payloadDraftChars=${completion?.draft?.length ?? -1}`
             + ` completionChars=${completion?.text?.length ?? -1}`
@@ -1553,7 +1603,7 @@ function applyBody(ctx: Context): void {
    *
    * 每次写入自动捎带当前 UI 语言（`locale` 字段），host 据此做语言先验加成。
    */
-  const writeOps = (payload: string): Promise<boolean> => {
+  const writeOpsNow = (payload: string): Promise<boolean> => {
     const svc = remoteOf(ctx)?.settings;
     if (svc === undefined) return Promise.resolve(false);
     // 信封：注入进程内单调 seq，并在有值时捎带 locale。
@@ -1581,8 +1631,8 @@ function applyBody(ctx: Context): void {
                 // reject 只可能是装配故障（参数元数 / 方法未挂载 / 缺 Context 适配器）。
                 (error: unknown) => {
                   const rejection = readRejection(error);
-                  if (attempt < 2 && isConflictRefusal(rejection.code, rejection.message)) {
-                    return doWrite(attempt + 1);
+                  if (opsConflictRetryAllowed(attempt) && isConflictRefusal(rejection.code, rejection.message)) {
+                    return retryAfterOpsConflict(attempt);
                   }
                   console.warn(`[suggest-ghost] _ops write rejected by client api: code=${String(rejection.code)}, message=${String(rejection.message)}`);
                   return false;
@@ -1616,7 +1666,7 @@ function applyBody(ctx: Context): void {
         case 'refused-conflict':
           // 版本冲突（host 自写 `_push` 会频繁推进 revision）：重取 revision 重试。
           // 注意：修复前这条分支**从来没触发过**——冲突当时被当成成功兑现了。
-          if (attempt < 2) return doWrite(attempt + 1);
+          if (opsConflictRetryAllowed(attempt)) return retryAfterOpsConflict(attempt);
           return reportWrite(mutated, rev, 'conflict retries exhausted');
         case 'refused-other':
           return reportWrite(mutated, rev, verdict);
@@ -1630,6 +1680,25 @@ function applyBody(ctx: Context): void {
             return reportWrite(mutated, rev, verdict);
           });
       }
+    };
+
+    /**
+     * 冲突重试前的退避。`settings-result.ts` 的 `opsConflictBackoffMs` 只给毫秒数
+     * （纯函数、可离线断言），真等待在这里。
+     *
+     * **两条冲突分支共用它**（mutate reject 里 `isConflictRefusal` 命中的装配故障路径，
+     * 与 `settleWrite` 的 `refused-conflict`），边界由 `opsConflictRetryAllowed` 统一判。
+     * 为什么必须退避而不是立刻重试：冲突的另一方是宿主侧写入（`_push`/`_hot` 更新、
+     * 宿主消费 `_ops` 后写回空值），通常就在同一个事件循环回合内完成；立即重试会拿着
+     * 同一个刚被拒的 revision 再撞一次，把预算瞬间烧光（这就是用户 console 里成组
+     * `conflict retries exhausted` 的直接成因）。25/50/100/200ms 的递增间隔给宿主侧
+     * 写入留出落盘窗口。
+     */
+    const retryAfterOpsConflict = async (attempt: number): Promise<boolean> => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, opsConflictBackoffMs(attempt));
+      });
+      return doWrite(attempt + 1);
     };
 
     /**
@@ -1675,6 +1744,24 @@ function applyBody(ctx: Context): void {
 
     return doWrite(0);
   };
+
+  /**
+   * `_ops` 写入口（**唯一入口**）：把 {@link writeOpsNow} 包进串行队列
+   * （`ops-write-queue.ts`）。本页有两个互不知情的写入源——输入停顿的 `complete`
+   * 与会话对账的 `pull`——它们各自「describe 取 revision → mutate(expected)」。
+   * 并发时互相把 revision 顶掉，而宿主每次消费还会把 `_ops` 写回空值（revision 再
+   * +1），于是 CAS 预算被自己人烧光、`complete` 丢掉（用户 console 的成组
+   * `conflict retries exhausted` + `completion not shown`）。串行化后页面内部不再
+   * 互抢，剩下的冲突只来自宿主侧写入，由 {@link retryAfterOpsConflict} 的退避吸收。
+   *
+   * `kind` 只影响合并语义：`complete` 在**排队中** last-wins（更旧的草稿已被新的
+   * 取代，未发送项兑现 false）；`pull` 不合并（每条都是独立的对账请求）。
+   * 现有调用点都不依赖兑现值（`void` / 不 await），被合并掉的 `false` 不会被读成
+   * 「写失败」而去重发或报错。
+   */
+  const opsWriteQueue = new OpsWriteQueue(writeOpsNow);
+  const writeOps = (payload: string, kind: OpsWriteKind = 'pull'): Promise<boolean> =>
+    opsWriteQueue.enqueue(payload, kind);
   /** 停顿续写的计时器句柄（`arm`/`reset` 建立，`skip` 绝不清动）。 */
   let inlineTriggerTimer: ReturnType<typeof setTimeout> | null = null;
   const clearInlineTimer = (): void => {
@@ -1709,7 +1796,9 @@ function applyBody(ctx: Context): void {
     const tally = stepTally(tallyState, renderHits);
     if (tally.print) {
       tallyState = tally.state;
-      console.warn(`${OPS_TRACE_PREFIX} render-source: reason=${tally.state.reason ?? 'none'}`
+      // 常态证据走 debug（Chrome 默认级别含 Info，log 仍可见；debug 才是默认隐藏的档）——与 `ROUTINE_TRACE_SLOTS` 同一
+      // 判据：render 归因 tally 是「工作量在场」的证据，不是故障（2026-10-22 校准）。
+      console.debug(`${OPS_TRACE_PREFIX} render-source: reason=${tally.state.reason ?? 'none'}`
         + ` ${tally.line.replace('render tally: ', '')} deferredSkipped=${deferredRepaintSkips}`);
     }
     render();
@@ -1795,7 +1884,12 @@ function applyBody(ctx: Context): void {
       }
       armState = settleInlineTimer(armState, { sessionId: armedSessionId, draft: draftNow });
 
-      writeOps(JSON.stringify({ rev: 0, ops: [{ op: 'complete', sessionId: armedSessionId, draft: draftNow }] }));
+      // `'complete'` 参与队列的「排队中 last-wins」：用户继续打字后，这条尚未发出的
+      // 旧草稿会被下一条 complete 取代（兑现 false = 未发送，不是写失败）。
+      void writeOps(
+        JSON.stringify({ rev: 0, ops: [{ op: 'complete', sessionId: armedSessionId, draft: draftNow }] }),
+        'complete',
+      );
     }, Math.max(0, decision.dueAt! - obs.now));
   };
   let pullRev = 0;
@@ -2487,20 +2581,47 @@ function remoteSettingsScope(
         if (i >= 0) listeners.splice(i, 1);
       };
     },
-    set: (key, next) => {
+    set: async (key, next) => {
       const svc = remote.settings;
-      if (svc === undefined) return Promise.resolve();
-      // `expectedRevision` 必填：用最近一次 describe 拿到的 revision。
-      // revision 尚未取到（仍为 -1）时先用 0；host 会以不匹配拒绝，宿主随后
-      // 推来的事件会带回真值，用户重试即可，不会静默写坏数据。
-      const expected = revision < 0 ? 0 : revision;
-      return svc.mutate(ns, [{ op: 'set', path: [key], value: next }], expected)
-        .then(() => {
+      if (svc === undefined) return;
+      // 冲突重试 + 退避 + **失败必须可见**（2026-10-23 修复：旧实现是「单次 mutate + 空
+      // catch」，在宿主每秒数笔 `_push`/`_hot`/`_ops` 写顶 revision 的现实下几乎必然冲突，
+      // 而失败被静默吞掉——现场证据：用户把「最少输入字符」改成 3，profile 里始终没有这个
+      // 键，用户以为生效了）。每轮用**最新** revision（闭包变量由 document-updated 事件
+      // 刷新），冲突按 `_ops` 写同款预算与退避重试（`opsConflictRetryAllowed` /
+      // `opsConflictBackoffMs`，边界只有一份）；非冲突拒绝与预算耗尽都 warn——
+      // 设置保存是低频显式动作，「没存上」必须让用户看见，不许静默。
+      for (let attempt = 0; ; attempt += 1) {
+        const expected = revision < 0 ? 0 : revision;
+        let landedOk = true;
+        let refusal: { code: string | undefined; message: string | undefined } | null = null;
+        try {
+          const mutated = await svc.mutate(ns, [{ op: 'set', path: [key], value: next }], expected);
+          const outcome = unwrapMutateResult(mutated);
+          if (outcome.ok === false) {
+            landedOk = false;
+            refusal = { code: outcome.code, message: outcome.message };
+          }
+        } catch (error) {
+          landedOk = false;
+          refusal = readRejection(error);
+        }
+        if (landedOk) {
           readValue();
-        })
-        .catch(() => {
-          // 写入失败（revision 冲突/后端未就绪）：宿主随后推来的事件会带回真值。
+          return;
+        }
+        if (refusal !== null && !isConflictRefusal(refusal.code, refusal.message)) {
+          console.warn(`[suggest-ghost] settings save refused: key=${key} code=${String(refusal.code)} message=${String(refusal.message).slice(0, 140)}`);
+          return;
+        }
+        if (!opsConflictRetryAllowed(attempt)) {
+          console.warn(`[suggest-ghost] settings save conflict retries exhausted: key=${key} expectedRevision=${String(expected)} — 设置未持久化，请重试`);
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, opsConflictBackoffMs(attempt));
         });
+      }
     },
     dispose: () => {
       disposed = true;

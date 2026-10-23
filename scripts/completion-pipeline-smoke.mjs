@@ -39,6 +39,7 @@ import {
   completionFaultMessage,
   decideCompletionEntry,
   decideCompletionSettle,
+  decideInflightPreemption,
   startBoundedCompletion,
 } from '../src/completion-gate.ts';
 import { faultSignature } from '../src/fault-signature.ts';
@@ -796,6 +797,30 @@ run('traceFault 的分桶与节流规则本体未变（7b 的复刻件因此仍�
   assert.match(hostSource, /const key = `\$\{kind\}\|\$\{faultSignature\(message\)\}`;/, '分桶键变了：7b 的 printer 复刻失效');
   assert.match(hostSource, /if \(seen !== 1 && seen % every !== 0\) return;/, '节流规则变了：7b 的 printer 复刻失效');
   assert.match(hostSource, /traceOps\(`\$\{message\} \[\$\{kind\} #\$\{seen\}\]`\)/, '打印格式变了：累计计数不在报文里，阈值取舍的依据就没了');
+});
+
+// ── 8b. 前缀豁免抢占判据（2026-10-22「幽灵永不出」的修复本体）────────────────
+run('decideInflightPreemption：草稿只是变长 → keep；非前缀变化/读不到 → preempt', () => {
+  // keep：用户在追加（#33 边打边等的对齐判据接受 payload.draft 为前缀）。
+  assert.equal(decideInflightPreemption('我重', '我重新'), 'keep');
+  assert.equal(decideInflightPreemption('abc', 'abc'), 'keep', '逐字相同也归 keep（缓存分支之外再兜一层）');
+  // preempt：删字 / 改字 / 整段替换——旧结果必然错位。
+  assert.equal(decideInflightPreemption('我重新想', '我重新'), 'preempt', '删字必须重发');
+  assert.equal(decideInflightPreemption('abc', 'abd'), 'preempt', '改字必须重发');
+  assert.equal(decideInflightPreemption('abc', 'xyz'), 'preempt');
+  // 读不到在途草稿：宁可多中止一次，也不让「判不了」变成「永远 keep」。
+  assert.equal(decideInflightPreemption(undefined, 'abc'), 'preempt');
+  // 空串在途：任何草稿都以 '' 开头 ⇒ keep（语义正确：空草稿的生成结果对任何追加都仍是前缀）。
+  assert.equal(decideInflightPreemption('', 'anything'), 'keep');
+});
+
+run('handleComplete 接线：keep 分支不 abort、留痕走 traceFault（不静默、不刷屏）', () => {
+  assert.match(hostSource, /decideInflightPreemption\(completionInflightDraft\.get\(sessionId\), draft\) === 'keep'\)/,
+    '抢占判据没接进 handleComplete：无条件 abort 的旧行为回来了（preempted 暴增、generated=0）');
+  assert.match(hostSource, /completion skip: draft only grew, in-flight generation kept/,
+    'keep 分支必须留痕（这条 complete 被消费但不产生生成动作，#17 教训）');
+  assert.match(hostSource, /completionInflightDraft\.set\(sessionId, draft\)/,
+    '发起生成时必须记录在途草稿，否则判据永远读到 undefined ⇒ 永远 preempt');
 });
 
 // ── 9. 反向验证（改回静默必须红）见文件末尾注释 ────────────────────────────────

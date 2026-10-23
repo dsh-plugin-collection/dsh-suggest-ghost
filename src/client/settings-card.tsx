@@ -241,9 +241,12 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'historyMinChars',
-    label: { zh: '最少输入字符', en: 'Minimum typed characters' },
+    // label 必须带模式名：卡片里 `historyMinChars` 与 `inlineMinChars` 曾共用
+    // 「最少输入字符」，两个 section 各出现一次——用户改了「历史」那个（存成 3），
+    // 以为续写阈值也是 3，实际续写仍按默认 4 判定（2026-10-23 现场）。
+    label: { zh: '最少输入字符（历史补全）', en: 'Min typed characters (history)' },
     hint: {
-      zh: '草稿输入多少字符后才触发补全（避免过早弹框）',
+      zh: '草稿输入多少字符后才触发历史前缀补全（避免过早弹框）',
       en: 'How many characters must be typed before completion kicks in (avoids popping up too early)',
     },
     kind: 'number',
@@ -286,9 +289,9 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'inlineMinChars',
-    label: { zh: '最少输入字符', en: 'Minimum typed characters' },
+    label: { zh: '最少输入字符（停顿续写）', en: 'Min typed characters (pause)' },
     hint: {
-      zh: '草稿输入多少字符后才触发续写',
+      zh: '草稿输入多少字符后才触发停顿续写（与历史补全的阈值各自独立）',
       en: 'How many characters must be typed before completion triggers',
     },
     kind: 'number',

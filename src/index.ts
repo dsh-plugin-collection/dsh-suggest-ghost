@@ -39,6 +39,7 @@ import {
   COMPLETION_DEADLINE_MS,
   completionFaultMessage,
   decideCompletionEntry,
+  decideInflightPreemption,
   startBoundedCompletion,
 } from './completion-gate.js';
 import type { CompletionGateDecision } from './completion-gate.js';
@@ -394,6 +395,53 @@ export function apply(ctx: Context, config: GenerateConfig): void {
    */
   let deferredPump: ReturnType<typeof setInterval> | null = null;
   /**
+   * 补写泵是否已被证明**建在 HMR 事务里**（它捕获的 `AsyncLocalStorage` 是 `store=true`）。
+   *
+   * 2026-10-22 现场（0.7.1）：插件被 HMR `partialReload` 重新 `apply()`，而那次 apply
+   * 跑在配置写入事务内 ⇒ 新建的 `setInterval` 继承了事务上下文，之后每一笔补写都得到
+   * `HMR transactions cannot be nested`。后果不是日志（那已被上一条修复限住），而是
+   * **功能全断**：pull 应答、续写、`_ops` 清空全部补不进去；客户端因此每 200ms~3.2s
+   * 重发 pull（`_ops` 写入本身成功、revision 一路涨），而客户端并发的 complete 写又在
+   * 抢同一个 revision ⇒ 用户看到的 `_ops write conflict retries exhausted` 与
+   * `completion not shown`。**泵被毒化是这两串日志的上游**。
+   *
+   * 恢复判据：只要有**一笔 pump 写**被结构性拒绝，就说明当前泵的上下文是事务内。
+   * 恢复时机：下一次**可证明在事务外**的回调（session/event；或任何即时写成功——写成功
+   * 本身就证明当时 `store` 非 true）。那时重建定时器，捕获新的（事务外）上下文。
+   * 不在事务内重建：那只会再造一个同样被毒化的泵。
+   */
+  let deferredPumpPoisoned = false;
+  /**
+   * 把**建定时器这一拍**切出 HMR 事务（若内核提供逃出手腕）。
+   *
+   * 背景：`partialReload` 可能**在配置写入事务内**重跑 `apply()`（agent 改插件源码后
+   * 重建 `lib/` 触发），此时 `setInterval` 会捕获 `store=true`，泵从此每一笔都 nested。
+   * 2026-10-22 的现场就是这种状态：pull 应答/续写/清空全部补不进去，客户端反复 pull。
+   *
+   * 内核里那条手腕是 `root.get('hmr').executing`（`AsyncLocalStorage`；0.2.x 运行时是
+   * 普通字段，类型面标了 `private`）——`executing.exit(cb)` 实测能把 `store` 从 true
+   * 打成 undefined 并让写成功（见 `docs/internals-cordis-settings-pitfalls.md` 的退路表）。
+   * 本仓库的主路径仍是「在事务外的 apply 同步续体里建泵」；这里只在 `exit` 确实可用时
+   * 用它兜底，取不到就原样建（不依赖它，跨代次私有化也不会崩）。
+   *
+   * **只用于建定时器/重建设定时器**，不用于逐笔写：定时器一旦在事务外建立，之后每一
+   * tick 的上下文都是干净的，不需要每笔都碰私有面。
+   */
+  function runOutsideHmrTransaction<T>(run: () => T): T {
+    try {
+      const root = (ctx as unknown as { root?: { get?: (name: string) => unknown } }).root;
+      const hmr = root?.get?.('hmr') as { executing?: { exit?: unknown } } | undefined;
+      const exit = hmr?.executing?.exit;
+      if (typeof exit !== 'function') return run();
+      // AsyncLocalStorage.exit(cb) 同步执行 cb 并返回其结果；类型面标了 private，
+      // 这里按运行时的真实形状收窄（取不到就走上面的原样分支）。
+      return (exit as (this: unknown, callback: () => T) => T).call(hmr!.executing, run);
+    } catch {
+      // 取服务/调用失败都不是致命路径：退回「正常上下文里建」，行为与旧实现一致。
+      return run();
+    }
+  }
+  /**
    * **默认层**：boot 时 `resolveConfig` 产物的拍平视图。
    *
    * `resolved = resolveConfig(config)` 是**深冻结的首次解析快照**——内核每次配置
@@ -455,7 +503,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     ctx.logger.warn(`dsh-suggest-ghost: ${message}`);
   };
 
-  let lastLiveTracedRevision: number | undefined;
+  let lastLiveTracedApplied: number | undefined;
   const liveSettings = createLiveSettings({
     ns: SUGGEST_GHOST_NAMESPACE,
     // 必须是 getter 形态：settingsSvc 在 ctx.inject 回调里才就位。
@@ -480,11 +528,14 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           liveSettingsFailed = false;
           traceOps('live settings recovered (describe() available again)');
         }
-        // 只在 **revision 变化**时留痕：onRefresh 每次刷新尝试都会回调（TTL 5s 到点也
-        // 触发），照抄进来就又造出一场 #21 式的洪水。#19 的验收判据恰好就是「改了有没有
-        // 被重新读到」，它等价于 revision 变了，所以按 revision 过滤不丢信息。
-        if (info.revision !== lastLiveTracedRevision) {
-          lastLiveTracedRevision = info.revision;
+        // 只在 **applied（生效设置键数）变化**时留痕。判据从「revision 变了」改成
+        // 「applied 变了」的依据（2026-10-22 live 统计）：旧判据下 125 行**全部**
+        // `applied=25` 原样重复——宿主每写一次 `_push`/`_hot`/`_ops` 都顶 revision，
+        // 这些自写回声与设置无关，是纯噪声。#19 的验收判据是「设置页改了有没有被
+        // 重新读到」，它等价于 **applied 变了**（改一个开关，生效键数必动），所以
+        // 换判据不丢验收信息，只丢回声。
+        if (info.applied !== lastLiveTracedApplied) {
+          lastLiveTracedApplied = info.applied;
           traceOps(`live settings refreshed rev=${String(info.revision)} applied=${info.applied}`);
         }
         return;
@@ -513,6 +564,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
    * 换引用，载荷比对才是语义判重）。
    */
   let lastOpsPayload = EMPTY_PUSH;
+  /** `hotness ops applied` 行的闸门状态（判据见 consumeOps 内注释）。 */
+  let hotAppliedSeen = 0;
+  let lastTracedTableSize = -1;
   /**
    * client 最后一次 `_ops` 写入捎带的 UI 语言（'zh' | 'en'）。
    * host 重启后为空，client 下次 pull 会重新捎带；语言检测时作为先验加成。
@@ -613,7 +667,11 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       //
       // 因此这段绝不能被挪进任何 handler 或 await 续体，也不会「随便找个地方建都行」。
       // 间隔 500ms 的依据见 `DEFERRED_PUMP_MS`；队列空时回调只做一次布尔判断就 return。
-      if (deferredPump === null) deferredPump = setInterval(drainDeferred, DEFERRED_PUMP_MS);
+      // `runOutsideHmrTransaction` 兜的是「apply 本身在 HMR 事务里重跑」（partialReload）：
+      // 取不到 hmr 服务时它原样建，行为不变。
+      if (deferredPump === null) {
+        deferredPump = runOutsideHmrTransaction(() => setInterval(drainDeferred, DEFERRED_PUMP_MS));
+      }
       // 服务就位 → 标脏并立刻预热一次实时视图。#19 遗留段的旧写法是
       // `liveSettings = flattenConfig(resolved)`——重读的仍是冻结的 boot 快照，
       // 等于没刷新；现在改走 describe()，此后设置页的改动无需重启即生效。
@@ -730,6 +788,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       // 恢复窗口内已推送的不完整热度。目标会话取自追踪的建议会话。
       void persistence.whenReady.then(() => {
         if (settingsSvc === null) return;
+        // 存储打开的回调与 settings 写事务无关：若泵被 HMR 事务毒化，这里是较早的
+        // 一个恢复点（见 `rearmDeferredPump`）。
+        rearmDeferredPump();
         const id = lastSuggestionSession;
         if (id !== null) pushToClient(statePushOf(id), { hotNow: true });
       });
@@ -738,8 +799,18 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       // 该事件只带 (ns, revision)，故每次都重读引用比对载荷。
       // **关键**：cordis 事件只向父级传播、不向子级传播。该事件 emit 在 settings
       // 服务的 ownerContext 上，插件自己的 ctx 收不到——必须监听 root。
+      //
+      // ⚠️ **监听在 root 上 = 不随插件 fiber 的 dispose 回收**（2026-10-22 live 根因）。
+      // 旧代码不接返回值、不挂清理：HMR `partialReload` 每次重跑 apply 就在 root 上
+      // **多挂一个** handler，旧 handler 闭包引用旧 fiber 的 svc/lastOpsPayload/sessions。
+      // 今天 28 次重载 ⇒ 最多 28 个 handler 抢同一条事件：最早那个（僵尸）先消费
+      // （它的 `lastOpsPayload` 是旧闭包，判不出「已被新 fiber 消费」），在
+      // `handleComplete → ctx.sessions.get` 上抛 `cannot get required service "sessions"
+      // in inactive context`，批次就地中断——applied/clear 行消失、`_ops` 滞留盘上、
+      // **complete 永远到不了新 fiber** ⇒ 表现为「续写永不出幽灵」。所以 off 必须接住、
+      // 必须挂进 ctx.effect 的清理（fiber 死，监听跟着死）。
       const eventCtx = (ctx as unknown as { root?: typeof ctx }).root ?? ctx;
-      eventCtx.on('settings/document-updated', (ns: string, revision?: number) => {
+      const offDocumentUpdated = eventCtx.on('settings/document-updated', (ns: string, revision?: number) => {
         if (ns !== SUGGEST_GHOST_NAMESPACE) return;
         // 事件驱动失效：下一次 effective() 现读一次 describe()（风暴期间 N 次事件
         // 合并成 1 次读，见 live-settings.createLiveSettings 的失效语义）。
@@ -749,7 +820,17 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           return;
         }
         lastOpsPayload = payload;
-        consumeOps(parseHotnessOps(payload), svc);
+        // 毒丸防线：consumeOps 内部任何 throw 不得冒回 cordis 的事件分发（一个 handler
+        // 炸穿会吞掉后续所有 handler 的派发，包括新 fiber 自己的）。留痕不许静默（#17）。
+        try {
+          consumeOps(parseHotnessOps(payload), svc);
+        } catch (error) {
+          traceFault('ops-consume-threw',
+            `_ops consume threw (batch kept off the event dispatcher): ${errorText(error)}`, 10);
+        }
+      });
+      ctx.effect(() => () => {
+        (offDocumentUpdated as unknown as (() => void) | undefined)?.();
       });
     } catch (error) {
       ctx.logger.warn(`dsh-suggest-ghost: settings wiring failed: ${String(error)}`);
@@ -1053,6 +1134,14 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   let lastCompletion: { sessionId: string; completion: { draft: string; text: string } } | null = null;
   /** 在途续写生成：sessionId → AbortController（单飞：同会话只保留最新一次）。 */
   const completionPending = new Map<string, AbortController>();
+  /**
+   * 在途生成**对着哪份草稿**（sessionId → 发起时的 draft）。抢占判据的前半（见
+   * `decideInflightPreemption`）要知道旧草稿才能识别「只是追加」。生命周期与
+   * `completionPending` 配对：set 在发起处、读只在「槽里有活 controller」时——
+   * settle 后 controller 出槽，这里残留的旧串永不参与判定，只会被下一次 set 覆盖，
+   * 每会话至多一条字符串（有界，不构成泄漏面）。
+   */
+  const completionInflightDraft = new Map<string, string>();
 
   const cacheCompletion = (sessionId: string, draft: string, text: string): void => {
     completionCache.delete(sessionId);
@@ -1134,12 +1223,31 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       });
       return;
     }
-    // 单飞：中止同会话的在途生成。被中止的那一次随后会在它自己的收口里落到
-    // `superseded` / `aborted` 出口，各自留痕（不再静默）。
+    // 单飞（**前缀豁免版**，2026-10-22「幽灵永不出」的修复）：
+    // 旧行为是无条件 abort——生成一次实测 5~10s，而 `inlineDelayMs=100` 下连打时每
+    // 1~3 个字符就来一条新 complete ⇒ 在途生成永远在出结果前被中止，live 现场
+    // `completion generated` 整段为 0、只剩 preempted/aborted（CHANGELOG 预言的
+    // 「preempted 暴增而 generated 未涨 ⇒ 回调」成真；修的不是延迟值，是抢占判据）。
+    // 现在：草稿只是**变长**（用户在追加）⇒ keep——让在途那份对着旧草稿跑完，客户端
+    // #33「边打边等」的对齐判据本来就接受 payload.draft 是当前草稿的前缀；草稿发生
+    // **非前缀**变化（删/改）⇒ preempt（旧行为）。判据本体在 `decideInflightPreemption`
+    // （纯函数，冒烟穷尽）。单飞不变：至多一个在途，keep 时不另起一次。
     const existing = completionPending.get(sessionId);
-    if (existing !== undefined) existing.abort();
+    if (existing !== undefined) {
+      if (decideInflightPreemption(completionInflightDraft.get(sessionId), draft) === 'keep') {
+        // 这条 complete 被消费但**不产生生成动作** ⇒ 必须留痕（#17 教训：「写了没动」
+        // 不可见）。连打期每 1~3 字一条，属正常态，按类节流。
+        traceFault('completion-inflight-extends',
+          `completion skip: draft only grew, in-flight generation kept (${sessionId} draftChars=${draftChars} inflightChars=${(completionInflightDraft.get(sessionId) ?? '').length})`,
+          20);
+        return;
+      }
+      existing.abort();
+      // 被中止的那一次随后会在它自己的收口里落到 `superseded` / `aborted` 出口，各自留痕（不再静默）。
+    }
     const controller = new AbortController();
     completionPending.set(sessionId, controller);
+    completionInflightDraft.set(sessionId, draft);
     // 生成 + 有界超时 + 每一种收口的留痕，全在 `startBoundedCompletion` 里（纯模块，
     // 冒烟可逐条断言）。这里只注入三件事：pending 槽的归属、留痕通道、交付动作。
     startBoundedCompletion<CompletionValue>(
@@ -1775,6 +1883,10 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     pushInFlight = settingsSvc.update(SUGGEST_GHOST_NAMESPACE, patch)
       .then(
         () => {
+          // 这一笔即时写**成功**本身就证明当前上下文不在 HMR 事务里（事务内写会被
+          // nested 判据同步拒掉）。所以这是重建被毒化补写泵的一个合法时机：把旧定时器
+          // 换成捕获当前（事务外）上下文的新定时器，让积压的 pull 应答/续写能落地。
+          rearmDeferredPump();
           // 成功也要留痕：#15/#18 的验收判据是「这份载荷到底落盘了没有」。历史数据里
           // 这条通道只留下 372 次 nested-transaction 拒绝、**一次成功都没记过**，
           // 于是「从没写」和「写了就失败」在日志里长得一模一样。
@@ -1900,6 +2012,34 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   const deferredLabel = (kind: DeferredKind): string => (kind === 'push' ? 'push' : '_ops clear');
 
   /**
+   * 热度格补写的唯一出口：泵 tick（队列空着时）与 pump 写**成功落地的回调**共用。
+   *
+   * 为什么成功回调也要搭一次便车（2026-10-22 live 实测的饥饿死锁）：客户端 pull 洪水
+   * （重试 200/400/800…ms + 每次输入停顿的 complete）让 `deferred` 的 clearOps/push 槽
+   * **常年非空**，旧规则「只有队列空着才轮到热度格」就把 `_hot` 永久饿死 ⇒ 应答的
+   * `historySessionId` 从不落盘 ⇒ 客户端 `pendingPull` 判不出「已对账」⇒ 继续重试 pull
+   * ⇒ 洪水不减。这是一个由宿主自己维持的活锁，控制台里就表现为「一直刷」`_ops write`。
+   * 成功回调搭便车打断它：每一笔 pump 写落地都白白给热度一次机会（此刻锁空闲、
+   * 上下文可证明在事务外——写成功本身就证明 `store` 不是 true）。
+   *
+   * 判据三条：有写面、无在途写、槽里确实压着热度载荷；再加合并窗口没到期不写
+   * （窗口语义与泵 tick 同一份 `decideHotPush`，两边不会漂移）。
+   * **不要求 `deferred` 为空**——那正是被饿死的条件本身。
+   *
+   * 为什么不在 `flushPush` 的 finally 上搭：那条回调可能跑在 HMR 事务内（即时写被
+   * 嵌套拒绝的上下文），搭上去等于用热度格的 3 次预算去撞同一个 nested，还会把
+   * 泵误标成毒化。pump 两条 finally 的上下文由定时器保证。
+   */
+  const tryDrainHotPayload = (): void => {
+    const svc = settingsSvc;
+    if (svc === null) return;
+    if (anyWriteInFlight()) return;
+    if (pendingHotPayload === null) return;
+    if (decideHotPush(Date.now(), hotWindowOpenedAt).action !== 'write') return;
+    drainHotFromPump(svc);
+  };
+
+  /**
    * 事务外排水锚点：把被拒的写入补出去（**结构性拒绝**与**可重试的竞争失败**两类）。
    *
    * **为什么定时器能写进去**：`setInterval` 捕获的是**建它的那一刻**的
@@ -1983,17 +2123,12 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       deferredWaitSince = null;
       traceFault('deferred-wait', `deferred drain waited for the in-flight write to land before taking the lock (waitedMs=${waitedMs})`, 50);
     }
-    // 热度格补写：只有建议/清空队列**空着**时才轮得到它（那两项是用户正在等的东西）。
-    // 这条路是事务外锚点，也是「被 HMR 事务拒绝」唯一的合法出口——但**必须有界**：
-    // 每次失败 `hotDrainAttempts+1`，到 `HOT_DRAIN_MAX_ATTEMPTS` 就丢弃并放开指纹，
-    // 由下一次状态推送重建。绝不能让 500ms 的 tick 变成永久重试。
+    // 热度格补写：借这一次 tick 试一把（条件与成功回调上的搭便车共用一个出口，见
+    // `tryDrainHotPayload`）。这条路是事务外锚点，也是「被 HMR 事务拒绝」的合法出口——
+    // 但**必须有界**：每次失败 `hotDrainAttempts+1`，到 `HOT_DRAIN_MAX_ATTEMPTS` 就丢弃
+    // 并放开指纹，由下一次状态推送重建。绝不能让 500ms 的 tick 变成永久重试。
     if (deferred.isEmpty()) {
-      // 窗口没到期就不写：否则这条事务外锚点会每 500ms 把合并中的快照冲出去，
-      // 窗口等于不存在（`decideHotPush` 用同一个判据，两边不会漂移）。
-      if (pendingHotPayload !== null
-        && decideHotPush(now, hotWindowOpenedAt).action === 'write') {
-        drainHotFromPump(svc);
-      }
+      tryDrainHotPayload();
       return;
     }
     const item = deferred.take();
@@ -2049,6 +2184,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       void tracked.finally(() => {
         deferredWriteInFlight = null;
         retryFlushAfterWrite();
+        // 这一笔落地让出了锁：白给热度格一次搭便车（判据见 `tryDrainHotPayload`；
+        // 不搭的话 pull 洪水期 `_hot` 会被 clearOps 槽永久挤在后面）。
+        tryDrainHotPayload();
       });
       return;
     }
@@ -2068,7 +2206,11 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     const clearWrite = svc.update(SUGGEST_GHOST_NAMESPACE, { _ops: EMPTY_PUSH });
     const clearTracked = clearWrite.then(
       () => {
-        traceOps(`deferred _ops cleared after consume after=${Date.now() - queuedAt}ms attempts=${item.attempts + 1}`);
+        // 成功清空是**常态**（每批至多一次）：每批一行是终端噪音的第二来源。走 traceFault
+        // 节流——第一次必打（证明「补清空」这条链在通），之后每 20 次一行带计数；
+        // 失败/refused 行不受影响（那些才是要看的）。
+        traceFault('ops-clear-landed',
+          `deferred _ops cleared after consume after=${Date.now() - queuedAt}ms attempts=${item.attempts + 1}`, 20);
       },
       (error: unknown) => retryDeferred(item, error),
     );
@@ -2076,7 +2218,33 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     void clearTracked.finally(() => {
       deferredWriteInFlight = null;
       retryFlushAfterWrite();
+      // 同上：清空落地这一刻是给热度格的免费搭车（pull 洪水里正是这笔写反复占位）。
+      // ⚠️ 唯独 `drainHotFromPump` 自己的 finally **不加**——「失败重排 + finally 再写」
+      // 就是 2026-10-22 微任务紧循环的原始形状；push/clear 的写失败不会自我重排回
+      // 同一出口，所以那两处是安全的。
+      tryDrainHotPayload();
     });
+  }
+
+  /**
+   * 把**被毒化**的补写泵重建为真正的事务外锚点。
+   *
+   * 只在 `deferredPumpPoisoned` 为真时动作：那意味着当前定时器的回调上下文是
+   * `store=true`（见声明处的现场说明）。调用点必须是**可证明在事务外**的回调：
+   *  - `session/event`（会话事件不是 settings 写入触发，不继承配置事务）；
+   *  - 任何一笔即时写**成功**的回调（写成功本身就证明当时的 `store` 不是 true）；
+   *  - `persistence.whenReady`（存储打开，与 settings 写事务无关）。
+   *
+   * 重建 = 清掉旧 interval + 新开一个：`setInterval` 捕获**建它那一刻**的
+   * `AsyncLocalStorage`，所以必须在事务外建才有意义；在事务内重建只会再造一个
+   * 同样失败的泵（这也是本函数要由上面的调用点触发、而不由失败回调自己触发的原因）。
+   */
+  function rearmDeferredPump(): void {
+    if (!deferredPumpPoisoned) return;
+    if (deferredPump !== null) clearInterval(deferredPump);
+    deferredPump = runOutsideHmrTransaction(() => setInterval(drainDeferred, DEFERRED_PUMP_MS));
+    deferredPumpPoisoned = false;
+    traceOps('deferred pump re-armed outside the HMR transaction (previous timer inherited store=true)');
   }
 
   /**
@@ -2125,6 +2293,10 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       (error: unknown) => {
         const text = errorText(error);
         const triage = triageWriteFailure(error, 'push');
+        // 泵自己拿到结构性拒绝 ⇒ **当前泵的上下文是事务内**（2026-10-22 现场：HMR
+        // partialReload 在配置事务里重跑 apply，泵捕获了 store=true）。标记毒化，
+        // 等下一个可证明在事务外的回调重建它（见 `rearmDeferredPump`）。
+        if (triage.cls === 'structural-refusal') deferredPumpPoisoned = true;
         // 槽里已有更新载荷 ⇒ 这份已被取代：不再放回（旧字节不许盖新状态），也不消耗
         // 新载荷的补写预算（`pushToClient` 入队时已把预算清零）。
         if (pendingHotPayload !== null) {
@@ -2188,6 +2360,10 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   function retryDeferred(item: DeferredItem, error: unknown): void {
     const text = errorText(error);
     const triage = triageWriteFailure(error, item.kind === 'push' ? 'push' : 'clearOps');
+    // 泵自己拿到结构性拒绝 ⇒ 泵的上下文是事务内（见 `deferredPumpPoisoned` 与
+    // `rearmDeferredPump`）。重试预算仍按类别走，但**恢复**必须等事务外回调，
+    // 不能在这里重建（在这里建出来的定时器会捕获同一个 store=true）。
+    if (triage.cls === 'structural-refusal') deferredPumpPoisoned = true;
     // 留痕里用通道名（`push` / `_ops clear`）而不是槽名，与成功那条的前缀一致，好 grep。
     const label = deferredLabel(item.kind);
     // 结构性拒绝：至多再试一次（第二次还 nested 就说明「上下文建错了」，重试没有信息量）。
@@ -2287,11 +2463,17 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     //    那一次动作，逐条打（实际每批至多一条）。
     const kinds = new Map<string, number>();
     for (const op of ops) kinds.set(op.op, (kinds.get(op.op) ?? 0) + 1);
-    traceOps(
-      `ops batch received: n=${ops.length} kinds=${
-        [...kinds].map(([kind, count]) => (count > 1 ? `${kind}x${count}` : kind)).join(',')
-      }${parsed.locale !== undefined ? ` locale=${parsed.locale}` : ''}`,
-    );
+    // 「收到」行只为**异常批**存在（2026-10-22 降噪）：单 op 正常批的输入证据由逐 op 的
+    // `ops consumed: …` 行覆盖，「每批固定两行」正是终端噪音的主体（pull 对账每轮吃两行）。
+    // 保留条件：批内多 op（逐 op 行只列会驱动动作的那类，摘要行兜住全貌）、或整批被拒
+    // （`ops-dropped` 另有一行，但 received 行给出字节数/形态，#17 的取证链要它）。
+    if (ops.length > 1 || parsed.rejected !== undefined) {
+      traceOps(
+        `ops batch received: n=${ops.length} kinds=${
+          [...kinds].map(([kind, count]) => (count > 1 ? `${kind}x${count}` : kind)).join(',')
+        }${parsed.locale !== undefined ? ` locale=${parsed.locale}` : ''}`,
+      );
+    }
     for (const op of ops) {
       if (op.op === 'pull') {
         traceOps(`ops consumed: pull session=${op.sessionId} (应答走 pushToClient)`);
@@ -2343,7 +2525,19 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       }
     }
     const changed = persistence.applyOps(ops);
-    traceOps(`hotness ops applied: batch=${ops.length} changed=${changed} tableSize=${hotness.size}`);
+    // applied 行的闸门（2026-10-22 live：71 行全部 `changed=0 tableSize=2000` 原样重复）。
+    // 这行的信息量在「这批 op 改没改热表」——没改且表大小也没动时它是 batch received
+    // 的复读，攒着计数每 20 批并一行；改了（或表大小变了）必打，#17 的「写了没动」
+    // 诊断路径不受影响。
+    hotAppliedSeen += 1;
+    const tableSizeNow = hotness.size;
+    if (changed > 0 || tableSizeNow !== lastTracedTableSize) {
+      lastTracedTableSize = tableSizeNow;
+      hotAppliedSeen = 0;
+      traceOps(`hotness ops applied: batch=${ops.length} changed=${changed} tableSize=${tableSizeNow}`);
+    } else if (hotAppliedSeen === 1 || hotAppliedSeen % 20 === 0) {
+      traceOps(`hotness ops applied: batch=${ops.length} changed=0 tableSize=${tableSizeNow} [unchanged #${hotAppliedSeen}]`);
+    }
     void persistence.flush();
     // 消费完成：清空操作队列（下一次 watch 触发时 ops 为空，直接跳过）。
     //
@@ -2369,7 +2563,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     const clearWrite = svc.update(SUGGEST_GHOST_NAMESPACE, { _ops: EMPTY_PUSH });
     const clearTracked = clearWrite.then(
       () => {
-        traceOps('_ops cleared after consume');
+        // 同 deferred 那条：即时清空成功也是常态，节流（首次必打 + 每 20 次）。
+        traceFault('ops-clear-landed', '_ops cleared after consume', 20);
       },
       (error: unknown) => {
         const text = errorText(error);
@@ -2506,6 +2701,10 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   };
 
   ctx.on('session/event', (session, event) => {
+    // 会话事件不是 settings 写触发的 ⇒ 这个回调（及其异步续体）不继承配置写事务。
+    // 插件被 HMR `partialReload` 在事务里重跑 apply 时，泵会捕获 store=true 而永久
+    // 写不进；这里是稳定恢复点（判据与重建见 `deferredPumpPoisoned` / `rearmDeferredPump`）。
+    rearmDeferredPump();
     // 传会话 id：同会话相邻重复的用户消息只计一次热度（对齐 extractHistory 的去重语义）。
     hotness.consume(event, session.id);
     const userText = userTextOfEvent(event);

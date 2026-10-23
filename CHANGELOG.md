@@ -6,6 +6,73 @@ All notable changes to this project will be documented in this file.
 
 ### 修复
 
+- **设置卡两个「最少输入字符」同名，用户与排障者都读错了对象**（2026-10-23，用户指出
+  「一个 3 一个 4，你看不到吗」——我上一条回复把它误诊成「3 没保存」）。卡片里
+  `historyMinChars`（历史前缀补全阈值）与 `inlineMinChars`（停顿续写阈值）共用 label
+  「最少输入字符」，分属两个 section 各出现一次；用户存的 3 是**历史补全**那个（profile 里
+  `historyMinChars: 3` 一直在，保存成功过），续写仍按默认 4 判定——「我重新」3 字不触发的
+  真正解释。修法：label 带模式名（「最少输入字符（历史补全）/（停顿续写）」），hint 同步写明
+  「两者各自独立」；README 表格跟着消歧。上一条「3 从未写进 profile」的诊断**只对了一半**
+  （`inlineMinChars` 确实不在盘上，但那是用户没改过它，不是保存失败）——保存静默失败的
+  修复本身仍成立（冲突是常态，空 catch 是真实缺陷），但触发这次排查的现象另有其人，记在此处。
+
+- **设置卡保存静默失败：「最少输入字符 = 3」从未写进 profile**（2026-10-23，用户报「停顿后
+  补充没生效」时顺带挖出）。`remoteSettingsScope.set` 是**单次 mutate + 空 catch**：宿主每
+  秒数笔 `_push`/`_hot`/`_ops` 写顶 revision，卡片拿的 revision 发出时几乎必然过期 ⇒ 冲突
+  拒绝 ⇒ 被 catch 吞掉（注释还写着「宿主随后推来的事件会带回真值」——带回的是**旧**真值，
+  用户以为存上了）。现场证据：profile 的 config 段里根本没有 `inlineMinChars` 键，宿主一直
+  按默认 4 判定，用户 3 字的草稿因此不触发。
+  - 修复：set 改**冲突重试环**——每轮现取最新 revision（闭包变量由 document-updated 刷新）、
+    与 `_ops` 写共用同一份预算/退避（`opsConflictRetryAllowed` / `opsConflictBackoffMs`，
+    边界不写第二份）；非冲突拒绝与预算耗尽都 `console.warn`——设置保存是低频显式动作，
+    「没存上」必须可见。
+  - 回归：`ops-write-verify-smoke` 新增 5 钉静态守卫（async 重试环 / 两条 warn 串 /
+    共用边界 / 现取 revision），剥注释后查码（删码留评会假绿，先堵上）。
+
+- **「幽灵永不出」的最终根因：HMR reload 后 root 监听器不随旧 fiber 回收，僵尸 handler
+  抢事件并在 inactive context 上抛穿**（2026-10-22 live）。链路：`settings/document-updated`
+  必须监听 root（cordis 事件只向上传播），而 loader 的 `partialReload` **不会**回收旧 fiber
+  经 `root.on` 挂上的 handler（probe 实测：手动 `fiber.dispose()` 会回收，reload 路径不回收
+  ——两条路径语义不一致本身就是上游问题）。今天 28 次重载后，每条 `_ops` 写入被**最早的
+  僵尸**先消费：它的 `lastOpsPayload` 守卫是旧闭包、判不出「已被新 fiber 消费」，走到
+  `handleComplete → ctx.sessions.get` 抛 `cannot get required service "sessions" in
+  inactive context`，批次就地中断——`hotness ops applied`/`_ops cleared`/一切 settle 行
+  消失、`_ops` 滞留盘上、新 fiber 永远收不到 complete。现场签名：`ops consumed: complete`
+  之后**没有任何后续行**。
+  - 修复：`eventCtx.on(...)` 的 **off 接住并挂进 `ctx.effect` 的清理**（effect disposer 在
+    reload/dispose 两条路径都跑）；handler 里的 `consumeOps` 包 **try/catch + `ops-consume-threw`
+    留痕**（毒丸不许炸穿事件分发，也不许静默）。
+  - ⚠️ **修复只约束新注册的 handler——已经挂上 root 的僵尸只能靠重启宿主清除**。这就是
+    「需要我重启 DSH 不」这个问题在 20:20 之后的正确答案：**要**，一次。
+  - 回归：`deferred-writes-smoke` 静态守卫（off 接住 / effect 清理 / try-catch / 留痕四钉）。
+    行为级 harness 做不了——probe 证明「手动 extend+dispose」与 loader reload 的 inject
+    调度语义不同（前者会让后续 fiber 的 inject 永不触发），拿它当「reload 的等价类」会测
+    一个不存在的行为。**假设有据可查比有脚本更重要**，这条边界记在这里。
+  - 上游反馈：`docs/upstream-feedback-settings-proxy.md` 补第三条诉求（root 监听的
+    reload 回收语义与 dispose 对齐）。
+
+- **连打期续写永不出结果（`completion generated` 整段为 0）——单飞抢占改成前缀豁免**
+  （2026-10-22，用户报「输入词汇没有任何幽灵文本」）。旧行为：每条新 `complete` 无条件
+  `abort()` 同会话在途生成。实测一次续写生成要 **5~10s**，而 `inlineDelayMs=100` 下连打时
+  每 1~3 个字符就来一条新 complete ⇒ 在途生成**永远**在出结果前被中止——live 现场
+  `completion generated` 自 17:30 起为 0，只剩 `preempted`/`aborted`。CHANGELOG 早前预言的
+  那条（「若 preempted 暴增而 generated 未涨，应回调」）成真；**修的不是延迟值，是抢占判据**：
+  - `decideInflightPreemption(inflightDraft, draft)`（纯函数，`src/completion-gate.ts`）：
+    草稿只是**变长**（用户在追加）⇒ `keep`——让在途那份对着旧草稿跑完，客户端 #33
+    「边打边等」的对齐判据本来就接受 `payload.draft` 是当前草稿的前缀，结果由对齐取舍；
+    草稿**非前缀**变化（删/改/替换）⇒ `preempt`（旧行为）；在途草稿读不到 ⇒ `preempt`
+    （宁可多中止一次，不让「判不了」变成「永远 keep」）。
+  - `handleComplete` 接线：`keep` 时不 abort、不另起（单飞不变：至多一个在途），并留
+    `completion skip: draft only grew`（traceFault 每 20 条——这条 complete 被消费但不产生
+    生成动作，#17 教训：不许静默）。`completionInflightDraft` 与 pending 槽配对记录发起时
+    的草稿；settle 后残留串永不参与判定（读方先查活 controller）。
+  - 为什么冲突风暴期间没暴露：并发丢包**顺带节流**了 complete（丢掉的不会抢占）；队列把
+    投递修可靠之后，「每击键必达 ⇒ 每击键必抢」的饥饿才显形——本条是上一轮修复的**直接
+    后果**，记在这里是为了不让下一次「修好一条链、引爆另一条」再写成意外。
+  - 回归：`completion-pipeline-smoke` 新增 2 组（判据穷尽 keep/preempt 边界 + 接线在场），
+    现 43 组。另注：`我重新` 只有 3 字，低于 `inlineMinChars=4` 的触发阈值——那是设计，
+    用户可在设置卡调低阈值；本条修的是**够长之后依然不出**的那一半。
+
 - **`--cleanup` 现在能清掉「工作区在沙箱目录之外」的残留**（#83）：原先只认 `<home>/ws` ⇒ 历史遗留的
   `~/dsh-sbx-<entry>-ws` 或显式 `--ws` 指到别处时，它会**把残留报出来、然后删不掉** ⇒ 使用者看到
   「有残留」的报告配上「清理成功」的退出码，两者互相矛盾。现在三处一起补：建沙箱时把 `WS` 的实际值写进
@@ -17,6 +84,135 @@ All notable changes to this project will be documented in this file.
   - `--residual` 与 `--cleanup` **共用同一份枚举与判定** ⇒ 逐行输出与退出码一致（只读模式只说「会删（`--cleanup` 时）」）
 
 ## [Unreleased]
+
+### 修复
+
+- **HMR `partialReload` 在配置事务里重跑 `apply()` → 补写泵被毒化，pull 应答/续写/清空全丢**
+  （0.7.1 现场，2026-10-22）。`drainDeferred` 的定时器在 `apply()` 的同步续体里建立、靠「建它时
+  `AsyncLocalStorage` 的 store 是 undefined」拿到事务外锚点；但 agent 改插件源码、重建 `lib/` 会触发
+  HMR 重载，**那次 apply 本身跑在配置写入事务里** ⇒ 新定时器继承 `store=true`，此后每笔补写都被
+  `HMR transactions cannot be nested` 拒绝（现场留痕：`deferred push write refused again in the
+  apply()-time pump`、`deferred hot push dropped reason=attempts-exhausted`）。后果不是日志（有界重试
+  已经限住），而是**功能全断**：pull 应答、续写、`_ops` 清空都补不进去；客户端拿不到应答就反复重发
+  pull，`_ops` 写入本身成功、revision 一路涨；再叠加客户端并发的 complete 写，就出现用户看到的
+  `_ops write conflict retries exhausted` 与 `completion not shown: payloadDraftChars=-1`。
+  - **建泵那一拍切出事务**：若宿主提供 `root.get('hmr').executing`（内核的 `AsyncLocalStorage`），
+    用它的 `exit(cb)` 建 `setInterval`（`runOutsideHmrTransaction`，取不到就原样建，不依赖私有面）。
+    实测同一沙箱的退路表：`executing.exit(() => 写)` OK、bump revision。
+  - **兜底重建**：取不到手腕的宿主上，泵写拿到结构性拒绝即标记 `deferredPumpPoisoned`；下一次
+    **可证明在事务外**的回调（`session/event`、任何即时写成功、`persistence.whenReady`）重建定时器，
+    留痕 `deferred pump re-armed outside the HMR transaction`。**不在失败回调里重建**——那只会捕获
+    同一个 `store=true`，再造一个同样失败的泵。
+  - 回归：`scripts/pump-hmr-escape-smoke.mjs`（5 组：有 `executing.exit` 时「事务内 boot 后第一次
+    pull 就补写成功」，无需任何恢复事件）；`scripts/pump-rearm-smoke.mjs`（7 组：无手腕时先毒化、
+    会话事件重建、之后 push/`_hot`/`_ops` 清空全部真实落盘）。两条都进 `test:e2e`（构建之后）。
+
+- **客户端 `_ops` 写在同页内自抢 revision，冲突预算被烧光、`complete` 丢失**。`writeOps` 是
+  「describe 取 revision → mutate(expected)」CAS，而同一页有两条互不知情的写入源：每次输入停顿的
+  `complete` 与会话切换/未应答重试的 `pull`。并发时 A 的 describe 与 mutate 之间被 B 插队；宿主每消费
+  一次还会把 `_ops` 写回空值（revision 再 +1）⇒ 旧实现 3 次预算几乎必然耗尽，console 成组刷
+  `_ops write conflict retries exhausted: expectedRevision=N ... now N+1`，`complete` 丢掉后就是
+  `completion not shown`。
+  - 新增 `src/client/ops-write-queue.ts`：**串行队列**（至多一个 describe→mutate 在途、FIFO）；
+    `complete` 在排队中 **last-wins**（被取代者兑现 `false` = 未发送，在途不取消）；`pull` 不合并
+    （每条核对账独立）；`run` 抛错该项 `false` 且队列继续。写面唯一入口 `writeOps(payload, kind)`。
+  - 冲突重试从「立即重试、共 3 次」改成 **5 次 + 25/50/100/200ms 退避**（`OPS_WRITE_MAX_ATTEMPTS` /
+    `opsConflictBackoffMs` / `opsConflictRetryAllowed`，两条冲突分支共用同一份边界）。剩下的冲突只来自
+    宿主侧写入，退避给它让出落盘窗口。
+  - **单项 8s 看门狗**（`OpsWriteQueue` 的 `itemTimeoutMs`）：串行化把「一条 RPC 永不兑现」从
+    「丢一条写」升级成「整条通道卡死」（唯一在途槽被永久占住）。超时项判 `false`、放行后续；
+    迟到兑现被丢弃、不翻转结果。代价是超时瞬间可能与迟到 run 短暂并发——迟到的是旧载荷，
+    宿主按全等去重 + `seq` 单调 + pull 幂等，不产生错误状态。
+  - 回归：`scripts/ops-write-queue-smoke.mjs`（8 组：串行/FIFO、complete last-wins、在途不可取代、
+    pull 不合并、异常续跑、退避序列与上限、重试边界、看门狗放行），接进 `test:smoke`。
+
+- **`_hot` 被 clearOps 槽饿死的宿主侧活锁**（2026-10-22 live 现场，客户端「控制台一直刷」的
+  第三个上游，比客户端两个问题更根本）。泵每 tick 只补一个槽，旧规则「热度格只有
+  `deferred` 队列空着才轮得到」；而 pull 洪水（客户端每 200/400/800ms 重试 + 每次输入停顿
+  的 complete）让 clearOps 槽**永远有下一条** ⇒ `_hot`（应答的历史环/热度）永不落地 ⇒ 客户端
+  `historySessionId` 对不上 ⇒ `pendingPull` 判不出「已对账」继续重试 ⇒ 洪水由饥饿本身维持。
+  循环的每一环单独看都「有界」，合起来是永不收敛的活锁——日志表现为同几个会话的
+  `ops consumed: pull` 无休无止。
+  - 修复：新增 `tryDrainHotPayload()`（判据：有写面、无在途写、槽里压着热度、合并窗口
+    到期），调用点恰好 3 处——泵 tick 空窗 + pump push **与** clear 的**写成功 finally**。
+    「写成功」本身证明当下上下文在事务外，搭便车是安全的；不要求队列空（那正是被饿死的
+    条件本身）。**`drainHotFromPump` 自己的 finally 不加**——「失败重排 + finally 再写」就是
+    上一次 23 GB 微任务紧循环的原始形状；`flushPush` 的 finally 也不加（它可能在事务内，
+    搭上去等于烧热度预算并误标毒化）。
+  - 回归：`scripts/hot-starvation-smoke.mjs`（4 组；3 条 150ms 间隔的 pull 造出「连续两拍队列
+    非空」窗口，断言 `_hot` 落地**前至多一笔**非热写——修复后 1 笔、旧规则 2 笔；变异自证：
+    删掉两处 finally 搭便车 ⇒ S2 报红且其余全绿）。`scripts/deferred-writes-smoke.mjs` 加静态
+    守卫（调用恰好 3 处、`drainHotFromPump` 体内禁止出现）。两条都进链（前者 `test:e2e`）。
+
+- **客户端留痕的「交替刷屏」**（2026-10-22，用户刷新后仍报"控制台在刷"的剩余来源之一）。#39 的
+  理由闸只防「同理由连打」，对 `hot-cell-only ↔ suggestion-cell-changed` 这种**来回交替**每次
+  都放行——宿主两格高频交替写时 `push-cell:` 黄线又成串。补第二把闸：`stepSlotEmit` 槽级冷却
+  （同一 slot 每 5s 至多一行；冷却期内最新理由攒成 pending，冷却结束后下一次调用放行——
+  **新理由不丢只迟到**，无定时器驱动）。`traceClear` 连 pending 一起作废。冒烟新增 4 组
+  （交替 100 次只出 1 行 / pending 放行 / 5000ms 边界与 last-wins / 非 print 不产生 pending），
+  `trace-gate-smoke` 现 14 组；写第一版时第 4 组当场抓到「`lastEmitAt: 0` 哨兵撞假时钟」的
+  实现 bug（首次必打不能依赖时钟量级巧合，改 `null` 哨兵）。`ghost-frame-cell-e2e` 的
+  push-cell 字面断言按新口径更新（<5s 的 harness 里只该看到 ≤2 行；「两种理由各自成立」
+  的性质移交 trace-gate 的确定性假时钟断言，不是删断言）。
+
+- **常态证据留痕降级到 Verbose 通道**（2026-10-22 第三次校准，用户「刷新后控制台还在刷」的
+  最后一条；含一次**自我驳回**：先降到 `console.log` 被实测打回——**Chrome 默认级别包含
+  Info**，log 并不隐藏，默认视图里真正关着的只有 Verbose 档 = `console.debug`）。冷却闸
+  生效后 `push-cell` 已经降到每 5s 一行，但**正常使用**的页签里事件流不停（agent 会话每回合
+  都有推送），5s 一行对「控制台默认该是安静的」这个预期仍然吵。按「是不是故障」分通道：
+  `push-cell` / `inline-arm-cancel` / `deferred-repaint` / `render-source` 是「判据在跑、
+  优化在场」的**工作量证据**，不是故障 ⇒ `console.debug`（默认隐藏，devtools 勾 Verbose
+  全量可见，诊断能力不删只改门）；故障槽（`stale-frame`、`tab-abandon`、`accept-gate-*`、
+  `conflict exhausted`）保持 `console.warn`。`completion not shown` **整行**降 debug：
+  上一版按「草稿够不够长」分 warn/log 也被 `draftChars=521 reason=none` 驳回——生成耗时
+  1.1~17s 的现实里「载荷还没到」是瞬态，单条事件分不出「还没到」与「永不到」，标故障级别
+  就是噪声源；#39 要的是**这行存在**，不是默认可见。冷却闸与理由闸对所有通道照旧。
+  `ghost-frame-cell-e2e` 的 console 捕获补上 debug 通道（不补就是「采集不到 = 没打」的
+  harness 瞎，不是产品回归——留痕断言当场会红）。
+
+
+- **冲突退避与 pull 重试的量纲校准**（2026-10-22 第三次现场，用户刷新后仍见
+  `conflict retries exhausted: expected 733, now 734`）。串行队列消掉页面自抢后，剩下的冲突来自
+  **宿主每批消费写 2~3 笔**（应答 `_push`/`_hot` + `_ops` 清空）与其它页签的同 ns 写入。旧参数被
+  live 栈证伪：冲突只落后**一笔** revision，而宿主单笔写的实测在途是 **0.2~1.6s**（writeMs）——
+  客户端总退避 375ms **比一次在途写还短**，5 连败是必然而不是运气。同理 pull：应答路径 =
+  事务拒绝 → 泵 500ms tick → 写 0.2~1.6s ⇒ 最早一拍应答 ≈0.7~2.1s 后，旧值 200ms 的头两次重试
+  必然打空，而**每次打空又是一轮「客户端写 + 宿主消费 + 至多两笔应答/清空写」**——重试洪水自己
+  就是 revision 顶升器（live 计数：8 分钟 285 批 pull、其中同一会话 35+ 次）。
+  - `_ops` 冲突重试：`OPS_WRITE_MAX_ATTEMPTS` 5→8，退避 25/50/100/200 → **100/200/400/800/1600**
+    （总窗口 ≈5.9s，覆盖 2~3 个宿主写窗口；封顶后持平是设计，冒烟断言跟着改成「封顶前严格递增」）。
+  - pull 重试：`PULL_RETRY_BASE_MS` 200→**600**（600/1200/2400/4800，第一次就要等得起应答路径），
+    `PULL_MAX_ATTEMPTS` 5→4（总窗口没缩短，砍的全是注定打空的前几枪）。
+  - 结构性欠账（本轮没做，记为下一步）：**把「应答写」与「`_ops` 清空」合并成一笔**——宿主每批
+    消费从 2~3 笔写降到 1~2 笔，revision 顶升与整档重写同时减半；清空带 CAS（盘上载荷不等就放弃
+    搭载），零写批仍由泵单独清。那才是把冲突概率从根上砍掉的修法，退避只是让它不再必然发生。
+
+- **pull 对账的「每批固定三行」压成一行**（2026-10-22，用户重启后仍报终端噪音——这次数的是
+  行数：每条 pull 对账 = `ops batch received` + `ops consumed: pull` + `deferred _ops cleared`
+  三行起步，链路已经健康，噪音是留痕形状本身）。三处：
+  - `ops batch received` 只为**异常批**保留（多 op 批、整批被拒——#17 取证链要「输入证据」）；
+    单 op 正常批的输入证据由逐 op 的 `ops consumed: …` 行覆盖，那行同时带会话与动作。
+  - 两条「清空成功」行（`_ops cleared after consume` / `deferred _ops cleared …`）走
+    `traceFault('ops-clear-landed', …, 20)`：首次必打（证明补清空链在通），之后每 20 次一行
+    带计数。成功清空是常态；**refused/failed 行一字未动**（那些才是要看的）。
+  - 回归不受影响：`deferred-writes-smoke` 的静态断言查的是串在场（节流不改串）；
+    `hmr-write-loop` / `pump-rearm` / `hot-starvation` 的留痕峰值当场变矮
+    （17→14 / 21→17 / 20→14 行）——降噪效果由既有断言的余量直接可见。
+
+- **宿主侧 tee 日志的两条零信息留痕**（2026-10-22，用户问「终端那边是不是也刷」——实测
+  `dsh-web-now.log` 90% 行是本插件的，其中两条纯回声）。判据都从「每次写都打」改成「状态
+  变化才打」：
+  - `live settings refreshed`：**125 行全部 `applied=25` 原样重复**——旧判据「revision 变了
+    就打」把宿主自己每次 `_push`/`_hot`/`_ops` 写的回声都打了出来。#19 的验收判据是「设置页
+    改了有没有被重新读到」，它等价于 **applied 变了**（改开关 ⇒ 生效键数必动），所以判据换成
+    applied 变化：不丢验收信息，只丢回声。
+  - `hotness ops applied`：**71 行全部 `changed=0` 且 tableSize 恒定**——`changed=0` 且表大小
+    没动时这行是 `ops batch received` 的复读。改成「changed>0 或 tableSize 变 ⇒ 必打；否则
+    攒计数，第 1 次 + 每 20 批并一行带 `[unchanged #N]`」。#17 的「客户端写了、宿主没动」
+    诊断路径不受影响（received 行恒打，applied 变化必打）。
+  - `ops consumed: complete` / `pull` **一字未动**：3 个 harness 按「每 op 一行」断言，且
+    #15 的现场判据（complete 之后日志一片空白）依赖逐行在场。洪水线数（received+consumed
+    每批两行）会随客户端串行化落地自然回落——那是上游修复的效果，不靠再关这里的闸。
 
 - **客户端的类型检查覆盖面显著增强**（#34 / #81，**过渡件**）：`client tsc` **23 → 8**，分三个 commit 各自实测（每步**新增 0 条**）
   - ① **带扩展名的相对说明符统一成宿主侧的 `.js`**（账是 **19 处 = 会报的 13 + 永不报的 6**，其中 6 处是

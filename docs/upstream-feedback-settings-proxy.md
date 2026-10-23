@@ -287,6 +287,47 @@ await 续体）发起的 settings 写入，必被拒**。而「消费完清空�
 非 ALS 锚点上」是有支持的用法，并给出推荐锚点。目前我们只能把它记为「结构性失败 + 分诊
 留痕」，并在 `docs/internals-cordis-settings-pitfalls.md` 陷阱 1.5 里按插件经验引用。
 
+## 诉求三：HMR reload 不回收插件挂在 root 上的监听器，dispose 会——两条路径语义不一致
+
+**症状**（2026-10-22 live，本插件「续写幽灵永不出」的最终根因）：插件因
+`settings/document-updated` 的 ownerContext 问题必须 `root.on(...)` 注册监听（cordis 事件只
+向上传播，插件 ctx 收不到服务 ownerContext 上的 emit）。HMR `partialReload` 重跑 `apply()`
+之后，**旧 fiber 经 `root.on` 挂上的 handler 仍然收事件**：它闭包里的旧 `ctx` 已 inactive，
+走到 `ctx.sessions` 时抛 `cannot get required service "sessions" in inactive context`，
+批次在事件分发里炸穿——新 fiber 的 handler 收不到该事件（或被僵尸的 payload 守卫抢先），
+`_ops` 从此滞留盘上。本机一天重载 28 次，僵尸最多叠 28 层。
+
+**probe 实测（`@deepseek-ai/cordis` 4.0.x，最小复现）**：
+
+```
+a = root.extend(); b = root.extend();
+a.root.on('t/e', A); b.root.on('t/e', B);   // 两个都注册在 root 上
+root.emit('t/e')            → A、B 都收到
+await a.fiber.dispose();    // 手动 dispose
+root.emit('t/e')            → 只有 B 收到 —— dispose 把 A 的 handler 回收了
+```
+
+也就是说 **`fiber.dispose()` 会回收该 fiber 在任何对象上注册的 handler（owner 记的是注册时
+的 ctx），但 loader 的 `partialReload` 路径没有走这套回收**（或 reload 时 handler 的 owner
+归属与首次装载不同）。同一个「fiber 生命周期结束」，两条路径给出两种监听器语义——插件侧
+唯一可靠的对策是**自己把 `on` 的返回值接住、挂进 `ctx.effect` 的清理**（effect disposer 在
+两条路径都跑），本仓已照此修（`src/index.ts` 的 `offDocumentUpdated`）。
+
+**请求**（按侵入性从小到大）：
+
+1. **对齐语义**：`partialReload` 的 unload 阶段执行与 `fiber.dispose()` 相同的 handler 回收
+   （owner 归属同一张表）。这是最小改动，且让「root.on 需要手动 off」这个隐性要求消失。
+2. **或者文档化**：明确「跨 ctx 生命周期注册的监听器（`x.root.on` / 别的 ownerContext 上的
+   `on`）不由 reload 回收，插件必须自持 off 并挂 effect」——现在这条只存在于插件踩坑文档
+   （本仓 `docs/internals-cordis-settings-pitfalls.md`），内核侧没有任何出处。
+3. **顺带**：`cannot get required service "sessions" in inactive context` 这个抛错发生在
+   事件分发里时，cordis 是否吞掉、是否影响同事件后续 handler——请给一个明确契约
+   （本仓已按「会炸穿同批后续 handler」防御：handler 内自带 try/catch + 留痕）。
+
+**我们接受的反驳**：如果 (1) 有性能或时序上的理由不做，(2) 必须做——插件现在按「dispose
+会回收」写的代码在 reload 路径下静默变成监听器泄漏，这是两条路径不一致造成的**默认错误**，
+不该靠踩坑文档传播。
+
 ## 我们接受的反驳
 
 这一条已经不需要反驳了——机制在源码里定位到了（见「环节在哪一层丢的」），远程面**设计上

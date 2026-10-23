@@ -435,6 +435,75 @@ export function stepReasonGate(last: string | null, reason: string | null): Reas
   return { last: reason, print: true };
 }
 
+/**
+ * **槽级发射冷却**（2026-10-22，#39 理由闸的补闸）。
+ *
+ * `stepReasonGate` 对「来回交替」不设防：`push-cell` 的 `hot-cell-only ↔ suggestion-cell-changed`
+ * 每次交替都算一次理由变化、各打一行——宿主两格高频交替写时控制台又成组刷（用户 2026-10-22
+ * 现场：刷新后仍见成串 `push-cell:` 黄线）。理由闸管「同理由连打」，冷却闸管「换理由连打」，
+ * 两闸叠用：同一 slot 每 {@link TRACE_SLOT_COOLDOWN_MS} 至多一行，**新理由不丢只迟到**
+ * （冷却内的最新一次记成 pending，冷却结束后下一次调用把它打出来）。
+ *
+ * 不用定时器驱动（#21 的教训：留痕自己不许成为新的 render/计时器源）——pending 由后续
+ * 自然调用放行；没有后续调用就没有人再看控制台，迟到项静默过期无害。
+ */
+export const TRACE_SLOT_COOLDOWN_MS = 5_000;
+
+/** 一个 slot 的冷却状态（index.ts 里按 slot 各存一份）。 */
+export interface SlotEmitGate {
+  /** 上一次**真的打出去**的时刻（null = 从未打过 ⇒ 首次必过，不依赖时钟量级巧合）。 */
+  readonly lastEmitAt: number | null;
+  /** 冷却期内攒下的最新理由（null = 没有待打）。 */
+  readonly pendingReason: string | null;
+  /** 攒下那条的字段串（与 reason 成对，last-wins 覆盖）。 */
+  readonly pendingFields: string;
+}
+
+export const initialSlotEmitGate = (): SlotEmitGate => ({
+  lastEmitAt: null,
+  pendingReason: null,
+  pendingFields: '',
+});
+
+/** 一步冷却判定的输出：`emit` 非 null = 这一拍该打这一行。 */
+export interface SlotEmitStep {
+  readonly gate: SlotEmitGate;
+  readonly emit: { readonly reason: string; readonly fields: string } | null;
+}
+
+/**
+ * 纯函数版发射判定：`now` 由调用方给（假时钟可测）。
+ * @param gate - 该 slot 当前状态。
+ * @param now - 本次到达时刻。
+ * @param wantsPrint - 理由闸（`stepReasonGate`）的结论。
+ * @param reason - 本次理由（wantsPrint=false 时不会被采用，仅保持签名一致）。
+ * @param fields - 本次字段串。
+ */
+export function stepSlotEmit(
+  gate: SlotEmitGate,
+  now: number,
+  wantsPrint: boolean,
+  reason: string,
+  fields: string,
+): SlotEmitStep {
+  const cooling = gate.lastEmitAt !== null && now - gate.lastEmitAt < TRACE_SLOT_COOLDOWN_MS;
+  if (cooling) {
+    // 冷却中：想打的记成 pending（最新一份赢），什么都不输出。
+    return wantsPrint
+      ? { gate: { ...gate, pendingReason: reason, pendingFields: fields }, emit: null }
+      : { gate, emit: null };
+  }
+  // 冷却已过：先放行攒下的（它代表冷却期里最后一次「新理由」，不能丢）。
+  if (gate.pendingReason !== null) {
+    const emit = { reason: gate.pendingReason, fields: gate.pendingFields };
+    return { gate: { lastEmitAt: now, pendingReason: null, pendingFields: '' }, emit };
+  }
+  if (wantsPrint) {
+    return { gate: { lastEmitAt: now, pendingReason: null, pendingFields: '' }, emit: { reason, fields } };
+  }
+  return { gate, emit: null };
+}
+
 /** 一次 render 的来源计数（与 index.ts 的 `renderHits` 同形状）。 */
 export type RenderHitCounts = {
   readonly session: number;

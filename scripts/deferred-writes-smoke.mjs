@@ -368,8 +368,11 @@ run('pushStartedAt 在 pushToClient 入口赋值（no-dirty 重试也要有正�
 });
 
 run('卸载时 clearInterval（跨 apply 不留无人认领的写入源）', () => {
-  const effectAt = hostSource.indexOf('ctx.effect(');
-  const clearAt = hostSource.indexOf('clearInterval(deferredPump)');
+  // 找**卸载 effect** 里那一处：`rearmDeferredPump` 也有 clearInterval(deferredPump)，
+  // 用第一个 `ctx.effect(` + 第一个 clearInterval 会拿错位置（2026-10-22 实测红）。
+  const effectAt = hostSource.indexOf('ctx.effect(() => () => {');
+  assert.ok(effectAt >= 0, '找不到卸载用的 ctx.effect(() => () => { … })');
+  const clearAt = hostSource.indexOf('clearInterval(deferredPump)', effectAt);
   assert.ok(clearAt > effectAt, `clearInterval 必须在 ctx.effect 的清理里（clearAt=${clearAt} effectAt=${effectAt}）`);
 });
 
@@ -384,6 +387,34 @@ run('两个 nested 分支都排队：push → enqueuePush，_ops 清空 → enqu
   assert.ok(from >= 0 && to > from, '找不到 push 的分诊分支');
   const nestedPush = hostSource.slice(from, to);
   assert.ok(!/lastPushFingerprint = null;/.test(nestedPush), '排队分支里不该再直接清指纹：载荷已在槽里，只有补写最终没成才放开（releaseDeferredPushFingerprint）');
+});
+
+run('root 监听的 off 接住并挂进 ctx.effect；consumeOps 有 try/catch 毒丸防线', () => {
+  // 2026-10-22「幽灵永不出」的保险层。probe 实测 cordis **会**回收 disposed fiber 经
+  // `x.root.on` 挂上的 handler（owner 记的是 x），所以 off+effect 是冗余保险；但
+  // 「最后一次 reload 的新 fiber inject 不触发、事件全被旧 handler 吃掉并在 inactive
+  // ctx 上抛」的形态下，**consumeOps 的 try/catch 是唯一能让批次不炸穿事件分发的防线**
+  // （炸穿的下一跳就是 applied/clear 行消失、`_ops` 滞留）。两条都钉住，防止被顺手删。
+  assert.match(hostSource, /const offDocumentUpdated = eventCtx\.on\('settings\/document-updated'/,
+    'root 监听的 off 必须接住（不接就是纯靠 cordis 隐式回收，语义变了就静默泄漏）');
+  assert.match(hostSource, /\(offDocumentUpdated as unknown as \(\(\) => void\) \| undefined\)\?\.\(\);/,
+    'off 必须挂进 ctx.effect 的清理');
+  assert.match(hostSource, /try \{\s*\n\s*consumeOps\(parseHotnessOps\(payload\), svc\);\s*\n\s*\} catch \(error\) \{/,
+    'handler 里的 consumeOps 必须有 try/catch（毒丸不许炸穿 cordis 的事件分发）');
+  assert.match(hostSource, /traceFault\('ops-consume-threw'/, 'catch 里必须留痕（#17：不可静默）');
+});
+
+run('热度格搭便车恰好在 pump push/clear 两处 finally + tick 空窗（3 处），且绝不在 drainHotFromPump 自己的 finally', () => {
+  // 2026-10-22 live 的饥饿死锁：pull 洪水让 clearOps 槽常年非空，「队列空着才轮到
+  // `_hot`」= `_hot` 永不落地 = 客户端无限重试。修复 = 每笔 pump 写落地都搭一次便车。
+  const calls = hostSource.match(/tryDrainHotPayload\(\);/g) ?? [];
+  assert.equal(calls.length, 3, `tryDrainHotPayload() 调用 ${calls.length} 处，应为 3（tick 空窗 + push finally + clear finally）`);
+  const fnAt = hostSource.indexOf('function drainHotFromPump');
+  const nextAt = hostSource.indexOf('function retryDeferred', fnAt);
+  assert.ok(fnAt >= 0 && nextAt > fnAt, '找不到 drainHotFromPump 函数体边界');
+  const body = hostSource.slice(fnAt, nextAt);
+  assert.ok(!body.includes('tryDrainHotPayload();'),
+    'drainHotFromPump 自己的 finally 不许再搭热度格——「失败重排 + finally 再写」就是微任务紧循环的原始形状');
 });
 
 run('CAS 依据在 consumeOps 同步段捕获（不能等回调里读会变的 lastOpsPayload）', () => {

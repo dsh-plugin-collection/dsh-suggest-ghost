@@ -14,12 +14,15 @@
 import assert from 'node:assert/strict';
 import {
   dominantRenderSource,
+  initialSlotEmitGate,
   initialTallyState,
   OPS_TRACE_PREFIX,
   renderTallyLine,
   stepReasonGate,
+  stepSlotEmit,
   stepTally,
   TALLY_MIN_INTERVAL_RENDERS,
+  TRACE_SLOT_COOLDOWN_MS,
 } from '../src/client/inline-arm-policy.ts';
 
 let failed = 0;
@@ -75,6 +78,56 @@ run('七处补回的分支共用这条闸：各自独立、互不吞掉', () => 
     }
   }
   assert.deepEqual(Object.values(printed), [1, 1, 1, 1, 1, 1, 1], '每个槽位只应打一行');
+});
+
+// ── 1b. 槽级发射冷却（2026-10-22 补闸：理由闸对「交替」不设防）──────────────
+run('冷却：同一时刻 100 次理由交替只出第 1 行', () => {
+  let gate = initialSlotEmitGate();
+  let printed = 0;
+  let last = null;
+  for (let i = 0; i < 100; i += 1) {
+    const reason = i % 2 === 0 ? 'hot-cell-only' : 'suggestion-cell-changed';
+    const step = stepReasonGate(last, reason);
+    last = step.last;
+    const out = stepSlotEmit(gate, 1000, step.print, reason, ` i=${i}`);
+    gate = out.gate;
+    if (out.emit !== null) printed += 1;
+  }
+  assert.equal(printed, 1, `交替 100 次打了 ${printed} 行，应为 1（首行）`);
+});
+
+run('冷却结束后 pending 放行：新理由不丢，只迟到', () => {
+  const first = stepSlotEmit(initialSlotEmitGate(), 1000, true, 'a', '');
+  assert.ok(first.emit !== null, '首次必打（“从未打过”必须是 null 哨兵，不能靠假时钟恰好 ≥5000）');
+  let gate = first.gate;
+  const cool = stepSlotEmit(gate, 3000, true, 'b', ' x=1');
+  gate = cool.gate;
+  assert.equal(cool.emit, null, '冷却内不打');
+  const after = stepSlotEmit(gate, 6001, true, 'c', '');
+  gate = after.gate;
+  assert.ok(after.emit !== null, '冷却过后的下一次调用必须放行攒下的');
+  assert.equal(after.emit.reason, 'b', '放行的是 pending（b），不是当前理由');
+  assert.equal(after.emit.fields, ' x=1', 'pending 的字段成对带出');
+  const next = stepSlotEmit(gate, 20000, true, 'c', '');
+  assert.ok(next.emit !== null && next.emit.reason === 'c', 'pending 放行后，被压住的当前理由下一拍还能出');
+});
+
+run('冷却边界：恰好 5000ms 视为已过；pending 只留最新一份（last-wins）', () => {
+  let gate = stepSlotEmit(initialSlotEmitGate(), 0, true, 'first', '').gate;
+  gate = stepSlotEmit(gate, 1000, true, 'p1', '1').gate;
+  gate = stepSlotEmit(gate, 2000, true, 'p2', '2').gate;
+  assert.equal(gate.pendingReason, 'p2', '冷却期内多条 pending 只留最新');
+  assert.equal(TRACE_SLOT_COOLDOWN_MS, 5000);
+  const atBoundary = stepSlotEmit(gate, 5000, false, 'x', '');
+  assert.ok(atBoundary.emit !== null && atBoundary.emit.reason === 'p2', 'now-last === 5000 应判为冷却已过');
+});
+
+run('wantsPrint=false 不产生 pending；无 pending 的冷却外调用也静默', () => {
+  let gate = stepSlotEmit(initialSlotEmitGate(), 0, true, 'first', '').gate;
+  gate = stepSlotEmit(gate, 100, false, 'ignored', '').gate;
+  assert.equal(gate.pendingReason, null);
+  const out = stepSlotEmit(gate, 9999, false, 'ignored', '');
+  assert.equal(out.emit, null, '没有攒下的又没有 print 诉求 ⇒ 静默');
 });
 
 // ── 2. tally 归因 ──────────────────────────────────────────────────────────

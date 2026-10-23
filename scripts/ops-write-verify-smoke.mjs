@@ -11,6 +11,8 @@
  * 不像 hotness-store 那种带 `.js` 说明符的 src 模块要走 lib/）。
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   isConflictRefusal,
   readRejection,
@@ -118,4 +120,20 @@ assert.deepEqual(readRejection(new Error('client api: settings/mutate expected 3
 assert.deepEqual(readRejection({ code: 'SETTINGS_CONFLICT', message: 'boom' }), { code: 'SETTINGS_CONFLICT', message: 'boom' });
 assert.deepEqual(readRejection('plain string'), { code: undefined, message: 'plain string' });
 
-console.log('ops-write-verify smoke: 兑现值判定 12 组断言通过（含 #16 的假成功签名与冲突重试分诊）');
+// —— 13. 设置卡保存接线的静态守卫（2026-10-23：单次 mutate + 空 catch 的静默失败）——
+// 剥注释再查：守卫要钉的是**代码**在场，注释里复述一遍不算（否则删码留评就假绿）。
+const clientSrc = readFileSync(fileURLToPath(new URL('../src/client/index.ts', import.meta.url)), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
+assert.match(clientSrc, /set: async \(key, next\) => \{/,
+  '设置卡保存退回了单次 mutate：宿主每秒数笔写顶 revision，冲突是常态而非意外');
+assert.match(clientSrc, /settings save conflict retries exhausted/,
+  '预算耗尽必须 warn：设置保存是低频显式动作，「没存上」不许静默');
+assert.match(clientSrc, /settings save refused/,
+  '非冲突拒绝必须 warn（分诊不许被吞）');
+assert.match(clientSrc, /if \(!opsConflictRetryAllowed\(attempt\)\)[\s\S]{0,260}opsConflictBackoffMs\(attempt\)/,
+  'set 必须与 `_ops` 写共用同一份重试预算/退避边界（opsConflictRetryAllowed / opsConflictBackoffMs），不许各写一份');
+assert.match(clientSrc, /const expected = revision < 0 \? 0 : revision;/,
+  '每轮重试必须现取最新 revision（闭包变量由 document-updated 刷新），拿旧值重试等于白试');
+
+console.log('ops-write-verify smoke: 兑现值判定 12 组断言 + 设置卡保存接线 5 钉通过（含 #16 的假成功签名与冲突重试分诊）');

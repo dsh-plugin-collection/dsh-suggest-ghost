@@ -74,6 +74,57 @@ export type WriteVerdict =
   /** 这一代给不出可判读的返回值：调用方自己补一次读回。 */
   | 'unreadable';
 
+/**
+ * 一次 `_ops` 写入**总共**允许的尝试次数（含首次发送）。
+ *
+ * 旧实现把 `attempt < 2` 直接写在两处分支里（共 3 次），既看不出是「总次数」还是
+ * 「重试次数」，也让「放宽预算」这类改动必须同时改两个地方。现在两条冲突分支都经
+ * {@link opsConflictRetryAllowed} / {@link opsConflictBackoffMs} 判定，这里只留一个数。
+ *
+ * 为什么是 8（2026-10-22 第二次校准）：串行队列消掉**页面自抢**后，剩下的冲突来自宿主侧
+ * 写入（应答 `_push`/`_hot`、消费后 `_ops` 清空）与其它页签的同 ns 写入。上一档
+ * 「5 次 + 25/50/100/200（总 375ms）」被 live 栈证伪：冲突报文是 `expected 733, now 734`
+ * ——只落后**一笔**写，而宿主一笔写的实测在途窗口是 0.2~1.6s（writeMs），375ms 的总退避
+ * **比一次在途写还短**，5 连败是必然而不是运气。8 次 × 新退避（总窗口 ≈5.9s）覆盖 2~3 个
+ * 宿主写窗口；再长就该问「为什么宿主一直在写」而不是让客户端无限等。
+ */
+export const OPS_WRITE_MAX_ATTEMPTS = 8;
+
+/** 冲突重试退避的**上限**（毫秒）。attempt 超过第 4 档后不再增长，防止长尾等待。 */
+export const OPS_WRITE_CONFLICT_BACKOFF_CAP_MS = 1_600;
+
+/** 退避第一档（毫秒）；第 n 档 = 基础值 × 2^n，超过上限即截断。 */
+const OPS_WRITE_CONFLICT_BACKOFF_BASE_MS = 100;
+
+/**
+ * 第 `attempt` 次尝试**冲突后**、重试前应等待的毫秒数：100 / 200 / 400 / 800 / 1600，
+ * 之后截断在 {@link OPS_WRITE_CONFLICT_BACKOFF_CAP_MS}。
+ *
+ * 量纲依据：对手（宿主应答/清空写、别的页签）单次写在途 0.2~1.6s——第一档 100ms 给
+ * 「擦肩而过」的快碰撞让路，后几档跨过整个慢写窗口。纯函数、无定时器（真等待在调用点），
+ * 所以 `scripts/ops-write-queue-smoke.mjs` 可以直接断言序列。非法输入（负数 / NaN /
+ * Infinity）退回第一档，不返回 `NaN`——否则 `setTimeout(NaN)` 会退化成 0ms 忙重试。
+ */
+export function opsConflictBackoffMs(attempt: number): number {
+  const tier = Number.isFinite(attempt) && attempt > 0 ? Math.floor(attempt) : 0;
+  return Math.min(
+    OPS_WRITE_CONFLICT_BACKOFF_BASE_MS * 2 ** tier,
+    OPS_WRITE_CONFLICT_BACKOFF_CAP_MS,
+  );
+}
+
+/**
+ * 第 `attempt` 次尝试失败后**是否还允许重试**（`attempt` 从 0 起算）。
+ *
+ * 判据是「总次数」而不是「剩余重试数」：`attempt + 1 < OPS_WRITE_MAX_ATTEMPTS`，
+ * 于是 MAX=8 时 attempt 0..6 可重试（总共 8 次尝试）、attempt 7 放弃。
+ * 两条冲突分支（mutate reject 的 `isConflictRefusal` 与 `settleWrite` 的
+ * `refused-conflict`）共用它，不许各写一份边界。
+ */
+export function opsConflictRetryAllowed(attempt: number): boolean {
+  return Number.isInteger(attempt) && attempt >= 0 && attempt + 1 < OPS_WRITE_MAX_ATTEMPTS;
+}
+
 /** 从任意一层封装里认出一个命名空间视图。 */
 function looksLikeNamespaceView(node: Record<string, unknown>): boolean {
   const hasIdentity = typeof node.ns === 'string' || typeof node.revision === 'number';

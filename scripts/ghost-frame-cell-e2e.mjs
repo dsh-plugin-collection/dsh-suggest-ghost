@@ -77,6 +77,13 @@ console.warn = (...args) => {
   const line = args.map(String).join(' ');
   if (swallows(line)) traceLines.push(line); else realWarn(line);
 };
+// 2026-10-22 三次校准：常态证据（push-cell 等）改走 `console.debug`（Chrome 默认级别
+// 含 Info，log 并不隐藏；只有 debug 默认可见性受控）。harness 必须接住 debug，
+// 否则下面的留痕断言会「采集不到 = 没打」地红——那是 harness 瞎，不是产品回归。
+console.debug = (...args) => {
+  const line = args.map(String).join(' ');
+  if (swallows(line)) traceLines.push(line);
+};
 
 console.log(`ghost-frame-cell-e2e：客户端产物 ${clientBundle}`);
 
@@ -418,7 +425,7 @@ if (loaded === null) {
     `实际 applies=${String(stats.applies)}（首读 1 次 + 四个场景各 1 次 + 高频 20 次）；`
     + '若这一条不成立，上面四场的「不增加」就只是「事件没送到」的同义词');
 
-  // 留痕口径自检：新加的那行**按理由变化才打**，且只打次数与理由、不打正文。
+  // 留痕口径自检：那行**按理由变化 + 槽级 5s 冷却**才打，且只打次数与理由、不打正文。
   const cellLines = traceLines.filter((l) => l.includes(' push-cell:'));
   const reasons = [...new Set(cellLines.map((l) => (/reason=([a-z-]+)/.exec(l) ?? [, ''])[1]))];
   const leaked = [SUGGESTION_A, SUGGESTION_B].some((payload) => {
@@ -427,15 +434,21 @@ if (loaded === null) {
   });
   const countsOnly = cellLines.every((l) => /parses=\d+ frameRuns=\d+ cellSkips=\d+ applies=\d+/.test(l));
   if (cellLines.length === 0) {
-    record('留痕口径：push-cell 那行的字面（按理由变化 + 只打次数）', STATUS.FAIL,
+    record('留痕口径：push-cell 那行的字面（理由 ∈ 两种 + 冷却 + 只打次数）', STATUS.FAIL,
       '一行都没打，但计数器动了 ⇒ 说明接线漏了留痕（不是「没跑到」，因为 applies/parses 增量已验证分支被执行）');
   } else {
-    record('留痕口径：push-cell 那行的字面（按理由变化 + 只打次数）',
-      reasons.length === 2 && !leaked && countsOnly ? STATUS.PASS : STATUS.FAIL,
+    // 2026-10-22 口径更新：槽级冷却（`stepSlotEmit`，5s）意味着本 harness（全部场景 <5s
+    // 跑完）**只可能看到 ≤2 行、通常 1 行**——第二理由被攒成 pending，而 harness 没有
+    // 后续调用来放行它。「两种理由各自都成立」这条性质移交 trace-gate-smoke 的确定性
+    // 假时钟断言（交替 100 次只出 1 行 + pending 放行）；这里只钉字面合法 + 隐私 + 接线在场。
+    const allowedReasons = ['suggestion-cell-changed', 'hot-cell-only'];
+    const reasonsLegal = reasons.length >= 1 && reasons.every((r) => allowedReasons.includes(r));
+    record('留痕口径：push-cell 那行的字面（理由 ∈ 两种 + 冷却 + 只打次数）',
+      reasonsLegal && !leaked && countsOnly ? STATUS.PASS : STATUS.FAIL,
       `捕获 ${cellLines.length} 行：${cellLines.join(' | ')}`
-      + `\n期望：reason 恰好两种（suggestion-cell-changed / hot-cell-only）、不含任何建议正文、字段只有四个计数`
+      + `\n期望：每行 reason ∈ {${allowedReasons.join(', ')}}、不含任何建议正文、字段只有四个计数、总行数 ≤2（5s 冷却）`
       + `\n实际：reasons=[${reasons.join(', ')}] 含正文=${leaked} 计数格式对=${countsOnly}`
-      + `\n（行数少于场景数是**对的**：闸门按理由变化才打，两个 hot-only 场景共用一行）`);
+      + `\n（行数少于场景数是**对的**：理由闸 + 槽级冷却两层；两理由性质在 trace-gate-smoke 钉）`);
   }
 }
 

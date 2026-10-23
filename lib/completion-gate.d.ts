@@ -128,6 +128,24 @@ export interface CompletionEntryInput {
  * 「草稿太短」，会话不存在时不该再报「草稿太短」。
  */
 export declare function decideCompletionEntry(input: CompletionEntryInput): CompletionGateDecision;
+/**
+ * 在途生成遇上新 `complete` 时的抢占判据（2026-10-22「幽灵永不出」的修复）。
+ *
+ * 旧行为是无条件 abort：实测一次续写生成要 **5~10s**（沙箱与真实环境都是），而
+ * `inlineDelayMs=100` 下用户连打时每 1~3 个字符就来一条新 complete ⇒ 在途生成
+ * **永远**在出结果前被中止 ⇒ live 现场一整段时间 `completion generated` 为 0、
+ * 只有 preempted/aborted——CHANGELOG 预言的那条（「若 preempted 暴增而 generated
+ * 未涨，应回调」）成真。修的不是延迟值，是抢占判据：
+ *  - `keep`：新草稿只是在**追加**（`draft.startsWith(inflightDraft)`，用户继续往前打）。
+ *    在途那份生成对着较短的旧草稿跑完即可——客户端 #33「边打边等」的对齐判据本来就
+ *    接受 `payload.draft` 是当前草稿的前缀（`draft === payload.draft ||
+ *    draft.startsWith(payload.draft)`），结果由对齐取舍，不该被中止。单飞不变：
+ *    至多一个在途，不另起一次。
+ *  - `preempt`：草稿发生了**非前缀**变化（删字 / 改字 / 整段替换）——旧结果必然错位，
+ *    中止重发（旧行为）。在途草稿读不到（`undefined`）时也走这条：宁可多中止一次，
+ *    也不让「判不了」变成「永远 keep」。
+ */
+export declare function decideInflightPreemption(inflightDraft: string | undefined, draft: string): 'keep' | 'preempt';
 /** 生成 settle 段的判定输入。 */
 export interface CompletionSettleInput {
     /** 走到的是 fulfilled 还是 rejected。 */
