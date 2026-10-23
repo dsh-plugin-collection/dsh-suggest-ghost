@@ -6,6 +6,26 @@ All notable changes to this project will be documented in this file.
 
 ### 修复
 
+- **热重载不再把"没恢复成的空热表"当权威发布**（#88）：宿主侧插件被 HMR 热重载时，`dsh-storage-domain`
+  的**同名域独占**会让新 fiber 的 `open()` 直接被拒（`domain 'suggest_ghost_hotness' is already open`），
+  旧实现是 `catch` 一把抓住就 `settleReady()` ⇒ `ready=true` 且表是空的 ⇒ 卡片显示「共 0 条」，而这份空表
+  还会被当权威写进 `_hot` 格（**症状与"数据被清了"完全同形，实际盘上 2000 条一条不少**）
+  - `open` 被拒改为**有界重试**（150ms × 40 ≈ 6s，每轮 await timer —— 沿用 23 GB 日志那次的护栏口径），
+    到上限才降级
+  - 新增**三态 `status`**：默认 `unavailable`（没有恢复流程在跑 ⇒ 内存态就是权威、格子照发；`pending`
+    只能由"真的拿到 facility"进入，否则无存储域的组合会把格子**永久扣住** —— 这条默认值是被
+    `payload-split-smoke` 的 4 组红教回来的）；拿到 facility 才 `pending`；成功 `restored`；放弃 `unavailable`；
+    另有 5s 兜底（`unref`）防 `pending` 卡死
+  - **`pending` 期间不写 `_hot`**（闸门在 `src/index.ts`），被扣住时打 `hot push withheld`
+  - **恢复流程全程正面留痕**：`hotness domain opened attempt=N` / `hotness restored n=N tableSize=M` /
+    `hotness ready dirty=N restored=bool`，以及 `domain busy, retrying` / `restore FAILED` / `domain unavailable`
+    ⇒ 上线 4 分钟就在生产环境抓到了真因（`busy, retrying` ×40 → `restore FAILED`），此前它是静默的
+  - 脏上限那条护栏不再静默：清空保留，但留痕带 `n=` 与累计 `clears=` / `droppedTotal=`
+  - 回归：`scripts/hotness-reload-restore-smoke.mjs`（同文件**改前 4 红 → 改后 4 绿**，已接进 `test:smoke`，
+    44 → 45 项）；夹具只假在"open 被拒"这一层，重试/状态/留痕/上限计数全是被测真代码
+
+### 修复
+
 - **设置卡两个「最少输入字符」同名，用户与排障者都读错了对象**（2026-10-23，用户指出
   「一个 3 一个 4，你看不到吗」——我上一条回复把它误诊成「3 没保存」）。卡片里
   `historyMinChars`（历史前缀补全阈值）与 `inlineMinChars`（停顿续写阈值）共用 label
