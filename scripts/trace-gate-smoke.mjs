@@ -14,6 +14,11 @@
  * 这里的判据是「重复变成计数、而不是变成静音」（#17 的口径），并把「闸门关掉就回到
  * 5 行」做成可直接断言的变异（`every=1`），不必改源码来自证。
  *
+ * 第三节（`hotAckFields`）钉的是**度量**：落地留痕原来只有 `bytes=`，分不出「2000 条热度
+ * 但没带对账凭证」与「什么都没带」，于是 pull 阶梯不收敛的三条成因（B 没带字段 / D·E 判重
+ * 吞掉整笔 / F 恢复期扣整格）在日志里同形。补的这两个键必须是**三态**，布尔形态会把
+ * 「这一笔不含热度格」伪装成「带了但没有历史」（有专门的变异断言）。
+ *
  * 运行：`node scripts/trace-gate-smoke.mjs`
  */
 import assert from 'node:assert/strict';
@@ -32,6 +37,7 @@ import {
   TRACE_SLOT_COOLDOWN_MS,
 } from '../src/client/inline-arm-policy.ts';
 import {
+  hotAckFields,
   initialRepeatTraceGate,
   repeatTraceSuffix,
   stepRepeatTrace,
@@ -303,6 +309,35 @@ run('静态：pull 留痕字面串在宿主源码里只许出现一处（注释�
   // 那段代码。注释里多一处同串，锚点就落在注释上 ⇒ 判据空转（假绿）。
   const occurrences = HOST_SOURCE.match(/ops consumed: pull/g) ?? [];
   assert.equal(occurrences.length, 1, `字面串出现 ${occurrences.length} 次，应为 1 次（只有 traceOps 调用点）`);
+});
+
+// ── 5. 宿主侧 `hotAckFields`：落地那一格带没带对账凭证（2026-10-23）─────────────
+const hotJson = (o) => JSON.stringify({ rev: 7, hot: [{ text: 'x', count: 1 }], total: 2000, ...o });
+
+run('三态齐全：1=带凭证 / 0=这格写出去但没带 / -=这一笔不含热度格', () => {
+  assert.equal(hotAckFields(hotJson({ history: ['我重新'], historySessionId: 'session-A' })),
+    ' hasHistory=1 ackSession=session-A');
+  // 场景 E 的正身：空数组同样是**可以确认**的应答（客户端判据是 Array.isArray）。
+  assert.equal(hotAckFields(hotJson({ history: [], historySessionId: 'session-A' })),
+    ' hasHistory=1 ackSession=session-A', '空环被判成没带 ⇒ B/D/E/F 的统计当场失真');
+  // 场景 B 的正身：会话解析不到时 `buildHotPayload` 把两个键一起省略。
+  assert.equal(hotAckFields(hotJson({})), ' hasHistory=0 ackSession=-');
+  assert.equal(hotAckFields(null), ' hasHistory=- ackSession=-');
+});
+
+run('读的是落盘字节：正文里出现 "history":[ 也不会被误判成带凭证', () => {
+  const withEscaped = JSON.stringify({ hot: [{ text: '假键 "history":[ 混在里面', count: 1 }], total: 1 });
+  assert.equal(hotAckFields(withEscaped), ' hasHistory=0 ackSession=-',
+    '键位匹配靠 JSON 转义把正文里的引号变成 \\"；命中正文就是读错了字节');
+  const spoofAck = JSON.stringify({ total: 1, note: '"historySessionId":"fake"' });
+  assert.equal(hotAckFields(spoofAck), ' hasHistory=0 ackSession=-',
+    '正文伪造 ackSession 必须命不中（否则统计能被内容污染）');
+});
+
+run('变异自证：把 hasHistory 写成布尔，"这一笔不含热度格"就伪装成"带了但没历史"', () => {
+  const asBoolean = (p) => (p !== null && /"history":\[/.test(p) ? ' hasHistory=1' : ' hasHistory=0');
+  assert.equal(asBoolean(null), ' hasHistory=0', '布尔形态把 - 吞成了 0，三态塌成两态');
+  assert.notEqual(hotAckFields(null), asBoolean(null), '真实现必须与布尔退化形态不同');
 });
 
 process.exit(failed === 0 ? 0 : 1);
