@@ -11,11 +11,15 @@
  * join 起来，给出一张占比表。
  *
  * ## 归类判据（每条都注明是「实测」还是「启发式」）
- *  - **A 可确认**：该会话出现过 `ackSession=<本会话>` 的落地写（`hasHistory=1`）。
- *    这是**逐字实测**：`ackSession` 就是载荷里那个 `historySessionId`，客户端判据
- *    （`settings.historySessionId === pending.sessionId`）认的就是它。
- *  - **D/E 整笔被吞**：该会话有 pull 行，但整个日志里没有任何一笔写带走它的 `ackSession`。
- *    判据是「缺席」，所以它是**下界**：应答可能在日志窗口之外。
+ *  - **凭证已落地（≠已确认）**：该会话出现过 `ackSession=<本会话>` 的落地写
+ *    （`hasHistory=1`）。`ackSession` 确实是载荷里的 `historySessionId`，也是客户端判据
+ *    （`settings.historySessionId === pending.sessionId`）认的那个值——但「宿主写了」到
+ *    「客户端认了」之间隔着三件本表**看不见**的事：事件有没有到达那一页、那一页的
+ *    `frames.accept` 有没有把整条载荷丢掉（未验证，见文档待办第 4 条）、以及这条 pull
+ *    是不是**同一个页签**发的（`_ops` 无页标识 ⇒ 两个页签交替 pull 同一会话会被宿主侧
+ *    `pulls=5` 计数串成一个阶梯）。所以本表只能说「宿主的凭证到位了」。
+ *  - **窗口内零凭证**：该会话有 pull 行、窗口里没有任何一笔写带走它的 `ackSession`。
+ *    判据是「缺席」，所以它是**下界**：应答可能在窗口之外，也可能来自另一个页签的写。
  *  - **疑似 B 写了但没凭证**：该会话没有 ack 落地，但同窗口内有 `hasHistory=0` 的热度格写。
  *    ⚠️ **启发式**：`hasHistory=0` 的那一笔不指名会话（字段本来就缺席），只能按时间邻近
  *    归因；两个会话挨着 pull 时可能归错。表里把它单列，不与 A/D 混算。
@@ -134,7 +138,7 @@ if (pullsBeforeWindow > 0) {
   const cover = (100 * totalPullLines / (totalPullLines + pullsBeforeWindow)).toFixed(0);
   say(`⚠️ 窗口外还有 ${pullsBeforeWindow} 行 pull（补键之前），**不进这张表**：它们的应答落地`
     + '时没有 hasHistory= 这个键，缺席会被误判成「整笔被吞」。当前覆盖率 ' + `${cover}%——`
-    + '窗口太短时，"D/E 整笔被吞"那一档是**度量盲区**而不是产品结论。');
+    + '窗口太短时，"窗口内零凭证"那一档是**度量盲区**而不是产品结论。');
 }
 say(`hot push withheld ${withheld} 行（F 的佐证；留痕不指名会话，故不参与归类）`);
 
@@ -144,7 +148,13 @@ const rows = [...sessions.entries()].map(([id, r]) => ({
   ladderFull: r.ladderFull,
   acked: r.acked,
   suspectB: r.suspectB,
-  verdict: r.acked > 0 ? 'A 可确认' : (r.suspectB > 0 ? '疑似 B 无凭证' : 'D/E 整笔被吞'),
+  // ⚠️ 这一档**不许写成「已确认」**（第一版就是那个名字，读的人会以为客户端已经收敛）。
+  // 判据只是「窗口里出现过一笔带 `ackSession=<本会话>` 的落地写」= **宿主写了凭证**，
+  // 与「客户端确认了」之间隔着三件本表看不见的东西：事件有没有到达那一页、那一页的
+  // `frames.accept` 有没有把整条载荷丢掉（`docs/pull-ack-investigation.md` 待办第 4 条，
+  // 未验证）、以及**发出这条 pull 的是不是同一个页签**——`_ops` 里没有页标识，同会话的
+  // 连续 pull 行可能是两个页签各发一次，会被宿主侧的 `pulls=5` 计数串成「一个阶梯跑满」。
+  verdict: r.acked > 0 ? '凭证已落地(≠已确认)' : (r.suspectB > 0 ? '疑似 B 无凭证' : '窗口内零凭证'),
 })).sort((a, b) => b.pulls - a.pulls);
 
 say(`\n按会话（窗口内；pull 行数≠事件数：同会话连续重复只留 #1 与 pulls=5）`);
@@ -164,7 +174,12 @@ say('\n占比（按窗口内 pull 行，不是事件数）：');
 for (const [v, n] of Object.entries(byVerdict).sort((a, b) => b[1] - a[1])) {
   say(`   ${v.padEnd(16)} ${String(n).padStart(4)} 行 = ${(100 * n / total).toFixed(0)}%`);
 }
-say(`\n读法：D/E 那一档是**下界**（窗口外的应答看不见）；「疑似 B」是启发式归因，`);
-say('要看准就得让那笔写自己指名会话——那属于契约改造（带身份 + 判重认身份），不是这里能补的。');
+say('\n读法与边界：');
+say('  · 「凭证已落地」只说明**宿主那一侧写到了盘**，不说明客户端确认了（见文件头三条不可见）；');
+say('  · 「窗口内零凭证」是**下界**，窗口外的应答看不见；「疑似 B」是时间邻近的启发式归因；');
+say('  · 要把这张表升级成「哪条成因占多少」，缺的不是字段而是**页签维度**：`_ops` 里的 pull');
+say('    现在不带页标识，两个页签各 pull 同一会话会被宿主的连续计数串成一个阶梯。补');
+say('    `page=<id>`（客户端启动时随机、随 op 一起写）之后，阶梯长度、确认与否、来源页三者');
+say('    才能对齐——这一条在 `docs/pull-ack-investigation.md` 里是被当作未验证项列出的。');
 say(`依据：${REPO}docs/pull-ack-investigation.md 与 ${REPO}scripts/pull-ack-smoke.mjs（六场景 22 组）。`);
 process.exit(0);
