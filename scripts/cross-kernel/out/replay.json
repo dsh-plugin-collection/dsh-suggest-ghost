@@ -1,0 +1,30 @@
+{
+  "command": "node scripts/verify-across-kernels.mjs --no-install --kernel-root ~/dsh-versions",
+  "exitCode": 0,
+  "capturedAt": "2026-10-26T01:08:48.612Z",
+  "sandboxDecision": {
+    "decision": "no-unshare-no-container",
+    "why": "本插件无外发副作用：src/ 全树 grep 'child_process|spawn|execSync|fetch(|http|axios' = 0 命中；唯一 node:fs 用法是 src/index.ts:387 对自身产物只读 statSync(...).mtime；持久化经宿主 ctx.storageDomain 落 $DSH_HOME/storages/。属 skill §6 认定目录级隔离结论可信的一类。",
+    "inheritedLimit": "dsh-later 原脚本同样无沙箱（其脚本内 grep -c 'unshare|docker' = 0），本脚本沿用该强度。",
+    "revisitIf": "本插件日后新增 HTTP/spawn 能力时，此决定必须重做。"
+  },
+  "treeIdentityStamp": {
+    "why": "防御『树在跑动期间被安装/改写』这类并发变更：每代在跑前记录树 stat mtime + @deepseek-ai 条目数 + 启动器版本，跑后复核；不一致则该代报 UNDETERMINED 而非绿。",
+    "observedBefore": {
+      "0.1.1-rc.2": 198,
+      "0.1.2-rc.1": 224,
+      "0.1.5-rc.1": 241,
+      "0.1.7-rc.1": 278,
+      "0.1.7-rc.2": 284,
+      "0.2.0-rc.2": 289,
+      "0.2.1-rc.2": 306
+    },
+    "thisRun": "七代全部 before==after，无一被判定为 mutated。"
+  },
+  "supersedes": {
+    "note": "2026-10-23 的 captured 为修复前（6G/1R，0.1.1-rc.2 RED）。投影分代分支删除后重跑，本条为现行证据。",
+    "exitCode": 1
+  },
+  "stdout": "dsh-suggest-ghost@0.7.0 · 跨内核回归 · 代次取自 scripts/cross-kernel/generations.mjs（7 个）\n沙箱决策：不加 unshare/容器（本插件无 spawn/无网络、唯一 fs 用法是对自身产物只读 stat；详见脚本头）。\n\n### 0.1.1-rc.2 … GREEN\n    内核=0.1.1-rc.2 · 启动器=0.1.1-rc.2 · 契约=peer-only · apply落痕=Y · 投影=Y（modern:stateSchema+wire.view）\n    树戳=198 项 / mtime=1792733539333.3047\n\n### 0.1.2-rc.1 … GREEN\n    内核=0.1.2-rc.1 · 启动器=0.1.2-rc.1 · 契约=peer-only · apply落痕=Y · 投影=Y（modern:stateSchema+wire.view）\n    树戳=224 项 / mtime=1792744825116.531\n\n### 0.1.5-rc.1 … GREEN\n    内核=0.1.5-rc.1 · 启动器=0.1.5-rc.3 · 契约=peer-only · apply落痕=Y · 投影=Y（modern:stateSchema+wire.view）\n    树戳=241 项 / mtime=1792748001832.3115\n      · 启动器版本≠代次（app-boot=0.1.5-rc.3）\n\n### 0.1.7-rc.1 … GREEN\n    内核=0.1.7-rc.1 · 启动器=0.1.7-rc.1 · 契约=peer-only · apply落痕=Y · 投影=Y（modern:stateSchema+wire.view）\n    树戳=278 项 / mtime=1792722713794.0508\n      · 0.1.7-rc.1：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）\n\n### 0.1.7-rc.2 … GREEN\n    内核=0.1.7-rc.2 · 启动器=0.1.7-rc.2 · 契约=peer-only · apply落痕=Y · 投影=Y（modern:stateSchema+wire.view）\n    树戳=284 项 / mtime=1792565584111.6162\n\n### 0.2.0-rc.2 … GREEN\n    内核=0.2.0-rc.2 · 启动器=0.2.0-rc.2 · 契约=peer-only · apply落痕=Y · 投影=Y（modern:stateSchema+wire.view）\n    树戳=289 项 / mtime=1792565551687.6184\n\n### 0.2.1-rc.2 … GREEN\n    内核=0.2.1-rc.2 · 启动器=0.2.1-rc.2 · 契约=engines.dsh · apply落痕=Y · 投影=Y（modern:stateSchema+wire.view）\n    树戳=306 项 / mtime=1792566654011.5413\n      · 0.2.1-rc.2：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）\n\n汇总：绿 7 / 红 0 / 未判定 0；明细 /home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/out/across-kernels-2026-10-26T01-08-48-590Z.json\n",
+  "stderr": ""
+}

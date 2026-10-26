@@ -1,0 +1,1285 @@
+{
+  "task": "T-TYPE (task-3)",
+  "generatedAt": "2026-10-26T01:06:32.034Z",
+  "repo": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost",
+  "tsc": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/node_modules/.bin/tsc",
+  "commands": {
+    "faceA": "./node_modules/.bin/tsc -p <overlay>/tsconfig.json --noEmit",
+    "faceAClient": "./node_modules/.bin/tsc -p <overlay>/tsconfig.client.json --noEmit",
+    "faceB": "createRequire(<generation tree anchor>).resolve(<bare specifier from lib/client.js>)"
+  },
+  "pitfallsRecorded": [
+    "tsconfig.json excludes src/client => the literal Face A command is a host-only green (verified via --listFiles: 16 src files, 0 client files).",
+    "outside-pointing symlinks for peers produce a FALSE RED (18 phantom errors on 0.2.0-rc.2) via TS realpath/module-identity; peers must be materialized as real dirs.",
+    "import.meta.resolve(spec, parentURL) ignores parentURL — unusable for rooted resolution.",
+    "tree node_modules absence != runtime failure: the host __ModuleLoader__ seed table is consulted first.",
+    "tree node_modules absence != never published: must check the npm registry separately."
+  ],
+  "baseline": {
+    "note": "errors from the repo checkout (== the devDeps-pinned 0.2.0-rc.2 kernel). These are the knowingly-retained residuals of this diagnostic config, NOT generation findings. A generation is only RED for error KINDS absent from this set.",
+    "host": {
+      "config": "tsconfig.json",
+      "errors": 0,
+      "errorList": []
+    },
+    "client": {
+      "config": "tsconfig.client.json",
+      "errors": 7,
+      "errorList": [
+        "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+        "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
+        "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
+        "src/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+        "src/client/index.ts(30,21): error TS2307: Cannot find module '@deepseek-ai/dsh-client-ui-conversation' or its corresponding type declarations.",
+        "src/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+        "src/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+      ]
+    }
+  },
+  "declared": {
+    "clientInject": [
+      "@deepseek-ai/dsh-client-ui-settings",
+      "@deepseek-ai/dsh-client-ui-conversation"
+    ],
+    "peerDependencies": {
+      "@deepseek-ai/cordis": "^4.0.1",
+      "@deepseek-ai/cosmokit": "^1.8.5",
+      "@deepseek-ai/dsh-llm": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-session": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-session-projection": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-settings": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-storage-domain": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-timeout": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/schemastery": "^3.18.3",
+      "zod": "^4.0.0"
+    },
+    "primitivesDeclaredAs": "devDependency only"
+  },
+  "generations": [
+    {
+      "id": "0.1.1-rc.2",
+      "bootModel": "app-boot",
+      "tree": {
+        "generationId": "0.1.1-rc.2",
+        "treeRoot": "/home/wujue/dsh-versions/0.1.1-rc.2",
+        "exists": true,
+        "mtime": "2026-10-23T05:32:19.333Z",
+        "entries": 198,
+        "launcherVersion": "0.1.1-rc.2"
+      },
+      "mixedTree": {
+        "checked": 188,
+        "mismatched": 0,
+        "versions": {
+          "0.1.1-rc.2": 188
+        }
+      },
+      "faceA": {
+        "overlayDir": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.1-rc.2",
+        "method": "isolated temp copy; peers materialized as REAL dirs via cp -rL (never outside-pointing symlinks — that produces a false red, see header §2)",
+        "mountedPeers": {
+          "dsh-llm": "0.1.1-rc.2",
+          "dsh-session": "0.1.1-rc.2",
+          "dsh-session-projection": "0.1.1-rc.2",
+          "dsh-settings": "0.1.1-rc.2",
+          "dsh-storage-domain": "0.1.1-rc.2",
+          "dsh-timeout": "0.1.1-rc.2",
+          "dsh-storage": "0.1.1-rc.2",
+          "dsh-storage-json": "0.1.1-rc.2",
+          "dsh-client-ui-settings": "0.1.1-rc.2",
+          "dsh-client-ui-conversation": "0.1.1-rc.2"
+        },
+        "missingPeers": [
+          "dsh-client-ui-primitives",
+          "dsh-client-store"
+        ],
+        "overlayVersions": {
+          "cordis": "4.0.1",
+          "cosmokit": "1.8.5",
+          "dsh-client-ui-conversation": "0.1.1-rc.2",
+          "dsh-client-ui-settings": "0.1.1-rc.2",
+          "dsh-llm": "0.1.1-rc.2",
+          "dsh-session": "0.1.1-rc.2",
+          "dsh-session-projection": "0.1.1-rc.2",
+          "dsh-settings": "0.1.1-rc.2",
+          "dsh-storage": "0.1.1-rc.2",
+          "dsh-storage-domain": "0.1.1-rc.2",
+          "dsh-storage-json": "0.1.1-rc.2",
+          "dsh-timeout": "0.1.1-rc.2",
+          "schemastery": "3.18.4"
+        },
+        "host": {
+          "config": "tsconfig.json",
+          "scope": "host only (excludes src/client)",
+          "errors": 0,
+          "errorList": [],
+          "novelVsBaseline": [],
+          "raw": ""
+        },
+        "client": {
+          "config": "tsconfig.client.json",
+          "scope": "src/client only (exclude: [] override)",
+          "errors": 6,
+          "errorList": [
+            "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
+            "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
+            "src/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+          ],
+          "novelVsBaseline": [],
+          "baselineErrors": 7,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.1-rc.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+        }
+      },
+      "faceB": {
+        "entry": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/lib/client.js",
+        "bareSpecifiers": [
+          "@deepseek-ai/dsh-client-ui-primitives",
+          "react",
+          "react/jsx-runtime"
+        ],
+        "anchor": "/home/wujue/dsh-versions/0.1.1-rc.2/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/index.js",
+        "resolutionMethod": "createRequire(anchor inside the generation tree).resolve() — real ESM/CJS resolution, not a text scan. NOTE: import.meta.resolve(spec, parentURL) ignores parentURL and cannot be used for rooted resolution.",
+        "treeUnresolved": [
+          "@deepseek-ai/dsh-client-ui-primitives"
+        ],
+        "hostSeed": {
+          "available": true,
+          "seedFn": "Jd",
+          "source": "index-ClqxG24t.js",
+          "keyCount": 7,
+          "keys": [
+            "react",
+            "react/jsx-runtime",
+            "react-dom",
+            "react-dom/client",
+            "@deepseek-ai/cordis",
+            "@deepseek-ai/dsh-client-ui-slots",
+            "@deepseek-ai/dsh-client-ui-primitives"
+          ],
+          "has": {
+            "@deepseek-ai/dsh-client-ui-primitives": true,
+            "react": true,
+            "react/jsx-runtime": true
+          }
+        },
+        "declaredInjectPresence": {
+          "@deepseek-ai/dsh-client-ui-settings": "0.1.1-rc.2",
+          "@deepseek-ai/dsh-client-ui-conversation": "0.1.1-rc.2"
+        },
+        "perSpecifier": [
+          {
+            "specifier": "@deepseek-ai/dsh-client-ui-primitives",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": true,
+            "registry": {
+              "checkedVersion": "0.1.1-rc.2",
+              "published": true,
+              "versionCount": 38
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react",
+            "resolvesAgainstTree": true,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react/jsx-runtime",
+            "resolvesAgainstTree": true,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": false,
+            "declaredInClientInject": false
+          }
+        ],
+        "runtimeResolutionOracle": "host __ModuleLoader__ makeRequire: seed table -> module table -> registered factories. The seed table is FIRST, so tree node_modules absence does NOT imply runtime failure."
+      },
+      "verdict": "GREEN",
+      "reasons": [],
+      "declarationHygiene": {
+        "undeclaredRuntimeImports": [
+          "@deepseek-ai/dsh-client-ui-primitives"
+        ],
+        "declaredInClientInject": [
+          "@deepseek-ai/dsh-client-ui-settings",
+          "@deepseek-ai/dsh-client-ui-conversation"
+        ],
+        "note": "an import that only resolves because the host bundle seeds it is \"resolves by host grace, undeclared\" — it is neither a functional red nor a clean green, and no peer-based admission check can ever see it."
+      },
+      "treeMutatedDuringRun": false
+    },
+    {
+      "id": "0.1.2-rc.1",
+      "bootModel": "app-boot",
+      "tree": {
+        "generationId": "0.1.2-rc.1",
+        "treeRoot": "/home/wujue/dsh-versions/0.1.2-rc.1",
+        "exists": true,
+        "mtime": "2026-10-23T08:40:25.117Z",
+        "entries": 224,
+        "launcherVersion": "0.1.2-rc.1"
+      },
+      "mixedTree": {
+        "checked": 214,
+        "mismatched": 0,
+        "versions": {
+          "0.1.2-rc.1": 214
+        }
+      },
+      "faceA": {
+        "overlayDir": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.2-rc.1",
+        "method": "isolated temp copy; peers materialized as REAL dirs via cp -rL (never outside-pointing symlinks — that produces a false red, see header §2)",
+        "mountedPeers": {
+          "dsh-llm": "0.1.2-rc.1",
+          "dsh-session": "0.1.2-rc.1",
+          "dsh-session-projection": "0.1.2-rc.1",
+          "dsh-settings": "0.1.2-rc.1",
+          "dsh-storage-domain": "0.1.2-rc.1",
+          "dsh-timeout": "0.1.2-rc.1",
+          "dsh-storage": "0.1.2-rc.1",
+          "dsh-storage-json": "0.1.2-rc.1",
+          "dsh-client-ui-settings": "0.1.2-rc.1",
+          "dsh-client-ui-conversation": "0.1.2-rc.1"
+        },
+        "missingPeers": [
+          "dsh-client-ui-primitives",
+          "dsh-client-store"
+        ],
+        "overlayVersions": {
+          "cordis": "4.0.1",
+          "cosmokit": "1.8.5",
+          "dsh-client-ui-conversation": "0.1.2-rc.1",
+          "dsh-client-ui-settings": "0.1.2-rc.1",
+          "dsh-llm": "0.1.2-rc.1",
+          "dsh-session": "0.1.2-rc.1",
+          "dsh-session-projection": "0.1.2-rc.1",
+          "dsh-settings": "0.1.2-rc.1",
+          "dsh-storage": "0.1.2-rc.1",
+          "dsh-storage-domain": "0.1.2-rc.1",
+          "dsh-storage-json": "0.1.2-rc.1",
+          "dsh-timeout": "0.1.2-rc.1",
+          "schemastery": "3.18.4"
+        },
+        "host": {
+          "config": "tsconfig.json",
+          "scope": "host only (excludes src/client)",
+          "errors": 0,
+          "errorList": [],
+          "novelVsBaseline": [],
+          "raw": ""
+        },
+        "client": {
+          "config": "tsconfig.client.json",
+          "scope": "src/client only (exclude: [] override)",
+          "errors": 6,
+          "errorList": [
+            "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
+            "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
+            "src/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+          ],
+          "novelVsBaseline": [],
+          "baselineErrors": 7,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.2-rc.1/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+        }
+      },
+      "faceB": {
+        "entry": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/lib/client.js",
+        "bareSpecifiers": [
+          "@deepseek-ai/dsh-client-ui-primitives",
+          "react",
+          "react/jsx-runtime"
+        ],
+        "anchor": "/home/wujue/dsh-versions/0.1.2-rc.1/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/index.js",
+        "resolutionMethod": "createRequire(anchor inside the generation tree).resolve() — real ESM/CJS resolution, not a text scan. NOTE: import.meta.resolve(spec, parentURL) ignores parentURL and cannot be used for rooted resolution.",
+        "treeUnresolved": [
+          "@deepseek-ai/dsh-client-ui-primitives"
+        ],
+        "hostSeed": {
+          "available": true,
+          "seedFn": "zp",
+          "source": "index-Df-65__b.js",
+          "keyCount": 8,
+          "keys": [
+            "react",
+            "react/jsx-runtime",
+            "react-dom",
+            "react-dom/client",
+            "@deepseek-ai/cordis",
+            "@deepseek-ai/dsh-client-store",
+            "@deepseek-ai/dsh-client-ui-slots",
+            "@deepseek-ai/dsh-client-ui-primitives"
+          ],
+          "has": {
+            "@deepseek-ai/dsh-client-ui-primitives": true,
+            "react": true,
+            "react/jsx-runtime": true
+          }
+        },
+        "declaredInjectPresence": {
+          "@deepseek-ai/dsh-client-ui-settings": "0.1.2-rc.1",
+          "@deepseek-ai/dsh-client-ui-conversation": "0.1.2-rc.1"
+        },
+        "perSpecifier": [
+          {
+            "specifier": "@deepseek-ai/dsh-client-ui-primitives",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": true,
+            "registry": {
+              "checkedVersion": "0.1.2-rc.1",
+              "published": true,
+              "versionCount": 38
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react",
+            "resolvesAgainstTree": true,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react/jsx-runtime",
+            "resolvesAgainstTree": true,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": false,
+            "declaredInClientInject": false
+          }
+        ],
+        "runtimeResolutionOracle": "host __ModuleLoader__ makeRequire: seed table -> module table -> registered factories. The seed table is FIRST, so tree node_modules absence does NOT imply runtime failure."
+      },
+      "verdict": "GREEN",
+      "reasons": [],
+      "declarationHygiene": {
+        "undeclaredRuntimeImports": [
+          "@deepseek-ai/dsh-client-ui-primitives"
+        ],
+        "declaredInClientInject": [
+          "@deepseek-ai/dsh-client-ui-settings",
+          "@deepseek-ai/dsh-client-ui-conversation"
+        ],
+        "note": "an import that only resolves because the host bundle seeds it is \"resolves by host grace, undeclared\" — it is neither a functional red nor a clean green, and no peer-based admission check can ever see it."
+      },
+      "treeMutatedDuringRun": false
+    },
+    {
+      "id": "0.1.5-rc.1",
+      "bootModel": "app-boot-mismatched",
+      "tree": {
+        "generationId": "0.1.5-rc.1",
+        "treeRoot": "/home/wujue/dsh-versions/0.1.5-rc.1",
+        "exists": true,
+        "mtime": "2026-10-23T09:33:21.832Z",
+        "entries": 241,
+        "launcherVersion": "0.1.5-rc.1"
+      },
+      "mixedTree": {
+        "checked": 231,
+        "mismatched": 230,
+        "versions": {
+          "0.1.5-rc.1": 1,
+          "0.1.5-rc.3": 230
+        }
+      },
+      "faceA": {
+        "overlayDir": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.5-rc.1",
+        "method": "isolated temp copy; peers materialized as REAL dirs via cp -rL (never outside-pointing symlinks — that produces a false red, see header §2)",
+        "mountedPeers": {
+          "dsh-llm": "0.1.5-rc.3",
+          "dsh-session": "0.1.5-rc.3",
+          "dsh-session-projection": "0.1.5-rc.3",
+          "dsh-settings": "0.1.5-rc.3",
+          "dsh-storage-domain": "0.1.5-rc.3",
+          "dsh-timeout": "0.1.5-rc.3",
+          "dsh-storage": "0.1.5-rc.3",
+          "dsh-storage-json": "0.1.5-rc.3",
+          "dsh-client-ui-settings": "0.1.5-rc.3",
+          "dsh-client-ui-conversation": "0.1.5-rc.3"
+        },
+        "missingPeers": [
+          "dsh-client-ui-primitives",
+          "dsh-client-store"
+        ],
+        "overlayVersions": {
+          "cordis": "4.0.1",
+          "cosmokit": "1.8.5",
+          "dsh-client-ui-conversation": "0.1.5-rc.3",
+          "dsh-client-ui-settings": "0.1.5-rc.3",
+          "dsh-llm": "0.1.5-rc.3",
+          "dsh-session": "0.1.5-rc.3",
+          "dsh-session-projection": "0.1.5-rc.3",
+          "dsh-settings": "0.1.5-rc.3",
+          "dsh-storage": "0.1.5-rc.3",
+          "dsh-storage-domain": "0.1.5-rc.3",
+          "dsh-storage-json": "0.1.5-rc.3",
+          "dsh-timeout": "0.1.5-rc.3",
+          "schemastery": "3.18.4"
+        },
+        "host": {
+          "config": "tsconfig.json",
+          "scope": "host only (excludes src/client)",
+          "errors": 0,
+          "errorList": [],
+          "novelVsBaseline": [],
+          "raw": ""
+        },
+        "client": {
+          "config": "tsconfig.client.json",
+          "scope": "src/client only (exclude: [] override)",
+          "errors": 6,
+          "errorList": [
+            "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
+            "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
+            "src/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+          ],
+          "novelVsBaseline": [],
+          "baselineErrors": 7,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.5-rc.1/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+        }
+      },
+      "faceB": {
+        "entry": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/lib/client.js",
+        "bareSpecifiers": [
+          "@deepseek-ai/dsh-client-ui-primitives",
+          "react",
+          "react/jsx-runtime"
+        ],
+        "anchor": "/home/wujue/dsh-versions/0.1.5-rc.1/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/index.js",
+        "resolutionMethod": "createRequire(anchor inside the generation tree).resolve() — real ESM/CJS resolution, not a text scan. NOTE: import.meta.resolve(spec, parentURL) ignores parentURL and cannot be used for rooted resolution.",
+        "treeUnresolved": [
+          "@deepseek-ai/dsh-client-ui-primitives",
+          "react",
+          "react/jsx-runtime"
+        ],
+        "hostSeed": {
+          "available": true,
+          "seedFn": "by",
+          "source": "index-BKQ_L1z6.js",
+          "keyCount": 9,
+          "keys": [
+            "react",
+            "react/jsx-runtime",
+            "react-dom",
+            "react-dom/client",
+            "@deepseek-ai/cordis",
+            "@deepseek-ai/dsh-client-store",
+            "@deepseek-ai/dsh-client-ui-slots",
+            "@deepseek-ai/dsh-client-ui-primitives",
+            "@deepseek-ai/dsh-client-ui-dockkit"
+          ],
+          "has": {
+            "@deepseek-ai/dsh-client-ui-primitives": true,
+            "react": true,
+            "react/jsx-runtime": true
+          }
+        },
+        "declaredInjectPresence": {
+          "@deepseek-ai/dsh-client-ui-settings": "0.1.5-rc.3",
+          "@deepseek-ai/dsh-client-ui-conversation": "0.1.5-rc.3"
+        },
+        "perSpecifier": [
+          {
+            "specifier": "@deepseek-ai/dsh-client-ui-primitives",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": true,
+            "registry": {
+              "checkedVersion": "0.1.5-rc.1",
+              "published": true,
+              "versionCount": 38
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react/jsx-runtime",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": false,
+            "declaredInClientInject": false
+          }
+        ],
+        "runtimeResolutionOracle": "host __ModuleLoader__ makeRequire: seed table -> module table -> registered factories. The seed table is FIRST, so tree node_modules absence does NOT imply runtime failure."
+      },
+      "verdict": "GREEN",
+      "reasons": [
+        "tree is mixed: 230/231 dsh-* packages are not 0.1.5-rc.1 (0.1.5-rc.3x230, 0.1.5-rc.1x1); type surface judged is that of the majority version, not 0.1.5-rc.1",
+        "declared appBootVersion 0.1.5-rc.3 differs from generation id 0.1.5-rc.1 (mixed tree)"
+      ],
+      "declarationHygiene": {
+        "undeclaredRuntimeImports": [
+          "@deepseek-ai/dsh-client-ui-primitives"
+        ],
+        "declaredInClientInject": [
+          "@deepseek-ai/dsh-client-ui-settings",
+          "@deepseek-ai/dsh-client-ui-conversation"
+        ],
+        "note": "an import that only resolves because the host bundle seeds it is \"resolves by host grace, undeclared\" — it is neither a functional red nor a clean green, and no peer-based admission check can ever see it."
+      },
+      "mixedTreeAnnotation": "tree is mixed: launcher 0.1.5-rc.1 / services 0.1.5-rc.3 (230/231 dsh-* packages). The FACE A verdict below describes the 0.1.5-rc.3 type surface, NOT 0.1.5-rc.1.",
+      "treeMutatedDuringRun": false
+    },
+    {
+      "id": "0.1.7-rc.1",
+      "bootModel": "app-boot",
+      "tree": {
+        "generationId": "0.1.7-rc.1",
+        "treeRoot": "/home/wujue/dsh-versions/0.1.7-rc.1",
+        "exists": true,
+        "mtime": "2026-10-23T02:31:53.794Z",
+        "entries": 278,
+        "launcherVersion": "0.1.7-rc.1"
+      },
+      "mixedTree": {
+        "checked": 267,
+        "mismatched": 0,
+        "versions": {
+          "0.1.7-rc.1": 267
+        }
+      },
+      "faceA": {
+        "overlayDir": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.7-rc.1",
+        "method": "isolated temp copy; peers materialized as REAL dirs via cp -rL (never outside-pointing symlinks — that produces a false red, see header §2)",
+        "mountedPeers": {
+          "dsh-llm": "0.1.7-rc.1",
+          "dsh-session": "0.1.7-rc.1",
+          "dsh-session-projection": "0.1.7-rc.1",
+          "dsh-settings": "0.1.7-rc.1",
+          "dsh-storage-domain": "0.1.7-rc.1",
+          "dsh-timeout": "0.1.7-rc.1",
+          "dsh-storage": "0.1.7-rc.1",
+          "dsh-storage-json": "0.1.7-rc.1",
+          "dsh-client-ui-settings": "0.1.7-rc.1",
+          "dsh-client-ui-conversation": "0.1.7-rc.1",
+          "dsh-client-ui-primitives": "0.1.7-rc.1",
+          "dsh-client-store": "0.1.7-rc.1"
+        },
+        "missingPeers": [],
+        "overlayVersions": {
+          "cordis": "4.0.1",
+          "cosmokit": "1.8.5",
+          "dsh-client-store": "0.1.7-rc.1",
+          "dsh-client-ui-conversation": "0.1.7-rc.1",
+          "dsh-client-ui-primitives": "0.1.7-rc.1",
+          "dsh-client-ui-settings": "0.1.7-rc.1",
+          "dsh-llm": "0.1.7-rc.1",
+          "dsh-session": "0.1.7-rc.1",
+          "dsh-session-projection": "0.1.7-rc.1",
+          "dsh-settings": "0.1.7-rc.1",
+          "dsh-storage": "0.1.7-rc.1",
+          "dsh-storage-domain": "0.1.7-rc.1",
+          "dsh-storage-json": "0.1.7-rc.1",
+          "dsh-timeout": "0.1.7-rc.1",
+          "schemastery": "3.18.4"
+        },
+        "host": {
+          "config": "tsconfig.json",
+          "scope": "host only (excludes src/client)",
+          "errors": 0,
+          "errorList": [],
+          "novelVsBaseline": [],
+          "raw": ""
+        },
+        "client": {
+          "config": "tsconfig.client.json",
+          "scope": "src/client only (exclude: [] override)",
+          "errors": 6,
+          "errorList": [
+            "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
+            "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
+            "src/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+          ],
+          "novelVsBaseline": [],
+          "baselineErrors": 7,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.7-rc.1/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+        }
+      },
+      "faceB": {
+        "entry": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/lib/client.js",
+        "bareSpecifiers": [
+          "@deepseek-ai/dsh-client-ui-primitives",
+          "react",
+          "react/jsx-runtime"
+        ],
+        "anchor": "/home/wujue/dsh-versions/0.1.7-rc.1/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/index.js",
+        "resolutionMethod": "createRequire(anchor inside the generation tree).resolve() — real ESM/CJS resolution, not a text scan. NOTE: import.meta.resolve(spec, parentURL) ignores parentURL and cannot be used for rooted resolution.",
+        "treeUnresolved": [
+          "react",
+          "react/jsx-runtime"
+        ],
+        "hostSeed": {
+          "available": true,
+          "seedFn": "iE",
+          "source": "index-3dwByubT.js",
+          "keyCount": 9,
+          "keys": [
+            "react",
+            "react/jsx-runtime",
+            "react-dom",
+            "react-dom/client",
+            "@deepseek-ai/cordis",
+            "@deepseek-ai/dsh-client-store",
+            "@deepseek-ai/dsh-client-ui-slots",
+            "@deepseek-ai/dsh-client-ui-primitives",
+            "@deepseek-ai/dsh-client-ui-dockkit"
+          ],
+          "has": {
+            "@deepseek-ai/dsh-client-ui-primitives": true,
+            "react": true,
+            "react/jsx-runtime": true
+          }
+        },
+        "declaredInjectPresence": {
+          "@deepseek-ai/dsh-client-ui-settings": "0.1.7-rc.1",
+          "@deepseek-ai/dsh-client-ui-conversation": "0.1.7-rc.1"
+        },
+        "perSpecifier": [
+          {
+            "specifier": "@deepseek-ai/dsh-client-ui-primitives",
+            "resolvesAgainstTree": true,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": true,
+            "registry": {
+              "checkedVersion": "0.1.7-rc.1",
+              "published": true,
+              "versionCount": 38
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react/jsx-runtime",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": false,
+            "declaredInClientInject": false
+          }
+        ],
+        "runtimeResolutionOracle": "host __ModuleLoader__ makeRequire: seed table -> module table -> registered factories. The seed table is FIRST, so tree node_modules absence does NOT imply runtime failure."
+      },
+      "verdict": "GREEN",
+      "reasons": [],
+      "declarationHygiene": {
+        "undeclaredRuntimeImports": [
+          "@deepseek-ai/dsh-client-ui-primitives"
+        ],
+        "declaredInClientInject": [
+          "@deepseek-ai/dsh-client-ui-settings",
+          "@deepseek-ai/dsh-client-ui-conversation"
+        ],
+        "note": "an import that only resolves because the host bundle seeds it is \"resolves by host grace, undeclared\" — it is neither a functional red nor a clean green, and no peer-based admission check can ever see it."
+      },
+      "treeMutatedDuringRun": false
+    },
+    {
+      "id": "0.1.7-rc.2",
+      "bootModel": "app-boot",
+      "tree": {
+        "generationId": "0.1.7-rc.2",
+        "treeRoot": "/home/wujue/dsh-versions/0.1.7-rc.2",
+        "exists": true,
+        "mtime": "2026-10-21T06:53:04.112Z",
+        "entries": 284,
+        "launcherVersion": "0.1.7-rc.2"
+      },
+      "mixedTree": {
+        "checked": 273,
+        "mismatched": 0,
+        "versions": {
+          "0.1.7-rc.2": 273
+        }
+      },
+      "faceA": {
+        "overlayDir": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.7-rc.2",
+        "method": "isolated temp copy; peers materialized as REAL dirs via cp -rL (never outside-pointing symlinks — that produces a false red, see header §2)",
+        "mountedPeers": {
+          "dsh-llm": "0.1.7-rc.2",
+          "dsh-session": "0.1.7-rc.2",
+          "dsh-session-projection": "0.1.7-rc.2",
+          "dsh-settings": "0.1.7-rc.2",
+          "dsh-storage-domain": "0.1.7-rc.2",
+          "dsh-timeout": "0.1.7-rc.2",
+          "dsh-storage": "0.1.7-rc.2",
+          "dsh-storage-json": "0.1.7-rc.2",
+          "dsh-client-ui-settings": "0.1.7-rc.2",
+          "dsh-client-ui-conversation": "0.1.7-rc.2",
+          "dsh-client-ui-primitives": "0.1.7-rc.2",
+          "dsh-client-store": "0.1.7-rc.2"
+        },
+        "missingPeers": [],
+        "overlayVersions": {
+          "cordis": "4.0.1",
+          "cosmokit": "1.8.5",
+          "dsh-client-store": "0.1.7-rc.2",
+          "dsh-client-ui-conversation": "0.1.7-rc.2",
+          "dsh-client-ui-primitives": "0.1.7-rc.2",
+          "dsh-client-ui-settings": "0.1.7-rc.2",
+          "dsh-llm": "0.1.7-rc.2",
+          "dsh-session": "0.1.7-rc.2",
+          "dsh-session-projection": "0.1.7-rc.2",
+          "dsh-settings": "0.1.7-rc.2",
+          "dsh-storage": "0.1.7-rc.2",
+          "dsh-storage-domain": "0.1.7-rc.2",
+          "dsh-storage-json": "0.1.7-rc.2",
+          "dsh-timeout": "0.1.7-rc.2",
+          "schemastery": "3.18.4"
+        },
+        "host": {
+          "config": "tsconfig.json",
+          "scope": "host only (excludes src/client)",
+          "errors": 0,
+          "errorList": [],
+          "novelVsBaseline": [],
+          "raw": ""
+        },
+        "client": {
+          "config": "tsconfig.client.json",
+          "scope": "src/client only (exclude: [] override)",
+          "errors": 6,
+          "errorList": [
+            "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
+            "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
+            "src/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+          ],
+          "novelVsBaseline": [],
+          "baselineErrors": 7,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.7-rc.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+        }
+      },
+      "faceB": {
+        "entry": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/lib/client.js",
+        "bareSpecifiers": [
+          "@deepseek-ai/dsh-client-ui-primitives",
+          "react",
+          "react/jsx-runtime"
+        ],
+        "anchor": "/home/wujue/dsh-versions/0.1.7-rc.2/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/index.js",
+        "resolutionMethod": "createRequire(anchor inside the generation tree).resolve() — real ESM/CJS resolution, not a text scan. NOTE: import.meta.resolve(spec, parentURL) ignores parentURL and cannot be used for rooted resolution.",
+        "treeUnresolved": [
+          "react",
+          "react/jsx-runtime"
+        ],
+        "hostSeed": {
+          "available": true,
+          "seedFn": "WS",
+          "source": "index-Q6zc2uHV.js",
+          "keyCount": 9,
+          "keys": [
+            "react",
+            "react/jsx-runtime",
+            "react-dom",
+            "react-dom/client",
+            "@deepseek-ai/cordis",
+            "@deepseek-ai/dsh-client-store",
+            "@deepseek-ai/dsh-client-ui-slots",
+            "@deepseek-ai/dsh-client-ui-primitives",
+            "@deepseek-ai/dsh-client-ui-dockkit"
+          ],
+          "has": {
+            "@deepseek-ai/dsh-client-ui-primitives": true,
+            "react": true,
+            "react/jsx-runtime": true
+          }
+        },
+        "declaredInjectPresence": {
+          "@deepseek-ai/dsh-client-ui-settings": "0.1.7-rc.2",
+          "@deepseek-ai/dsh-client-ui-conversation": "0.1.7-rc.2"
+        },
+        "perSpecifier": [
+          {
+            "specifier": "@deepseek-ai/dsh-client-ui-primitives",
+            "resolvesAgainstTree": true,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": true,
+            "registry": {
+              "checkedVersion": "0.1.7-rc.2",
+              "published": true,
+              "versionCount": 38
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react/jsx-runtime",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": false,
+            "declaredInClientInject": false
+          }
+        ],
+        "runtimeResolutionOracle": "host __ModuleLoader__ makeRequire: seed table -> module table -> registered factories. The seed table is FIRST, so tree node_modules absence does NOT imply runtime failure."
+      },
+      "verdict": "GREEN",
+      "reasons": [],
+      "declarationHygiene": {
+        "undeclaredRuntimeImports": [
+          "@deepseek-ai/dsh-client-ui-primitives"
+        ],
+        "declaredInClientInject": [
+          "@deepseek-ai/dsh-client-ui-settings",
+          "@deepseek-ai/dsh-client-ui-conversation"
+        ],
+        "note": "an import that only resolves because the host bundle seeds it is \"resolves by host grace, undeclared\" — it is neither a functional red nor a clean green, and no peer-based admission check can ever see it."
+      },
+      "treeMutatedDuringRun": false
+    },
+    {
+      "id": "0.2.0-rc.2",
+      "bootModel": "app-boot",
+      "tree": {
+        "generationId": "0.2.0-rc.2",
+        "treeRoot": "/home/wujue/dsh-versions/0.2.0-rc.2",
+        "exists": true,
+        "mtime": "2026-10-21T06:52:31.688Z",
+        "entries": 289,
+        "launcherVersion": "0.2.0-rc.2"
+      },
+      "mixedTree": {
+        "checked": 278,
+        "mismatched": 0,
+        "versions": {
+          "0.2.0-rc.2": 278
+        }
+      },
+      "faceA": {
+        "overlayDir": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.2.0-rc.2",
+        "method": "isolated temp copy; peers materialized as REAL dirs via cp -rL (never outside-pointing symlinks — that produces a false red, see header §2)",
+        "mountedPeers": {
+          "dsh-llm": "0.2.0-rc.2",
+          "dsh-session": "0.2.0-rc.2",
+          "dsh-session-projection": "0.2.0-rc.2",
+          "dsh-settings": "0.2.0-rc.2",
+          "dsh-storage-domain": "0.2.0-rc.2",
+          "dsh-timeout": "0.2.0-rc.2",
+          "dsh-storage": "0.2.0-rc.2",
+          "dsh-storage-json": "0.2.0-rc.2",
+          "dsh-client-ui-settings": "0.2.0-rc.2",
+          "dsh-client-ui-conversation": "0.2.0-rc.2",
+          "dsh-client-ui-primitives": "0.2.0-rc.2",
+          "dsh-client-store": "0.2.0-rc.2"
+        },
+        "missingPeers": [],
+        "overlayVersions": {
+          "cordis": "4.0.1",
+          "cosmokit": "1.8.5",
+          "dsh-client-store": "0.2.0-rc.2",
+          "dsh-client-ui-conversation": "0.2.0-rc.2",
+          "dsh-client-ui-primitives": "0.2.0-rc.2",
+          "dsh-client-ui-settings": "0.2.0-rc.2",
+          "dsh-llm": "0.2.0-rc.2",
+          "dsh-session": "0.2.0-rc.2",
+          "dsh-session-projection": "0.2.0-rc.2",
+          "dsh-settings": "0.2.0-rc.2",
+          "dsh-storage": "0.2.0-rc.2",
+          "dsh-storage-domain": "0.2.0-rc.2",
+          "dsh-storage-json": "0.2.0-rc.2",
+          "dsh-timeout": "0.2.0-rc.2",
+          "schemastery": "3.18.4"
+        },
+        "host": {
+          "config": "tsconfig.json",
+          "scope": "host only (excludes src/client)",
+          "errors": 0,
+          "errorList": [],
+          "novelVsBaseline": [],
+          "raw": ""
+        },
+        "client": {
+          "config": "tsconfig.client.json",
+          "scope": "src/client only (exclude: [] override)",
+          "errors": 6,
+          "errorList": [
+            "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
+            "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
+            "src/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+          ],
+          "novelVsBaseline": [],
+          "baselineErrors": 7,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.2.0-rc.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+        }
+      },
+      "faceB": {
+        "entry": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/lib/client.js",
+        "bareSpecifiers": [
+          "@deepseek-ai/dsh-client-ui-primitives",
+          "react",
+          "react/jsx-runtime"
+        ],
+        "anchor": "/home/wujue/dsh-versions/0.2.0-rc.2/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/index.js",
+        "resolutionMethod": "createRequire(anchor inside the generation tree).resolve() — real ESM/CJS resolution, not a text scan. NOTE: import.meta.resolve(spec, parentURL) ignores parentURL and cannot be used for rooted resolution.",
+        "treeUnresolved": [
+          "react",
+          "react/jsx-runtime"
+        ],
+        "hostSeed": {
+          "available": true,
+          "seedFn": "rM",
+          "source": "index-5SrrfWpU.js",
+          "keyCount": 9,
+          "keys": [
+            "react",
+            "react/jsx-runtime",
+            "react-dom",
+            "react-dom/client",
+            "@deepseek-ai/cordis",
+            "@deepseek-ai/dsh-client-store",
+            "@deepseek-ai/dsh-client-ui-slots",
+            "@deepseek-ai/dsh-client-ui-primitives",
+            "@deepseek-ai/dsh-client-ui-dockkit"
+          ],
+          "has": {
+            "@deepseek-ai/dsh-client-ui-primitives": true,
+            "react": true,
+            "react/jsx-runtime": true
+          }
+        },
+        "declaredInjectPresence": {
+          "@deepseek-ai/dsh-client-ui-settings": "0.2.0-rc.2",
+          "@deepseek-ai/dsh-client-ui-conversation": "0.2.0-rc.2"
+        },
+        "perSpecifier": [
+          {
+            "specifier": "@deepseek-ai/dsh-client-ui-primitives",
+            "resolvesAgainstTree": true,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": true,
+            "registry": {
+              "checkedVersion": "0.2.0-rc.2",
+              "published": true,
+              "versionCount": 38
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react/jsx-runtime",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": false,
+            "declaredInClientInject": false
+          }
+        ],
+        "runtimeResolutionOracle": "host __ModuleLoader__ makeRequire: seed table -> module table -> registered factories. The seed table is FIRST, so tree node_modules absence does NOT imply runtime failure."
+      },
+      "verdict": "GREEN",
+      "reasons": [],
+      "declarationHygiene": {
+        "undeclaredRuntimeImports": [
+          "@deepseek-ai/dsh-client-ui-primitives"
+        ],
+        "declaredInClientInject": [
+          "@deepseek-ai/dsh-client-ui-settings",
+          "@deepseek-ai/dsh-client-ui-conversation"
+        ],
+        "note": "an import that only resolves because the host bundle seeds it is \"resolves by host grace, undeclared\" — it is neither a functional red nor a clean green, and no peer-based admission check can ever see it."
+      },
+      "treeMutatedDuringRun": false
+    },
+    {
+      "id": "0.2.1-rc.2",
+      "bootModel": "app-boot",
+      "tree": {
+        "generationId": "0.2.1-rc.2",
+        "treeRoot": "/home/wujue/dsh-versions/0.2.1-rc.2",
+        "exists": true,
+        "mtime": "2026-10-21T07:10:54.012Z",
+        "entries": 306,
+        "launcherVersion": "0.2.1-rc.2"
+      },
+      "mixedTree": {
+        "checked": 295,
+        "mismatched": 0,
+        "versions": {
+          "0.2.1-rc.2": 295
+        }
+      },
+      "faceA": {
+        "overlayDir": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.2.1-rc.2",
+        "method": "isolated temp copy; peers materialized as REAL dirs via cp -rL (never outside-pointing symlinks — that produces a false red, see header §2)",
+        "mountedPeers": {
+          "dsh-llm": "0.2.1-rc.2",
+          "dsh-session": "0.2.1-rc.2",
+          "dsh-session-projection": "0.2.1-rc.2",
+          "dsh-settings": "0.2.1-rc.2",
+          "dsh-storage-domain": "0.2.1-rc.2",
+          "dsh-timeout": "0.2.1-rc.2",
+          "dsh-storage": "0.2.1-rc.2",
+          "dsh-storage-json": "0.2.1-rc.2",
+          "dsh-client-ui-settings": "0.2.1-rc.2",
+          "dsh-client-ui-conversation": "0.2.1-rc.2"
+        },
+        "missingPeers": [
+          "dsh-client-ui-primitives",
+          "dsh-client-store"
+        ],
+        "overlayVersions": {
+          "cordis": "4.0.1",
+          "cosmokit": "1.8.5",
+          "dsh-client-ui-conversation": "0.2.1-rc.2",
+          "dsh-client-ui-settings": "0.2.1-rc.2",
+          "dsh-llm": "0.2.1-rc.2",
+          "dsh-session": "0.2.1-rc.2",
+          "dsh-session-projection": "0.2.1-rc.2",
+          "dsh-settings": "0.2.1-rc.2",
+          "dsh-storage": "0.2.1-rc.2",
+          "dsh-storage-domain": "0.2.1-rc.2",
+          "dsh-storage-json": "0.2.1-rc.2",
+          "dsh-timeout": "0.2.1-rc.2",
+          "schemastery": "3.18.4"
+        },
+        "host": {
+          "config": "tsconfig.json",
+          "scope": "host only (excludes src/client)",
+          "errors": 0,
+          "errorList": [],
+          "novelVsBaseline": [],
+          "raw": ""
+        },
+        "client": {
+          "config": "tsconfig.client.json",
+          "scope": "src/client only (exclude: [] override)",
+          "errors": 6,
+          "errorList": [
+            "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
+            "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
+            "src/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+          ],
+          "novelVsBaseline": [],
+          "baselineErrors": 7,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(92,34): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.2.1-rc.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(793,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1575,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+        }
+      },
+      "faceB": {
+        "entry": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/lib/client.js",
+        "bareSpecifiers": [
+          "@deepseek-ai/dsh-client-ui-primitives",
+          "react",
+          "react/jsx-runtime"
+        ],
+        "anchor": "/home/wujue/dsh-versions/0.2.1-rc.2/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/index.js",
+        "resolutionMethod": "createRequire(anchor inside the generation tree).resolve() — real ESM/CJS resolution, not a text scan. NOTE: import.meta.resolve(spec, parentURL) ignores parentURL and cannot be used for rooted resolution.",
+        "treeUnresolved": [
+          "@deepseek-ai/dsh-client-ui-primitives",
+          "react",
+          "react/jsx-runtime"
+        ],
+        "hostSeed": {
+          "available": true,
+          "seedFn": "SZ",
+          "source": "index-CN7NIWNw.js",
+          "keyCount": 11,
+          "keys": [
+            "react",
+            "react/jsx-runtime",
+            "react-dom",
+            "react-dom/client",
+            "@deepseek-ai/cordis",
+            "zod",
+            "@tanstack/react-virtual",
+            "@deepseek-ai/dsh-client-store",
+            "@deepseek-ai/dsh-client-ui-slots",
+            "@deepseek-ai/dsh-client-ui-primitives",
+            "@deepseek-ai/dsh-client-ui-dockkit"
+          ],
+          "has": {
+            "@deepseek-ai/dsh-client-ui-primitives": true,
+            "react": true,
+            "react/jsx-runtime": true
+          }
+        },
+        "declaredInjectPresence": {
+          "@deepseek-ai/dsh-client-ui-settings": "0.2.1-rc.2",
+          "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.2"
+        },
+        "perSpecifier": [
+          {
+            "specifier": "@deepseek-ai/dsh-client-ui-primitives",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": true,
+            "registry": {
+              "checkedVersion": "0.2.1-rc.2",
+              "published": true,
+              "versionCount": 38
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": true,
+            "declaredInClientInject": false
+          },
+          {
+            "specifier": "react/jsx-runtime",
+            "resolvesAgainstTree": false,
+            "resolvesViaHostSeed": true,
+            "publishedAtGenerationVersion": null,
+            "registry": {
+              "note": "platform-provided by the host runtime; not part of any DSH generation release line"
+            },
+            "declaredAsPeerDependency": false,
+            "declaredAsDevDependency": false,
+            "declaredInClientInject": false
+          }
+        ],
+        "runtimeResolutionOracle": "host __ModuleLoader__ makeRequire: seed table -> module table -> registered factories. The seed table is FIRST, so tree node_modules absence does NOT imply runtime failure."
+      },
+      "verdict": "GREEN",
+      "reasons": [],
+      "declarationHygiene": {
+        "undeclaredRuntimeImports": [
+          "@deepseek-ai/dsh-client-ui-primitives"
+        ],
+        "declaredInClientInject": [
+          "@deepseek-ai/dsh-client-ui-settings",
+          "@deepseek-ai/dsh-client-ui-conversation"
+        ],
+        "note": "an import that only resolves because the host bundle seeds it is \"resolves by host grace, undeclared\" — it is neither a functional red nor a clean green, and no peer-based admission check can ever see it."
+      },
+      "treeMutatedDuringRun": false
+    }
+  ],
+  "summary": {
+    "exitCode": 0,
+    "red": [],
+    "green": [
+      "0.1.1-rc.2",
+      "0.1.2-rc.1",
+      "0.1.5-rc.1",
+      "0.1.7-rc.1",
+      "0.1.7-rc.2",
+      "0.2.0-rc.2",
+      "0.2.1-rc.2"
+    ],
+    "undetermined": []
+  }
+}

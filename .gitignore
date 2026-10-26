@@ -1,3 +1,6 @@
 node_modules/
 *.tgz
 preview/
+# 跨内核验证的临时工作区（type-surface.mjs 会把 src 复制成逐代次的 overlay，
+# 实测 313MB / 11840 个文件）。证据产物在 scripts/cross-kernel/out/，那个要入库。
+scripts/cross-kernel/.work/

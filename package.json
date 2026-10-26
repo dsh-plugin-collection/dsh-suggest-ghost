@@ -59,6 +59,7 @@
     "preview": "node scripts/preview-card.mjs",
     "replay": "node --experimental-strip-types scripts/replay-history.mjs",
     "check:loop": "node scripts/gitignore-check.mjs && node scripts/artifact-freshness.mjs",
+    "verify:kernels": "node scripts/verify-across-kernels.mjs --no-install --kernel-root ~/dsh-versions",
     "sandbox": "node scripts/dev-sandbox.mjs --watch",
     "sandbox:check": "node scripts/dev-sandbox.mjs --check",
     "sandbox:deploy": "node scripts/dev-sandbox.mjs --deploy .",
