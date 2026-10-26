@@ -321,6 +321,35 @@ export declare const inject: string[];
 /** 插件名（与 cordis 条目 id 及 manifest 一致）。 */
 export declare const name = "dsh-suggest-ghost";
 /**
+ * 0.1.2 / 0.1.5 的 settings 命名空间 schema（四个 JSON 字符串载荷）。
+ *
+ * 只这两种代次要它：它们的 `SettingsRegistry.register(ns, schema)` 需要一个
+ * **可调用**的 schema（`schema(input) => resolved`，即 schemastery 的口径）。
+ * 0.1.7 起命名空间由内核从插件 Config 投影，本 schema 不再参与。
+ *
+ * 四个键都是字符串（JSON 文本）；给默认值 `EMPTY_PUSH`（`'null'`），与
+ * 「没有推送数据」的既有语义一致。
+ */
+export declare const TransportSchema: z<Schemastery.ObjectS<NoInfer<{
+    _push: z<string, string, "defined">;
+    _hot: z<string, string, "defined">;
+    _residual: z<string, string, "defined">;
+    _ops: z<string, string, "defined">;
+}>>, Schemastery.ObjectT<NoInfer<{
+    _push: z<string, string, "defined">;
+    _hot: z<string, string, "defined">;
+    _residual: z<string, string, "defined">;
+    _ops: z<string, string, "defined">;
+}>>, "plain">;
+/**
+ * 老 SettingsRegistry 上「本命名空间是否已注册」。
+ *
+ * 为什么要探测而不是直接 register：重复注册会抛 `already registered`，而
+ * 配合 `--patch` 手动挂载、或父层 profile 已经声明过该 ns 时，这里会先命中
+ * 一次。`describe()` 是这两个代次都有的公开读面，用它判断最稳。
+ */
+export declare function settingsNamespaceRegistered(svc: unknown): boolean;
+/**
  * 热度格被拒后由事务外 pump 补写的**次数上限**（2026-10-22 事故护栏）。
  *
  * 为什么是 3 而不是 `DEFERRED_MAX_ATTEMPTS`（8）：热度格是**整份当前快照**，不是
