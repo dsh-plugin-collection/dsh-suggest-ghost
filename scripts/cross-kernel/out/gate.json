@@ -1,0 +1,812 @@
+{
+  "task": "task-1 (T-GATE)",
+  "generatedAt": "2026-10-23T09:38:01.717Z",
+  "nonce": "gate-c00d9f6e",
+  "pluginRoot": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost",
+  "plugin": {
+    "name": "dsh-suggest-ghost",
+    "version": "0.7.0",
+    "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+    "dshPeers": {
+      "@deepseek-ai/dsh-llm": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-session": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-session-projection": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-settings": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-storage-domain": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-timeout": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2"
+    }
+  },
+  "referencePlugin": {
+    "path": "/home/wujue/workspace/dsh-plugins/dsh-later/package.json",
+    "name": "dsh-later",
+    "version": "1.7.0",
+    "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0"
+  },
+  "kernelRoot": "/home/wujue/dsh-versions",
+  "dshHomeRedirected": {
+    "DSH_HOME": "/tmp/gate-c00d9f6e-UZtQMC",
+    "tempHome": "/tmp/gate-c00d9f6e-UZtQMC"
+  },
+  "outOfBoundsCheck": {
+    "scanned": "/home/wujue/.dsh",
+    "exists": true,
+    "nonceFound": false,
+    "hits": []
+  },
+  "generations": [
+    {
+      "generation": "0.1.1-rc.2",
+      "kernelRoot": "/home/wujue/dsh-versions/0.1.1-rc.2",
+      "evaluatorPresent": false,
+      "semantics": "absent",
+      "indexFile": "/home/wujue/dsh-versions/0.1.1-rc.2/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
+      "appBootPresent": true,
+      "appBootVersion": "0.1.1-rc.2",
+      "reason": "dsh-app-boot@0.1.1-rc.2 present but does not define evaluatePluginCompatibility; this generation runs no plugin admission gate",
+      "probes": {},
+      "errors": [],
+      "verdict": "UNDETERMINED",
+      "verdictReason": "dsh-app-boot@0.1.1-rc.2 present but does not define evaluatePluginCompatibility; this generation runs no plugin admission gate",
+      "declaredSupported": {
+        "viaEnginesDsh": true,
+        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
+        "viaPeers": true
+      },
+      "declaredPeers": {
+        "@deepseek-ai/dsh-llm": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        }
+      },
+      "declarationCrossCheck": {
+        "enginesDshCovers": true,
+        "peersMatchSemantically": true,
+        "peerEnumerationListsThisGenerationLiteral": true,
+        "agree": true
+      },
+      "peerPackageAvailability": {
+        "@deepseek-ai/dsh-llm": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "presentInKernelTree": true
+        }
+      },
+      "peerPackagesMissing": [],
+      "declaredSupportedAny": true,
+      "gateExecuted": false
+    },
+    {
+      "generation": "0.1.2-rc.1",
+      "kernelRoot": "/home/wujue/dsh-versions/0.1.2-rc.1",
+      "evaluatorPresent": false,
+      "semantics": "absent",
+      "indexFile": "/home/wujue/dsh-versions/0.1.2-rc.1/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
+      "appBootPresent": true,
+      "appBootVersion": "0.1.2-rc.1",
+      "reason": "dsh-app-boot@0.1.2-rc.1 present but does not define evaluatePluginCompatibility; this generation runs no plugin admission gate",
+      "probes": {},
+      "errors": [],
+      "verdict": "UNDETERMINED",
+      "verdictReason": "dsh-app-boot@0.1.2-rc.1 present but does not define evaluatePluginCompatibility; this generation runs no plugin admission gate",
+      "declaredSupported": {
+        "viaEnginesDsh": true,
+        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
+        "viaPeers": true
+      },
+      "declaredPeers": {
+        "@deepseek-ai/dsh-llm": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        }
+      },
+      "declarationCrossCheck": {
+        "enginesDshCovers": true,
+        "peersMatchSemantically": true,
+        "peerEnumerationListsThisGenerationLiteral": true,
+        "agree": true
+      },
+      "peerPackageAvailability": {
+        "@deepseek-ai/dsh-llm": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "presentInKernelTree": true
+        }
+      },
+      "peerPackagesMissing": [],
+      "declaredSupportedAny": true,
+      "gateExecuted": false
+    },
+    {
+      "generation": "0.1.5-rc.1",
+      "kernelRoot": "/home/wujue/dsh-versions/0.1.5-rc.1",
+      "evaluatorPresent": false,
+      "semantics": "absent",
+      "indexFile": "/home/wujue/dsh-versions/0.1.5-rc.1/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
+      "appBootPresent": true,
+      "appBootVersion": "0.1.5-rc.3",
+      "reason": "dsh-app-boot@0.1.5-rc.3 present but does not define evaluatePluginCompatibility; this generation runs no plugin admission gate",
+      "probes": {},
+      "errors": [],
+      "verdict": "UNDETERMINED",
+      "verdictReason": "dsh-app-boot@0.1.5-rc.3 present but does not define evaluatePluginCompatibility; this generation runs no plugin admission gate",
+      "declaredSupported": {
+        "viaEnginesDsh": true,
+        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
+        "viaPeers": true
+      },
+      "declaredPeers": {
+        "@deepseek-ai/dsh-llm": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        }
+      },
+      "declarationCrossCheck": {
+        "enginesDshCovers": true,
+        "peersMatchSemantically": true,
+        "peerEnumerationListsThisGenerationLiteral": true,
+        "agree": true
+      },
+      "peerPackageAvailability": {
+        "@deepseek-ai/dsh-llm": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "presentInKernelTree": true
+        }
+      },
+      "peerPackagesMissing": [],
+      "declaredSupportedAny": true,
+      "gateExecuted": false
+    },
+    {
+      "generation": "0.1.7-rc.1",
+      "kernelRoot": "/home/wujue/dsh-versions/0.1.7-rc.1",
+      "evaluatorPresent": true,
+      "semantics": "peers-only",
+      "indexFile": "/home/wujue/dsh-versions/0.1.7-rc.1/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
+      "appBootVersion": "0.1.7-rc.1",
+      "evaluatorLine": 286,
+      "readsEnginesDsh": false,
+      "probes": {
+        "real": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantEnginesUnmet": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantPeerUnmetWithEngines": {
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.1",
+            "peers": {
+              "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
+            },
+            "exempted": false
+          }
+        },
+        "mutantEnginesRemoved": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantEnginesRemovedPeerUnmet": {
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.1",
+            "peers": {
+              "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
+            },
+            "exempted": false
+          }
+        },
+        "mutantEnginesUnmetExempted": {
+          "ok": "met",
+          "raw": null
+        }
+      },
+      "errors": [],
+      "verdict": "GREEN",
+      "verdictReason": null,
+      "reference": {
+        "name": "dsh-later",
+        "version": "1.7.0",
+        "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "real": "met",
+        "realRaw": null,
+        "enginesRemoved": "met"
+      },
+      "declaredSupported": {
+        "viaEnginesDsh": true,
+        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
+        "viaPeers": true
+      },
+      "declaredPeers": {
+        "@deepseek-ai/dsh-llm": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        }
+      },
+      "declarationCrossCheck": {
+        "enginesDshCovers": true,
+        "peersMatchSemantically": true,
+        "peerEnumerationListsThisGenerationLiteral": false,
+        "agree": true
+      },
+      "peerPackageAvailability": {
+        "@deepseek-ai/dsh-llm": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "presentInKernelTree": true
+        }
+      },
+      "peerPackagesMissing": [],
+      "declaredSupportedAny": true,
+      "gateExecuted": true,
+      "metUnder": {
+        "engines.dsh": null,
+        "peers": true
+      },
+      "semanticsApplicability": {
+        "executed": "peers",
+        "ignored": [
+          "engines.dsh"
+        ],
+        "note": "this generation never reads engines.dsh (no unmetRequirements in its app-boot); it decides purely on @deepseek-ai/dsh / @deepseek-ai/dsh-* peerDependencies. mutantEnginesUnmet=met is the direct proof the engines.dsh gate is vacuous here."
+      }
+    },
+    {
+      "generation": "0.1.7-rc.2",
+      "kernelRoot": "/home/wujue/dsh-versions/0.1.7-rc.2",
+      "evaluatorPresent": true,
+      "semantics": "peers-only",
+      "indexFile": "/home/wujue/dsh-versions/0.1.7-rc.2/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
+      "appBootVersion": "0.1.7-rc.2",
+      "evaluatorLine": 286,
+      "readsEnginesDsh": false,
+      "probes": {
+        "real": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantEnginesUnmet": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantPeerUnmetWithEngines": {
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
+            },
+            "exempted": false
+          }
+        },
+        "mutantEnginesRemoved": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantEnginesRemovedPeerUnmet": {
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
+            },
+            "exempted": false
+          }
+        },
+        "mutantEnginesUnmetExempted": {
+          "ok": "met",
+          "raw": null
+        }
+      },
+      "errors": [],
+      "verdict": "GREEN",
+      "verdictReason": null,
+      "reference": {
+        "name": "dsh-later",
+        "version": "1.7.0",
+        "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "real": "met",
+        "realRaw": null,
+        "enginesRemoved": "met"
+      },
+      "declaredSupported": {
+        "viaEnginesDsh": true,
+        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
+        "viaPeers": true
+      },
+      "declaredPeers": {
+        "@deepseek-ai/dsh-llm": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        }
+      },
+      "declarationCrossCheck": {
+        "enginesDshCovers": true,
+        "peersMatchSemantically": true,
+        "peerEnumerationListsThisGenerationLiteral": true,
+        "agree": true
+      },
+      "peerPackageAvailability": {
+        "@deepseek-ai/dsh-llm": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "presentInKernelTree": true
+        }
+      },
+      "peerPackagesMissing": [],
+      "declaredSupportedAny": true,
+      "gateExecuted": true,
+      "metUnder": {
+        "engines.dsh": null,
+        "peers": true
+      },
+      "semanticsApplicability": {
+        "executed": "peers",
+        "ignored": [
+          "engines.dsh"
+        ],
+        "note": "this generation never reads engines.dsh (no unmetRequirements in its app-boot); it decides purely on @deepseek-ai/dsh / @deepseek-ai/dsh-* peerDependencies. mutantEnginesUnmet=met is the direct proof the engines.dsh gate is vacuous here."
+      }
+    },
+    {
+      "generation": "0.2.0-rc.2",
+      "kernelRoot": "/home/wujue/dsh-versions/0.2.0-rc.2",
+      "evaluatorPresent": true,
+      "semantics": "peers-only",
+      "indexFile": "/home/wujue/dsh-versions/0.2.0-rc.2/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
+      "appBootVersion": "0.2.0-rc.2",
+      "evaluatorLine": 286,
+      "readsEnginesDsh": false,
+      "probes": {
+        "real": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantEnginesUnmet": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantPeerUnmetWithEngines": {
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.2.0-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
+            },
+            "exempted": false
+          }
+        },
+        "mutantEnginesRemoved": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantEnginesRemovedPeerUnmet": {
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.2.0-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
+            },
+            "exempted": false
+          }
+        },
+        "mutantEnginesUnmetExempted": {
+          "ok": "met",
+          "raw": null
+        }
+      },
+      "errors": [],
+      "verdict": "GREEN",
+      "verdictReason": null,
+      "reference": {
+        "name": "dsh-later",
+        "version": "1.7.0",
+        "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "real": "met",
+        "realRaw": null,
+        "enginesRemoved": "met"
+      },
+      "declaredSupported": {
+        "viaEnginesDsh": true,
+        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
+        "viaPeers": true
+      },
+      "declaredPeers": {
+        "@deepseek-ai/dsh-llm": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        }
+      },
+      "declarationCrossCheck": {
+        "enginesDshCovers": true,
+        "peersMatchSemantically": true,
+        "peerEnumerationListsThisGenerationLiteral": true,
+        "agree": true
+      },
+      "peerPackageAvailability": {
+        "@deepseek-ai/dsh-llm": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "presentInKernelTree": true
+        }
+      },
+      "peerPackagesMissing": [],
+      "declaredSupportedAny": true,
+      "gateExecuted": true,
+      "metUnder": {
+        "engines.dsh": null,
+        "peers": true
+      },
+      "semanticsApplicability": {
+        "executed": "peers",
+        "ignored": [
+          "engines.dsh"
+        ],
+        "note": "this generation never reads engines.dsh (no unmetRequirements in its app-boot); it decides purely on @deepseek-ai/dsh / @deepseek-ai/dsh-* peerDependencies. mutantEnginesUnmet=met is the direct proof the engines.dsh gate is vacuous here."
+      }
+    },
+    {
+      "generation": "0.2.1-rc.2",
+      "kernelRoot": "/home/wujue/dsh-versions/0.2.1-rc.2",
+      "evaluatorPresent": true,
+      "semantics": "engines.dsh-alone",
+      "indexFile": "/home/wujue/dsh-versions/0.2.1-rc.2/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
+      "appBootVersion": "0.2.1-rc.2",
+      "evaluatorLine": 311,
+      "readsEnginesDsh": true,
+      "probes": {
+        "real": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantEnginesUnmet": {
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.2.1-rc.2",
+            "requirements": {
+              "engines.dsh": ">=9.0.0"
+            },
+            "exempted": false
+          }
+        },
+        "mutantPeerUnmetWithEngines": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantEnginesRemoved": {
+          "ok": "met",
+          "raw": null
+        },
+        "mutantEnginesRemovedPeerUnmet": {
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.2.1-rc.2",
+            "requirements": {
+              "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
+            },
+            "exempted": false
+          }
+        },
+        "mutantEnginesUnmetExempted": {
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.2.1-rc.2",
+            "requirements": {
+              "engines.dsh": ">=9.0.0"
+            },
+            "exempted": true
+          }
+        }
+      },
+      "errors": [],
+      "verdict": "GREEN",
+      "verdictReason": null,
+      "reference": {
+        "name": "dsh-later",
+        "version": "1.7.0",
+        "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "real": "met",
+        "realRaw": null,
+        "enginesRemoved": "met"
+      },
+      "declaredSupported": {
+        "viaEnginesDsh": true,
+        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
+        "viaPeers": true
+      },
+      "declaredPeers": {
+        "@deepseek-ai/dsh-llm": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        }
+      },
+      "declarationCrossCheck": {
+        "enginesDshCovers": true,
+        "peersMatchSemantically": true,
+        "peerEnumerationListsThisGenerationLiteral": false,
+        "agree": true
+      },
+      "peerPackageAvailability": {
+        "@deepseek-ai/dsh-llm": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-session-projection": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-settings": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-storage-domain": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-timeout": {
+          "presentInKernelTree": true
+        }
+      },
+      "peerPackagesMissing": [],
+      "declaredSupportedAny": true,
+      "gateExecuted": true,
+      "metUnder": {
+        "engines.dsh": true,
+        "peers": null
+      },
+      "semanticsApplicability": {
+        "executed": "engines.dsh",
+        "ignored": [
+          "peers"
+        ],
+        "note": "engines.dsh exists on the real manifest, so this generation decides on it ALONE; dsh peers are never consulted. mutantPeerUnmetWithEngines=met is the direct proof (a bogus ^9.0.0 remote-access peer is ignored)."
+      }
+    }
+  ],
+  "exitCode": 2
+}
