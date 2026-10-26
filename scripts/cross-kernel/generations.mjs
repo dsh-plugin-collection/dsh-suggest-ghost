@@ -37,17 +37,17 @@
  *   而今天磁盘上的事实是「两份清单一致」，任何照抄任务书去下游写评论/开 issue 的人
  *   都会报出一个不存在的缺陷。
  *
- * ## dsh-suggest-ghost 自己确实少了 0.1.7-rc.1（这条是真的，本次核对）
+ * ## dsh-suggest-ghost 的 peer 没逐字写 0.1.7-rc.1 —— 但**这不是矛盾**（2026-10-26 复核推翻）
  *
- * `dsh-suggest-ghost/package.json` 的 7 个 `@deepseek-ai/dsh-*` peer **没有任何一处**
- * 出现 `0.1.7-rc.1`：枚举是 `^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2
- * || ^0.2.0-rc.2`（`grep -c '0.1.7-rc.1' package.json` = **0**）。
- * 而 `engines.dsh` 写的是 `>=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0` ——
- * 这个区间**覆盖** 0.1.7-rc.1。
+ * `dsh-suggest-ghost/package.json` 的 `@deepseek-ai/dsh-*` peer 里没有任何一处
+ * 逐字出现 `0.1.7-rc.1`（`grep -c '0.1.7-rc.1' package.json` = **0**）。
  *
- * 于是本仓上确实存在一处**两份声明互相矛盾**：`engines.dsh` 说支持 0.1.7-rc.1，
- * peer 枚举不说。这正是 §0 说的「双判」问题——≤0.2.0 的内核只认 `dsh-*` peerDependencies，
- * `engines.dsh` 要到 0.2.1 起才单独决定。所以本仓在 dsh-later 认定「必须单列」的
+ * ⚠️ 曾经据此写过「两份声明互相矛盾」——**那个判断是错的，已撤回**：
+ * `^0.1.1-rc.2` 展开是 `>=0.1.1-rc.2 <0.2.0-0`，在 `includePrerelease: true`（内核用的正是
+ * 这个口径）下**匹配** 0.1.7-rc.1。所以「逐字枚举」≠「范围匹配」，两份声明**一致**，
+ * 这一代**不需要**单独补枚举。别把这条再当成缺陷报出去。
+ *
+ * 原文保留于此仅作方法论记录：
  * 那一个组合代上，脚踩两条船。**本模块按 7 代（含 0.1.7-rc.1）跑回归，
  * 就是要让这处矛盾在真实内核上显形，而不是靠读 package.json 猜。**
  *
@@ -104,15 +104,21 @@
  * + **把版本号一并打出来**——`existsSync` 为真只证明"有启动器"，不证明"是这一版启动器"。
  */
 export const KERNEL_GENERATIONS = [
-  {
-    id: '0.1.1-rc.2',
-    peerRange: '^0.1.1-rc.2',
-    bootModel: 'app-boot',
-    hasAppBoot: true,
-    hasDshBase: true,
-    observedEntries: 198,
-    notes: '最早一代；树为 npm 扁平布局，顶层 app-boot/dsh-base 齐备。',
-  },
+  // 0.1.1-rc.2 **已从支持列表删除**（2026-10-26）。原因不是"修不动"，而是硬约束：
+  //
+  // 本插件 client 的 `inject` 里有 `remote.settings`，而 0.1.1 的前端**根本没有
+  // 这个服务**——`dsh-api-remotes/lib/client.js` 里 `settings` 命名空间在 0.1.2 才出现
+  // （0.1.1 的官方设置 UI 走 `connection.api.settings`）。cordis 对 `inject` 是**静态
+  // park**：声明了拿不到就整条 fiber 不激活，运行时降级不可行。实测加一个不存在的
+  // `remote.NOPE` 得到的报错与 0.1.1 上一模一样（`pending (waiting for service: …)`）。
+  //
+  // 两条改法都堵死：① 去掉 `remote.settings` 的 inject ⇒ 0.2.1 上插件直接
+  // `dsh-suggest-ghost: failed`（属性读被 Proxy 拦）；② 按代次声明两套 inject ⇒
+  // `inject` 是模块级静态数组，做不到。
+  //
+  // 唯一可行的是改成注入 `connection` 再运行时择路，但那要重验另外六代的 GUI，
+  // 且本机这棵树被 npm 重装过（198 → 196 包），修好也无法证明对原始 0.1.1 有效。
+  // 故明确不支持，而非"待修"。
   {
     id: '0.1.2-rc.1',
     peerRange: '^0.1.2-rc.1',
