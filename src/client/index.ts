@@ -126,6 +126,11 @@ interface InputFaceLike {
  */
 interface SessionListSnapshotLike {
   byId: Record<string, { id: string; retainedBy?: Record<string, number | undefined> }>;
+  /**
+   * 当前打开的会话 id（0.1.2 / 0.1.5 的客户端快照带这个字段）。
+   * 较新代次没有它——那时靠 `retainedBy.mainView` 推导，见 `currentSessionIdOf`。
+   */
+  current?: string | null;
 }
 
 /**
@@ -200,9 +205,26 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** 当前（主视图）会话 id；没有会话打开时为 undefined。 */
-const currentSessionIdOf = (snapshot: SessionListSnapshotLike): string | undefined =>
-  Object.values(snapshot.byId).find((row) => (row.retainedBy?.mainView ?? 0) > 0)?.id;
+/**
+ * 当前（主视图）会话 id；没有会话打开时为 undefined。
+ *
+ * ## 两个来源，按可用性取（2026-10-26 真 GUI 实测）
+ *
+ * 1. **`snapshot.current`** —— 0.1.2 / 0.1.5 的客户端会话快照直接带这个字段
+ *    （实测 0.1.5 的 `getSnapshot()`：`snapKeys=ids,byId,current,phase,subagentsByParent,
+ *    jobsBySession,currentAddress`，`current="session-…"`，而每行**没有** `retainedBy`）。
+ * 2. **`retainedBy.mainView > 0`** —— 较新代次没有 `current`，用「被主视图持有的行」
+ *    表达同一个事实（本函数原先只认这条）。
+ *
+ * ⚠️ 只认第 2 条时，老代次上它**恒返回 undefined**：`bound` 建不起来、幽灵永不显示，
+ * 而服务端一切正常（`push landed`、客户端 `parses=1 applies=1`）。现象只有一行
+ * `inline-arm-cancel: reason=no-session - bound=false`，从日志几乎看不出所以然。
+ */
+const currentSessionIdOf = (snapshot: SessionListSnapshotLike): string | undefined => {
+  const current = snapshot.current;
+  if (typeof current === 'string' && current !== '') return current;
+  return Object.values(snapshot.byId).find((row) => (row.retainedBy?.mainView ?? 0) > 0)?.id;
+};
 
 /**
  * 宿主 `ctx.remote` 的最小结构视图（只用到 `settings.describe` / `settings.mutate`）。

@@ -292,6 +292,55 @@ export const inject = ['llm', 'sessions', 'settings'];
 /** 插件名（与 cordis 条目 id 及 manifest 一致）。 */
 export const name = 'dsh-suggest-ghost';
 
+/**
+ * 0.1.2 / 0.1.5 的 settings 命名空间 schema（四个 JSON 字符串载荷）。
+ *
+ * 只这两种代次要它：它们的 `SettingsRegistry.register(ns, schema)` 需要一个
+ * **可调用**的 schema（`schema(input) => resolved`，即 schemastery 的口径）。
+ * 0.1.7 起命名空间由内核从插件 Config 投影，本 schema 不再参与。
+ *
+ * 四个键都是字符串（JSON 文本）；给默认值 `EMPTY_PUSH`（`'null'`），与
+ * 「没有推送数据」的既有语义一致。
+ */
+export const TransportSchema = z.object({
+  _push: z.string().default(EMPTY_PUSH),
+  _hot: z.string().default(EMPTY_PUSH),
+  _residual: z.string().default(EMPTY_PUSH),
+  _ops: z.string().default(EMPTY_PUSH),
+});
+
+/**
+ * 老 SettingsRegistry 上「本命名空间是否已注册」。
+ *
+ * 为什么要探测而不是直接 register：重复注册会抛 `already registered`，而
+ * 配合 `--patch` 手动挂载、或父层 profile 已经声明过该 ns 时，这里会先命中
+ * 一次。`describe()` 是这两个代次都有的公开读面，用它判断最稳。
+ */
+export function settingsNamespaceRegistered(svc: unknown): boolean {
+  const describe = (svc as { describe?: () => unknown }).describe;
+  if (typeof describe !== 'function') return false;
+  try {
+    const out = describe.call(svc);
+    // 兼容三种形状：数组 / { namespaces: [...] } / Map
+    const list = Array.isArray(out)
+      ? out
+      : Array.isArray((out as { namespaces?: unknown })?.namespaces)
+        ? ((out as { namespaces: unknown[] }).namespaces)
+        : out instanceof Map
+          ? [...out.keys()]
+          : [];
+    for (const row of list) {
+      const ns = typeof row === 'string'
+        ? row
+        : (row as { ns?: unknown; name?: unknown } | null)?.ns ?? (row as { name?: unknown } | null)?.name;
+      if (ns === SUGGEST_GHOST_NAMESPACE) return true;
+    }
+  } catch {
+    /* 读不到就当没注册，走注册分支 */
+  }
+  return false;
+}
+
 /** 每会话生成状态：防重入、可中止。 */
 interface SessionState {
   /** 日志中已生成建议的最新回合号（重载/恢复后避免重复生成）。 */
@@ -657,12 +706,46 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   const readResidual = (): string => readChannel('_residual');
   ctx.inject(['settings'], (settingsCtx) => {
     try {
-      const svc = (settingsCtx as { settings?: { update: (ns: unknown, patch: object) => Promise<void> } }).settings;
+      const svc = (settingsCtx as {
+        settings?: {
+          update: (ns: unknown, patch: object) => Promise<void>;
+          // schemastery 的 schema 是可调用对象（签名比 `(input: unknown) => unknown` 更窄），
+          // 老 SettingsRegistry 只要求「可调用」，所以统一按 unknown 透传。
+          register?: (ns: unknown, schema: unknown, options?: object) => unknown;
+          describe?: () => unknown;
+        };
+      }).settings;
       if (svc === undefined) {
         ctx.logger.warn('dsh-suggest-ghost: settings service is undefined');
         return;
       }
       settingsSvc = svc;
+      // ── 0.1.2 / 0.1.5：命名空间必须**由插件自己注册** ────────────────────
+      //
+      // 这两个代次的 `ctx.settings` 是老的 SettingsRegistry，**只接受已注册**的
+      // 命名空间：`update()` 对未注册的 ns 直接抛
+      // `settings namespace "suggest-ghost" is not registered`。
+      // 0.1.7 起内核改成「把插件 Config 投影成表单」，不再需要（也没有）`register`。
+      //
+      // 真 GUI 实测（`docs/cross-kernel-real-gui.png`）：缺这一步时 0.1.2 / 0.1.5 上
+      // 建议**照常生成**（日志有 `suggestion generated`），但每次推送都被拒
+      // （`push to client failed ... is not registered`），用户输入框里**什么都看不到**。
+      // 装配 / apply / 投影注册全都正常 —— 所以四路非 UI 验证发现不了这个洞。
+      //
+      // 判据是**能力探测**（有没有 `register` 函数）而不是版本号：老的 SettingsRegistry
+      // 有 `register`，0.1.7+ 的 SettingsForms 没有。已在别处注册过就跳过（重复注册
+      // 会抛 `already registered`）。
+      if (typeof svc.register === 'function') {
+        if (!settingsNamespaceRegistered(svc)) {
+          try {
+            svc.register.call(svc, SUGGEST_GHOST_NAMESPACE, TransportSchema, { applies: 'live' });
+            ctx.logger.info?.(`dsh-suggest-ghost: registered settings namespace ${SUGGEST_GHOST_NAMESPACE}`);
+          } catch (error) {
+            // 失败不阻断挂载：没有命名空间时建议仍会生成，只是推不到界面。
+            ctx.logger.warn(`dsh-suggest-ghost: settings namespace registration failed: ${String(error)}`);
+          }
+        }
+      }
       // **事务外排水锚点**：被拒的写入（结构性拒绝 + 可重试的竞争失败）由它补。
       //
       // 建在这里（`apply()` 的同步续体、settings 服务刚就位）是这条修复的**前提**，不是
