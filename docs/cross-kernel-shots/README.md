@@ -6,6 +6,7 @@
 | 文件 | 含义 |
 |---|---|
 | `<代次>-PASS.png` | 修复后：输入框里出现插件预测的浅灰文字（真模型输出） |
+| `<代次>-PASS-0.7.0.png` | **2026-10-27 在 `938048b`（0.7.0）构建上重拍**的同一条判据：composer 区域里的浅灰幽灵。取代旧 `<代次>-PASS.png` 的"当前性"（旧图保留作历史，理由见 `scripts/cross-kernel/FINDINGS.md` §8.2） |
 | `<代次>-namespace.png` | 修复前对照：同样操作、同样输入框，但**什么都没有**（建议推不到浏览器） |
 | `0.1.1-rc.2-FAIL.png` | 0.1.1 挂载失败页：`pending (waiting for service: remote.settings)` |
 
@@ -33,3 +34,7 @@ cordis 对 `inject` 是**静态 park**——声明了拿不到就整条 fiber �
 见 `scripts/cross-kernel/`：`generations.mjs`（代次表，唯一来源）+
 `mount-run.mjs`（装配/投影）与 `verify-across-kernels.mjs`（回归入口）。
 GUI 截图需要真实例 + 真模型，不是自动化回归的一部分。
+本轮（0.7.0 重拍）用的驱动是 `scripts/cross-kernel/gui-round.mjs`，
+逐条判据与四条方法学坑（默认阈值静音 info、picker 列表异步且入口按代次不同、
+模型空返回不是插件缺陷、`push landed` 子串会算进 `hot push landed`）记在
+`scripts/cross-kernel/FINDINGS.md` §8。
