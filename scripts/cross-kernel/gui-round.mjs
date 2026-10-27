@@ -33,6 +33,8 @@ const SHOT = opt('shot', `docs/cross-kernel-shots/${GEN}-round.png`);
 const WS = opt('ws', join(homedir(), `xk-probe-ws`)).replace(/^~/, homedir());
 const ASK = opt('ask', 'git worktree 和普通 clone 的区别是什么？一句话回答。');
 const GHOST_TIMEOUT_MS = Number(opt('ghostTimeoutMs', 90_000));
+const LABEL = opt('label', '');
+const PREFER_EXISTING = argv.includes('--prefer-existing');
 if (HOME_ === '' ) throw new Error('必须给 --home <沙箱目录>');
 
 const require = createRequire(import.meta.url);
@@ -149,12 +151,27 @@ const wsConn = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((res, rej) => { wsConn.onopen = res; wsConn.onerror = rej; });
 let mid = 0;
 const pending = new Map();
+/**
+ * 浏览器侧的 console / 未捕获异常。
+ * ⚠️ 反证（task-36）没有这条就**不成立**：client fiber 的死活只体现在浏览器里，宿主
+ * `sbx.log` 一个字都不会有；而「没幽灵」至少有三种成因（client 没激活 / 模型返回空 /
+ * 归属会话不符），三者 GUI 上同形。所以必须把 console 抓下来当**独立信号**。
+ */
+const consoleEvents = [];
+const objText = (a) => (a == null ? '' : (a.value !== undefined ? String(a.value) : String(a.description ?? a.unserializableValue ?? '')));
 wsConn.onmessage = (ev) => {
   const msg = JSON.parse(ev.data);
   if (msg.id !== undefined && pending.has(msg.id)) {
     const { res, rej } = pending.get(msg.id);
     pending.delete(msg.id);
     if (msg.error !== undefined) rej(new Error(JSON.stringify(msg.error))); else res(msg.result);
+    return;
+  }
+  if (msg.method === 'Runtime.consoleAPICalled') {
+    consoleEvents.push({ kind: msg.params.type, text: msg.params.args.map(objText).join(' ').slice(0, 300) });
+  } else if (msg.method === 'Runtime.exceptionThrown') {
+    const d = msg.params.exceptionDetails;
+    consoleEvents.push({ kind: 'exception', text: String(d.exception?.description ?? d.text ?? '').slice(0, 300) });
   }
 };
 const send = (method, params = {}) => new Promise((res, rej) => {
@@ -198,6 +215,7 @@ const screenshotRegion = async (sel, pad, padTop = pad, padBottom = pad) => {
   return { box, clip, data: shot.data };
 };
 
+const flagFresh = argv.includes('--fresh-log');
 const out = { gen: GEN, at: new Date().toISOString(), steps: {}, verdict: 'UNDETERMINED' };
 try {
   await send('Runtime.enable');
@@ -256,7 +274,19 @@ try {
     const open = [...dlg().querySelectorAll('button')].filter((b) => window.__gy.name(b).includes('打开') || window.__gy.name(b).toLowerCase().includes('open')).find((b) => !b.disabled) ?? null;
     if (open == null) return { step: '点行之后 打开 仍不可用', names: btnNames() };
     open.click();
-    return { viaRow: true, opener: openerLabel };
+    // ⚠️ 0.1.7-rc.2 实测：点完「打开」**dialog 仍挂着**（dialogGone=false）。dialog 不关
+    // ⇒ 后面点的「新会话」不是当前会话 ⇒ client 报 bound=false / no-session、宿主
+    // suggestion generated=0 —— 长得像"这代次坏了"，其实是我的步骤没走完（task-36 现场）。
+    // 所以必须等到 dialog 真关掉，必要时再点一次主按钮。
+    // （这段在模板字符串内部：注释里出现反引号会提前结束模板 ⇒ 我上一轮就是这么崩的。）
+    let gone = await window.__gy.until(() => window.__gy.q('[role=dialog]') == null, 8000);
+    let secondClick = null;
+    if (!gone) {
+      const again = [...(dlg()?.querySelectorAll('button') ?? [])]
+        .filter((b) => /打开|确认|确定|完成|选择此目录|Use|Open/i.test(window.__gy.name(b)) && !b.disabled)[0] ?? null;
+      if (again != null) { again.click(); secondClick = window.__gy.name(again).slice(0, 12); gone = await window.__gy.until(() => window.__gy.q('[role=dialog]') == null, 8000); }
+    }
+    return { viaRow: true, opener: openerLabel, dialogGone: gone, secondClick };
   })()`);
   // 2b) 列表法在该代次拿不到行时的兜底：路径框（0.2.x 上实测不稳，但 0.1.7 的
   //     picker 有「编辑路径」按钮 ⇒ 值得一试；成不成都会把结果写进 out.steps，不猜）。
@@ -290,7 +320,8 @@ try {
   for (let attempt = 0; attempt < ASKS.length; attempt += 1) {
     const ns = await evaluate(`(async () => {
       await window.__gy.dismiss();
-      const b = window.__gy.byText('新会话') ?? window.__gy.byText('新建会话')
+      const existing = [...document.querySelectorAll('[aria-label]')].find((n) => /^会话/.test((n.getAttribute('aria-label') ?? '').trim()) && n.offsetParent !== null);
+      const b = (PREFER_EXISTING === true ? existing : null) ?? window.__gy.byText('新会话') ?? window.__gy.byText('新建会话')
         ?? [...document.querySelectorAll('[aria-label]')].find((n) => /New session|新建会话|在.*中新建会/.test(n.getAttribute('aria-label') ?? ''));
       if (b == null) return { found: false };
       b.click();
@@ -351,15 +382,36 @@ try {
   })()`);
   await send('Emulation.clearDeviceMetricsOverride').catch(() => {});
 
+  out.steps.console = (() => {
+    const rel = consoleEvents.filter((e) => /suggest-ghost|remote\.settings|without inject|failed|Cannot get|cannot get|fiber/i.test(e.text));
+    return { total: consoleEvents.length, relevant: rel.length, samples: rel.slice(0, 8) };
+  })();
   out.verdict = appeared?.ok === true ? 'PASS' : 'FAIL';
 } finally {
-  say('====== gui-round ' + GEN + ' ======');
+  say(`====== gui-round ${GEN}${LABEL === '' ? '' : ' [' + LABEL + ']'}` + ' ======');
+  out.label = LABEL;
   say(JSON.stringify(out, null, 1));
   say(`· 宿主日志判据行：`);
-  const log = readFileSync(LOG, 'utf8');
-  for (const k of ['apply called', 'push landed', 'suggestion generated', 'suggestion dropped', 'suggestion failed', 'hotness restored', 'hotness ready', 'hotness restore FAILED', 'hotness persistence absent', 'dirty cap cleared']) {
-    say(`    ${k.padEnd(28)} = ${(log.match(new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length}`);
-  }
+  const logText = readFileSync(LOG, 'utf8');
+  const log = flagFresh ? logText.split('=== dev-sandbox 新启动 ===').pop() : logText;
+  // ⚠️ 计数必须带**前缀边界**：`push landed` 是 `hot push landed` 的子串，裸 grep 会把
+  // 热度帧一起算进去（FINDINGS §9 那条坑）。这里分开数。
+  const count = (re) => (log.match(re) ?? []).length;
+  const counters = [
+    ['apply called（宿主挂载）', /apply called/g],
+    ['建议格 push landed（不含 hot）', /(?<!hot )push landed/g],
+    ['hot push landed', /hot push landed/g],
+    ['suggestion generated', /suggestion generated/g],
+    ['suggestion dropped（模型空，不是缺陷）', /suggestion dropped/g],
+    ['suggestion failed', /suggestion failed/g],
+    ['hotness restored', /hotness restored/g],
+    ['hotness restore FAILED', /hotness restore FAILED/g],
+    ['hotness persistence absent', /hotness persistence absent/g],
+    ['dirty cap cleared', /dirty cap cleared/g],
+  ];
+  for (const [k, re] of counters) say(`    ${k.padEnd(34)} = ${count(re)}`);
+  say(`· 浏览器侧 console：共 ${consoleEvents.length} 条，与本判据相关的 ${out.steps?.console?.relevant ?? 0} 条`);
+  for (const s of (out.steps?.console?.samples ?? []).slice(0, 6)) say(`    [${s.kind}] ${s.text.slice(0, 150)}`);
   say(`· redact 命中 ${leaked} 次；token 明文进 stdout 次数 = 0（所有输出过 redact）`);
   try { wsConn.close(); } catch { /* noop */ }
   try { proc.kill('SIGKILL'); } catch { /* noop */ }
