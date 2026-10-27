@@ -629,3 +629,71 @@ node scripts/cross-kernel/gui-round.mjs --home … --label without-decl --fresh-
 ⇒ 判"某代次不支持"之前，至少要凑齐三件物证：**DOM 侧 `phase` 序列 + 宿主侧 `session=` 归属 + 一张整页截图**。
 只看留痕（尤其只看"某行没出现"）会误判 —— 这与 §6 那条「阈值 + 通道」两种失效方式是同一类问题，
 只是这次的"通道"换成了"模态盖住了输入框"。
+
+## 12. §10 那组（0.2.1-rc.2 对照 + 反证）用修好的驱动重跑（2026-10-27，task-38）
+
+**为什么要重跑**：§10 那组是在 `gui-round.mjs` 带一条致命缺陷时拿到的 —— 我在 `2b48d24`
+里把 Node 侧常量 `PREFER_EXISTING` 原样写进页内脚本 ⇒ 页内 `ReferenceError` ⇒
+**「点新会话/已有会话」这一步从来没执行过**。client-ghost 在 #105 修掉（`origin/main` 起
+`:354` 现在插的是 Node 侧的值，已核）。所以 §10 的结论当时是「有证据，但可复跑性未证」。
+本轮用修好的驱动 + 全新沙箱重跑，并给每一行标上**「当前可复跑」/「历史证据」**。
+
+### 12.1 结果（同一次运行内建立对照与反证；驱动 `--label` 逐轮标记）
+
+| 组 | 轮 | GUI 结果 | 会话选择自证（三条） | `push landed`（前缀边界） | 可复跑性 |
+|---|---|---|---|---|---|
+| 对照 | ctrl1 | ✅ 幽灵「怎么创建 worktree」13 字 | `phase: inert→plain`、`composerReady=true`、`found=true label=新会话 新建会话`；宿主 `suggestion generated session=session-c5dd9c6a-34ba-4f54-98e9-b9b2d20fc020`；`reason=no-session` **0** | 建议格 **2** / hot **3**（裸 `grep -c` 会给 **5**） | **当前可复跑** |
+| 对照 | ctrl2 | ❌ 未出幽灵 —— **模型空返回**：`suggestion dropped (empty or filtered) session=session-163c55cc-…` / `session-session-33de0100-…`，`generated=0`，`no-session=0` | 会话选择**执行了**（三次都拿到真实 session id） | 建议格 0 / hot 0 | 不计入判定（既不是反例也不是绿） |
+| 对照 | ctrl3 | ✅ 幽灵「什么时候该使用它」8 字 | `generated session=session-fd3df22f-95e5-4e8f-8f78-cc82b7642d80`；`dropped=0`；`no-session=0` | 建议格 **2** | **当前可复跑** |
+| 反证 | probe | ❌ **整页起不来**：`HARNESS / Failed to load plugins / dsh-suggest-ghost / web boot: 1 entry did not activate / dsh-suggest-ghost: failed`；DOM `composers=0`、`[data-input-scroll]` 无 ⇒ 驱动走整页兜底出图 | 无从判（界面没渲染）；宿主 `apply called=5` ⇒ 宿主侧正常，死的是 client fiber | 建议格 **0** / hot **0** / `generated` **0** | **当前可复跑** |
+
+⇒ **两次干净对照出幽灵（ctrl1 + ctrl3）+ 反证整页失败 ⇒ §10 的结论复跑成立**：
+判据 ④ 在 **0.2.1-rc.2** 上是 **「硬约束成立（附反证，且当前可复跑）」**。
+单变量核对：只改 `src/client/index.ts:403` 一行，跑完 `git checkout` + 重建，
+`git status --porcelain src lib` **为空** ⇒ 产物字节与提交一致。
+
+### 12.2 与 §10 原始记录的唯一差异（照实记，不解释成因）
+
+harness 页上那行状态词：§10 记的是 **`dsh-suggest-ghost: loading`**，本轮是
+**`dsh-suggest-ghost: failed`**。页面标题、`Failed to load plugins`、插件名、
+`web boot: 1 entry did not activate` 四条完全一致，只有这个状态词不同。
+**为什么不同我没有证据**（按本轮新立的规矩：不指定成因方向），只登记观察。
+两种词都不影响判据 —— 结论只依赖"界面没渲染 + 宿主侧正常"这两条物证。
+
+### 12.3 更正我自己写的一条撤回措辞
+
+§10.3 我把 0.1.7-rc.2「建不起对照组」写成"可能是 warm 状态依赖"。
+**那个成因是错的**：task-37（#105）判明是**三条工具面缺陷叠加**，其中一条就是本节开头那条
+`PREFER_EXISTING` 页内 `ReferenceError`（我 `2b48d24` 引入的）。
+⇒ 撤回的**方向**成立（当时那组结论确实不可复跑），**成因**是错的。
+§8.1 的 0.1.7-rc.2 那行已由 task-37 恢复为 GREEN，本节不再重复判它。
+
+### 12.4 三条测量口径（本轮逐条实测过，不是转抄）
+
+1. **`push landed` 必须用前缀边界**：`(?<!hot )push landed` 与 `hot push landed` 分开数。
+   本轮 ctrl1 实测 **2 / 3**，裸 `grep -c 'push landed'` 给 **5** —— §9 那条坑的量化版本。
+2. **判"选择器已关"用 `composer().dataset.phase !== 'inert'`**，不要用 `[role=dialog]` 计数
+   （本轮 0.2.1 上 `dialogGone=true` 恰好为真，但那是巧合；0.1.7 上是常态误报，见 §11）。
+3. **`--fresh-log` 切窗是必需的**：沙箱日志追加写，不切窗就会把上一轮的 `push landed`
+   / `dropped` 算进本轮。本轮三次对照 + 一次反证各切一个窗，计数才可归因。
+
+### 12.5 证据与复现
+
+- `docs/cross-kernel-shots/0.2.1-rc.2-PASS-with-decl-rerun.png` —— 对照组 composer 区域（幽灵可见）
+- `docs/cross-kernel-shots/0.2.1-rc.2-FAIL-no-remote-settings-decl-rerun-FULLPAGE.png` —— 反证组**整页**
+  （该代次没有 composer 可截，整页 + 页面文案就是物证本体；口径见 §11 的驱动兜底条）
+- 复现：`--home ~/xk-021-a --rewrite 'port: 3983=port: 4151' --bin ~/dsh-versions/0.2.1-rc.2/node_modules/.bin/dsh`
+  → `gui-round.mjs --label ctrl1|ctrl2|ctrl3 --fresh-log` → 删声明 + `npm run build` + `--deploy .` 冷重启
+  → `--label probe` → **还原** `git checkout -- src/client/index.ts && npm run build`
+- 收尾核对：`--cleanup` 后等 8 秒显式复查 —— 我的沙箱目录 / `-ws` / `~/xk-021-ws` / `/tmp/xk-gui-*`+`/tmp/pp-*`
+  / 端口 4151 / 残留实例 **全部为 0**。⚠️ **`TMPDIR` 未设时 chrome 的 `user-data-dir` 落在 `/tmp`，
+  `--cleanup` 收不到**（#100 第二条缺口，本轮实测命中）⇒ 必须自己显式清。
+  `ls ~ | grep -E "xk-|dsh-sbx"` 剩下的 4 条**都不是本片的**（`dsh-sbx-real`、`dsh-sbx-xkg-0153`、
+  `xk-gui-0153-ws`、`xk-gui-0171`），按并发约定未动。
+
+### 12.6 未判定
+
+- **0.2.0-rc.2 的反证**：不在本片。§10.5 那句"大概率同形"仍然是**预测**，不是结论。
+- **`loading` 与 `failed` 两个状态词的成因**：见 §12.2，本轮无证据。
+- **模型空返回率**：ctrl2 三轮全空、ctrl1/ctrl3 首轮即中 —— 只够说明"重试是必需的"，
+  不够给任何代次或路由下结论（那是 probe-llm 那片的事）。
