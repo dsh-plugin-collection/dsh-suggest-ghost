@@ -81,6 +81,12 @@ export interface CompletionTrace {
     readonly kind: string;
     /** 节流阈值：第 1 次必报，之后每 `every` 次报一条带累计计数的。 */
     readonly every: number;
+    /**
+     * 投递级别（2026-10-26 留痕分级）。
+     * `warn` = 真故障、要人看；`debug` = 正常出口的心跳，默认静默。
+     * 缺省 `warn`（保守：宁可多报，不可漏掉故障）。
+     */
+    readonly level?: 'warn' | 'debug';
 }
 /** 全部出口类别的枚举（冒烟按它做穷尽断言，新增类别不出表就红）。 */
 export declare const COMPLETION_EXIT_REASONS: readonly CompletionExitReason[];
@@ -101,6 +107,8 @@ export type CompletionGateDecision = {
     readonly reason: CompletionExitReason;
     readonly kind: string;
     readonly every: number;
+    /** 投递级别：`warn` = 真故障；`debug` = 正常出口，默认静默。 */
+    readonly level: 'warn' | 'debug';
 } | {
     readonly action: 'skip';
     readonly reason: 'already-reported';

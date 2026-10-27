@@ -29,6 +29,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Context, Service } from '@deepseek-ai/cordis';
 import { SessionStore } from '@deepseek-ai/dsh-session';
+// 留痕自 2026-10-26 起分级：默认只有 warn/error 到达用户侧（心跳类走 console.debug 静默）。
+// 本脚本靠抓 `[ops-trace]` 文本断言行为，故在加载插件前把门槛放到 debug。
+// 这是**测试自己开档**，不改生产默认。
+process.env.DSH_SUGGEST_GHOST_TRACE ??= 'debug';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = process.env.GHOST_YIELD_REPO ?? join(HERE, '..');
@@ -73,6 +77,13 @@ console.log = (...args) => {
   if (line.includes('[ops-trace]')) traced.push(line);
   else realLog(...args);
 };
+// 留痕分级后：心跳走 console.debug、状态迁移走 console.info、故障走 console.warn。
+// 捕获必须覆盖全部通道，否则「缺某行」会被误读成行为坏了（实际只是打到别的流）。
+const captured = console.log;
+console.debug = captured;
+console.info = captured;
+console.warn = captured;
+
 
 const holder = { chunks: [{ type: 'finish', reason: { kind: 'stop' } }] };
 class FakeLlm extends Service {

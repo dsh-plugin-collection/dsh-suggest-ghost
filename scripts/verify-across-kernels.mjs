@@ -98,6 +98,10 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { KERNEL_GENERATIONS, GENERATION_IDS } from './cross-kernel/generations.mjs';
+// 留痕自 2026-10-26 起分级：默认只有 warn/error 到达用户侧（心跳类走 console.debug 静默）。
+// 本脚本靠抓 `[ops-trace]` 文本断言行为，故在加载插件前把门槛放到 debug。
+// 这是**测试自己开档**，不改生产默认。
+process.env.DSH_SUGGEST_GHOST_TRACE ??= 'debug';
 
 const argv = process.argv.slice(2);
 const opt = (name, dflt) => {

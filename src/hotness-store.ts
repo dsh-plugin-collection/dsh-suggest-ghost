@@ -25,6 +25,7 @@ import {
   type KvTable,
 } from '@deepseek-ai/dsh-storage-domain';
 import z from 'zod';
+import { traceAt } from './trace.js';
 import type { HotnessChangeHook, HotnessOp } from './hotness.js';
 import { HOT_TABLE_MAX_ENTRIES, HotnessTable } from './hotness.js';
 
@@ -49,7 +50,9 @@ const RECORD_TEXT_MAX_CHARS = 2000;
  * 前缀与 `ops-trace` 一致 ⇒ 现有的 grep 口径不用改。
  */
 const hotnessTraceLine = (message: string): void => {
-  console.log(`[dsh-suggest-ghost][ops-trace] ${message}`);
+  // 状态迁移（域开/关、恢复、就绪）比逐事件心跳更重要一档：`=info` 就能看到
+  // 「这个 fiber 走到哪一步」，默认仍静默。
+  traceAt('info', message);
 };
 
 /**

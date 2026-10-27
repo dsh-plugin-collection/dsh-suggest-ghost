@@ -49,6 +49,10 @@ if (!existsSync(join(libDir, 'index.js'))) {
   console.error(`❌ 找不到构建产物：${libDir}/index.js（先 tsc + node build.mjs）`);
   process.exit(1);
 }
+// 留痕自 2026-10-26 起分级：默认只有 warn/error 到达用户侧（`console.log` 那类心跳
+// 走 console.debug 静默）。本用例**靠抓留痕文本断言行为**（`bytes=` / `cells=` 都从这来），
+// 所以必须在加载插件前把门槛放到 debug —— 这是测试自己开档，不是改生产默认。
+process.env.DSH_SUGGEST_GHOST_TRACE = 'debug';
 const { apply: applyHost } = await import(join(libDir, 'index.js'));
 
 const NS = 'suggest-ghost';
@@ -145,11 +149,18 @@ function makeSession(store, id) {
 // ── 留痕捕获（`bytes=` / `hotBytes=` / `cells=` 都从这来）──────────────────────
 const traced = [];
 const realLog = console.log;
-console.log = (...args) => {
+// 留痕自 2026-10-26 起分级投递：心跳类走 `console.debug`、状态迁移走 `console.info`、
+// 故障走 `console.warn`。捕获必须覆盖**全部四个通道**，否则"缺 hot push landed 行"
+// 会被误读成行为坏了（实际只是打到了另一个流）。
+const capture = (orig) => (...args) => {
   const line = args.map(String).join(' ');
   if (line.includes('[ops-trace]')) traced.push(line);
-  else realLog(...args);
+  else orig(...args);
 };
+console.log = capture(realLog);
+console.debug = capture(console.debug);
+console.info = capture(console.info);
+console.warn = capture(console.warn);
 
 /** 一次写携带了哪几格、各多少字节。 */
 const cellsOf = (w) => ({
@@ -371,8 +382,26 @@ if (!BASELINE) {
     // 「第一次写被拒 → 入队 → 泵 flush」这一串会把 `_push` 与 `_residual` 同时丢没。
     // 两者性质不同：`_hot` 每帧都被下一帧覆盖（丢了自愈），残留**丢了不可再生**。
     const from = hostSource.indexOf('function drainDeferred(): void {');
-    const to = hostSource.indexOf('/** 补写被拒后的统一处置', from);
-    const body = hostSource.slice(from, to > from ? to : from + 6000);
+    assert.ok(from >= 0, '找不到 drainDeferred 函数体：锚点失效，本用例会静默测空');
+    // 取**真实函数体**（大括号配对），不用固定字符窗口。
+    // 2026-10-26：原实现找 `/** 补写被拒后的统一处置` 作结束锚点，而该串在源码里
+    // **从未存在过** ⇒ `to` 恒为 -1 ⇒ 一直退化成 `from + 6000`。窗口是脆的：
+    // 我在同一函数内加了几行注释，`{ _ops: EMPTY_PUSH }` 的闭括号就落到 6007
+    // 而窗口是 6000，第二处 `.update` 直接测不到，本用例从「通过」变成「失败」——
+    // 判据本身没变，变的只是注释长度。按大括号配对后窗口不再参与判定。
+    let depth = 0;
+    let i = hostSource.indexOf('{', from);
+    for (; i < hostSource.length; i += 1) {
+      const ch = hostSource[i];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) { i += 1; break; }
+      }
+    }
+    assert.ok(depth === 0, 'drainDeferred 函数体大括号不配对，取范围失败');
+    const body = hostSource.slice(from, i);
+    assert.ok(body.length > 200, `取到的函数体过短（${body.length} 字符），锚点可能失效`);
     const updates = [...body.matchAll(/\.update\(SUGGEST_GHOST_NAMESPACE, (?:\{([^}]*)\}|(\w+))/g)]
       .map((m) => (m[1] !== undefined ? m[1] : m[2]).trim());
     assert.ok(updates.length >= 2, `泵里应当能看到补写的 update 调用，实得 ${JSON.stringify(updates)}`);

@@ -1,0 +1,270 @@
+{
+  "at": "2026-10-27T04:45:08.876Z",
+  "versions": [
+    "0.1.2-rc.1",
+    "0.1.5-rc.3",
+    "0.1.7-rc.1",
+    "0.1.7-rc.2",
+    "0.2.0-rc.2",
+    "0.2.1-rc.2"
+  ],
+  "sandboxDecision": "no-unshare-no-container (justified in script header)",
+  "results": [
+    {
+      "version": "0.1.2-rc.1",
+      "runtime": "0.1.2-rc.1",
+      "launcher": "0.1.2-rc.1",
+      "bootModel": "app-boot",
+      "semanticsContract": {
+        "judgedBy": "peer-only",
+        "readsEnginesDsh": false,
+        "scope": "该代内核不读 engines.dsh，只认 dsh-* peerDependencies（≤0.2.0）"
+      },
+      "projection": {
+        "key": "suggestGhost",
+        "found": true,
+        "registrationCount": 16,
+        "shapes": {
+          "hasTopView": false,
+          "hasWireView": true,
+          "hasSchema": false,
+          "hasStateSchema": true,
+          "stateVersion": 2,
+          "modernShape": true,
+          "legacyShape": false
+        },
+        "applyRan": true,
+        "loaderMounted": true
+      },
+      "notes": [],
+      "treeStampBefore": {
+        "mtimeMs": 1792979610966.955,
+        "entries": 222,
+        "launcher": "0.1.2-rc.1"
+      },
+      "workerExit": 0,
+      "workerStdoutTail": "[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain opened attempt=1\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness restored n=0 tableSize=0\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness ready dirty=0 restored=true\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain close requested owned=1 ready=true status=restored\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain closed released=1 size=0 status=restored\n<<<GHOST-XK-WORKER-JSON>>>{\"ok\":true,\"applyRan\":true,\"registered\":{\"key\":\"suggestGhost\",\"found\":true,\"registrationCount\":16},\"shapes\":{\"hasTopView\":false,\"hasWireView\":true,\"hasSchem",
+      "treeStampAfter": {
+        "mtimeMs": 1792979610966.955,
+        "entries": 222,
+        "launcher": "0.1.2-rc.1"
+      },
+      "treeStable": true,
+      "verdict": "GREEN"
+    },
+    {
+      "version": "0.1.5-rc.3",
+      "runtime": "0.1.5-rc.3",
+      "launcher": "0.1.5-rc.3",
+      "bootModel": "app-boot",
+      "semanticsContract": {
+        "judgedBy": "peer-only",
+        "readsEnginesDsh": false,
+        "scope": "该代内核不读 engines.dsh，只认 dsh-* peerDependencies（≤0.2.0）"
+      },
+      "projection": {
+        "key": "suggestGhost",
+        "found": true,
+        "registrationCount": 17,
+        "shapes": {
+          "hasTopView": false,
+          "hasWireView": true,
+          "hasSchema": false,
+          "hasStateSchema": true,
+          "stateVersion": 2,
+          "modernShape": true,
+          "legacyShape": false
+        },
+        "applyRan": true,
+        "loaderMounted": true
+      },
+      "notes": [],
+      "treeStampBefore": {
+        "mtimeMs": 1793003353292.4968,
+        "entries": 241,
+        "launcher": "0.1.5-rc.3"
+      },
+      "workerExit": 0,
+      "workerStdoutTail": "[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain opened attempt=1\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness restored n=0 tableSize=0\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness ready dirty=0 restored=true\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain close requested owned=1 ready=true status=restored\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain closed released=1 size=0 status=restored\n<<<GHOST-XK-WORKER-JSON>>>{\"ok\":true,\"applyRan\":true,\"registered\":{\"key\":\"suggestGhost\",\"found\":true,\"registrationCount\":17},\"shapes\":{\"hasTopView\":false,\"hasWireView\":true,\"hasSchem",
+      "treeStampAfter": {
+        "mtimeMs": 1793003353292.4968,
+        "entries": 241,
+        "launcher": "0.1.5-rc.3"
+      },
+      "treeStable": true,
+      "verdict": "GREEN"
+    },
+    {
+      "version": "0.1.7-rc.1",
+      "runtime": "0.1.7-rc.1",
+      "launcher": "0.1.7-rc.1",
+      "bootModel": "app-boot",
+      "semanticsContract": {
+        "judgedBy": "peer-only",
+        "readsEnginesDsh": false,
+        "scope": "该代内核不读 engines.dsh，只认 dsh-* peerDependencies（≤0.2.0）"
+      },
+      "projection": {
+        "key": "suggestGhost",
+        "found": true,
+        "registrationCount": 18,
+        "shapes": {
+          "hasTopView": false,
+          "hasWireView": true,
+          "hasSchema": false,
+          "hasStateSchema": true,
+          "stateVersion": 2,
+          "modernShape": true,
+          "legacyShape": false
+        },
+        "applyRan": true,
+        "loaderMounted": true
+      },
+      "notes": [
+        "0.1.7-rc.1：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）"
+      ],
+      "treeStampBefore": {
+        "mtimeMs": 1792979886557.6765,
+        "entries": 278,
+        "launcher": "0.1.7-rc.1"
+      },
+      "workerExit": 0,
+      "workerStdoutTail": "[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain opened attempt=1\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness restored n=0 tableSize=0\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness ready dirty=0 restored=true\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain close requested owned=1 ready=true status=restored\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain closed released=1 size=0 status=restored\n<<<GHOST-XK-WORKER-JSON>>>{\"ok\":true,\"applyRan\":true,\"registered\":{\"key\":\"suggestGhost\",\"found\":true,\"registrationCount\":18},\"shapes\":{\"hasTopView\":false,\"hasWireView\":true,\"hasSchem",
+      "treeStampAfter": {
+        "mtimeMs": 1792979886557.6765,
+        "entries": 278,
+        "launcher": "0.1.7-rc.1"
+      },
+      "treeStable": true,
+      "verdict": "GREEN"
+    },
+    {
+      "version": "0.1.7-rc.2",
+      "runtime": "0.1.7-rc.2",
+      "launcher": "0.1.7-rc.2",
+      "bootModel": "app-boot",
+      "semanticsContract": {
+        "judgedBy": "peer-only",
+        "readsEnginesDsh": false,
+        "scope": "该代内核不读 engines.dsh，只认 dsh-* peerDependencies（≤0.2.0）"
+      },
+      "projection": {
+        "key": "suggestGhost",
+        "found": true,
+        "registrationCount": 18,
+        "shapes": {
+          "hasTopView": false,
+          "hasWireView": true,
+          "hasSchema": false,
+          "hasStateSchema": true,
+          "stateVersion": 2,
+          "modernShape": true,
+          "legacyShape": false
+        },
+        "applyRan": true,
+        "loaderMounted": true
+      },
+      "notes": [],
+      "treeStampBefore": {
+        "mtimeMs": 1792980000457.6694,
+        "entries": 284,
+        "launcher": "0.1.7-rc.2"
+      },
+      "workerExit": 0,
+      "workerStdoutTail": "[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain opened attempt=1\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness restored n=0 tableSize=0\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness ready dirty=0 restored=true\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain close requested owned=1 ready=true status=restored\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain closed released=1 size=0 status=restored\n<<<GHOST-XK-WORKER-JSON>>>{\"ok\":true,\"applyRan\":true,\"registered\":{\"key\":\"suggestGhost\",\"found\":true,\"registrationCount\":18},\"shapes\":{\"hasTopView\":false,\"hasWireView\":true,\"hasSchem",
+      "treeStampAfter": {
+        "mtimeMs": 1792980000457.6694,
+        "entries": 284,
+        "launcher": "0.1.7-rc.2"
+      },
+      "treeStable": true,
+      "verdict": "GREEN"
+    },
+    {
+      "version": "0.2.0-rc.2",
+      "runtime": "0.2.0-rc.2",
+      "launcher": "0.2.0-rc.2",
+      "bootModel": "app-boot",
+      "semanticsContract": {
+        "judgedBy": "peer-only",
+        "readsEnginesDsh": false,
+        "scope": "该代内核不读 engines.dsh，只认 dsh-* peerDependencies（≤0.2.0）"
+      },
+      "projection": {
+        "key": "suggestGhost",
+        "found": true,
+        "registrationCount": 19,
+        "shapes": {
+          "hasTopView": false,
+          "hasWireView": true,
+          "hasSchema": false,
+          "hasStateSchema": true,
+          "stateVersion": 2,
+          "modernShape": true,
+          "legacyShape": false
+        },
+        "applyRan": true,
+        "loaderMounted": true
+      },
+      "notes": [],
+      "treeStampBefore": {
+        "mtimeMs": 1792980088889.663,
+        "entries": 289,
+        "launcher": "0.2.0-rc.2"
+      },
+      "workerExit": 0,
+      "workerStdoutTail": "[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain opened attempt=1\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness restored n=0 tableSize=0\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness ready dirty=0 restored=true\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain close requested owned=1 ready=true status=restored\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain closed released=1 size=0 status=restored\n<<<GHOST-XK-WORKER-JSON>>>{\"ok\":true,\"applyRan\":true,\"registered\":{\"key\":\"suggestGhost\",\"found\":true,\"registrationCount\":19},\"shapes\":{\"hasTopView\":false,\"hasWireView\":true,\"hasSchem",
+      "treeStampAfter": {
+        "mtimeMs": 1792980088889.663,
+        "entries": 289,
+        "launcher": "0.2.0-rc.2"
+      },
+      "treeStable": true,
+      "verdict": "GREEN"
+    },
+    {
+      "version": "0.2.1-rc.2",
+      "runtime": "0.2.1-rc.2",
+      "launcher": "0.2.1-rc.2",
+      "bootModel": "app-boot",
+      "semanticsContract": {
+        "judgedBy": "engines.dsh",
+        "readsEnginesDsh": true,
+        "scope": "engines.dsh 单独决定（0.2.1 起）"
+      },
+      "projection": {
+        "key": "suggestGhost",
+        "found": true,
+        "registrationCount": 20,
+        "shapes": {
+          "hasTopView": false,
+          "hasWireView": true,
+          "hasSchema": false,
+          "hasStateSchema": true,
+          "stateVersion": 2,
+          "modernShape": true,
+          "legacyShape": false
+        },
+        "applyRan": true,
+        "loaderMounted": true
+      },
+      "notes": [
+        "0.2.1-rc.2：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）"
+      ],
+      "treeStampBefore": {
+        "mtimeMs": 1792979170505.7263,
+        "entries": 306,
+        "launcher": "0.2.1-rc.2"
+      },
+      "workerExit": 0,
+      "workerStdoutTail": "[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain opened attempt=1\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness restored n=0 tableSize=0\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness ready dirty=0 restored=true\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain close requested owned=1 ready=true status=restored\n[dsh-suggest-ghost][ops-trace] fiber=1 hotness domain closed released=1 size=0 status=restored\n<<<GHOST-XK-WORKER-JSON>>>{\"ok\":true,\"applyRan\":true,\"registered\":{\"key\":\"suggestGhost\",\"found\":true,\"registrationCount\":20},\"shapes\":{\"hasTopView\":false,\"hasWireView\":true,\"hasSchem",
+      "treeStampAfter": {
+        "mtimeMs": 1792979170505.7263,
+        "entries": 306,
+        "launcher": "0.2.1-rc.2"
+      },
+      "treeStable": true,
+      "verdict": "GREEN"
+    }
+  ]
+}

@@ -35,6 +35,10 @@ import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { Context, Service } from '@deepseek-ai/cordis';
 import { SessionStore } from '@deepseek-ai/dsh-session';
+// 留痕自 2026-10-26 起分级：默认只有 warn/error 到达用户侧（心跳类走 console.debug 静默）。
+// 本脚本靠抓 `[ops-trace]` 文本断言行为，故在加载插件前把门槛放到 debug。
+// 这是**测试自己开档**，不改生产默认。
+process.env.DSH_SUGGEST_GHOST_TRACE ??= 'debug';
 
 const argv = process.argv.slice(2);
 const i = argv.indexOf('--repo');
@@ -77,6 +81,12 @@ const realWarn = console.warn.bind(console);
 const swallow = (line) => line.includes('[ops-trace]') || line.includes('[suggest-ghost]');
 console.log = (...args) => { const l = args.map(String).join(' '); if (swallow(l)) traceLines.push(l); else realLog(l); };
 console.warn = (...args) => { const l = args.map(String).join(' '); if (swallow(l)) traceLines.push(l); else realWarn(l); };
+// 留痕分级（2026-10-26）：`suggestion generated` / `completion generated` 是心跳级 ⇒
+// console.debug。不挂这两个通道，本用例会把「打到别的流」误判成「留痕没出现」。
+const realDebug = console.debug.bind(console);
+const realInfo = console.info.bind(console);
+console.debug = (...args) => { const l = args.map(String).join(' '); if (swallow(l)) traceLines.push(l); else realDebug(l); };
+console.info = (...args) => { const l = args.map(String).join(' '); if (swallow(l)) traceLines.push(l); else realInfo(l); };
 
 /** 取某条前缀的最后一次出现（同一前缀可能被多回合打多次）。 */
 const lastLineWith = (needle) => traceLines.filter((l) => l.includes(needle)).pop() ?? null;
