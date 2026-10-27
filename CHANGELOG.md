@@ -412,6 +412,14 @@ All notable changes to this project will be documented in this file.
 
 ### 修复
 
+- **热表恢复流程的两条失败告警不再被默认留痕阈值静音**（#97 / PR #101）：`hotness restore FAILED`（`src/hotness-store.ts:393`）
+  与 `hotness domain unavailable`（`:317`）改走 `warn`（`traceAt` 对 `warn` 不读阈值 ⇒ 配置弄不丢），默认阈值下即可到达用户侧；
+  四条状态迁移（`domain opened` / `restored` / `ready` / `busy, retrying`）**保持 `info`** ⇒ #98 建立的「健康进程 0 行」不受影响
+  - 做法是加**可选级别参数、默认值仍是 `info`** ⇒ 其余 8 个调用点一字未动，`src/trace.ts` 未改，`lib/client.js` 未变（客户端面零影响）
+  - 回归 `scripts/hotness-trace-level-smoke.mjs`（5 场景，`test:smoke` 链长 **45 → 46**）：**三向都测**——失败必须在 warn、正常 boot 不得出现状态行（不许变吵）、`=debug` 四条状态行必须齐全（不许删信息）；脚本自己 `delete process.env.DSH_SUGGEST_GHOST_TRACE`（否则从设过 debug 的 shell 跑会假绿），并**分通道**捕获 warn/info/debug
+  - 一条测试方法论（变异实测逼出来的）：**静态闸要钉默认值**——只数"显式传 `warn` 的调用点"的静态断言，对"把整组默认档翻成 `warn`"这种最省事、最糟的改法**完全失明**；补上"两个默认值必须仍是 `info`"才闭合
+  - **未闭合的那半**（归 #88）：`domain unavailable` 运行时**不可达**（在无 `storageDomain` 的栈上回调根本不跑、`restoreStatus` 停在初始值、5s 兜底也被 `pending` 判断挡掉）⇒ "这组宿主根本没有持久层"在默认阈值下**仍然看不见**；同族的 `dirty cap cleared`（未就绪期间静默丢累积）也未提级
+
 - **HMR 事务内写失败退化成微任务紧循环（2026-10-22 事故：tee 日志 23 GB、事件循环卡死）**。
   现场链路：client 一条 `pull` 写进 `_ops` → 内核在 settings 写入事务里就地 emit
   `settings/document-updated`（`dsh-settings/lib/index.js:435`）→ 宿主的 `consumeOps` 回调整个跑在
