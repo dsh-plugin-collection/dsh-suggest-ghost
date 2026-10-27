@@ -104,7 +104,7 @@ window.__gy = {
       let hit = false;
       for (const d of window.__gy.qa('[role=dialog]')) {
         // 但**绝不能**在这里点工作区选择器的「继续」—— 那会选中列表当前目录而不是我们的 ws。
-        if (/选择工作区目录|添加工作区|选择工作区/.test(d.textContent ?? '')) continue;
+        if (/选择工作区目录|添加工作区|选择工作区|workspace director|Choose workspace|Select workspace/i.test(d.textContent ?? '')) continue;
         const bs = [...d.querySelectorAll('button')];
         const b = bs.find((x) => labels.some((L) => window.__gy.name(x).includes(L)))
           ?? bs.find((x) => window.__gy.name(x).includes('关闭') || window.__gy.name(x) === '×');
@@ -249,8 +249,13 @@ try {
     // 打开工作区选择器：**按代次不同的入口逐个试**。0.1.7-rc.2 实测 composer 的
     // aria-label 就是「选择工作区」但点它**不开选择器**（点完 dialog 仍为空），
     // 真正的入口是侧栏 aria-label「添加工作区」。
-    const opener = document.querySelector('[aria-label="添加工作区"]')
-      ?? document.querySelector('[aria-label="选择工作区"]:not([data-composer-input])')
+    // ⚠️ 双语：0.1.5-rc.3 实测整页是英文（"Choose workspace"），只按中文 aria-label/文案找
+    //    会得到「没有可用入口」⇒ 工作区设不上 ⇒ composer 永远 inert ⇒ 幽灵必然不出，
+    //    长得像"该代次不支持"。与 #105 修的 dismiss 标签表是同一类工具缺口。
+    const WS_RE = /添加工作区|选择工作区|Add workspace|Choose workspace|Select workspace|New workspace/i;
+    const opener = [...document.querySelectorAll('[aria-label], button, [role=button]')]
+      .find((n) => WS_RE.test((n.getAttribute?.('aria-label') ?? '') + ' ' + (n.textContent ?? ''))
+        && !n.hasAttribute('data-composer-input') && n.offsetParent !== null)
       ?? window.__gy.byText('选择工作区');
     if (opener == null) return { step: '没有可用入口（添加工作区/选择工作区都没有）', composers: window.__gy.composers() };
     const openerLabel = (opener.getAttribute?.('aria-label') ?? window.__gy.name(opener) ?? '').slice(0, 16);
@@ -274,7 +279,7 @@ try {
     if (!rowAppeared) {
       const closeBtn = [...dlg().querySelectorAll('button')].find((b) => /取消|Cancel/.test(window.__gy.name(b)));
       if (closeBtn != null) { closeBtn.click(); await window.__gy.wait(500); }
-      const reopen = window.__gy.byText('添加工作区') ?? window.__gy.byText('选择工作区');
+      const reopen = [...document.querySelectorAll('[aria-label], button, [role=button]')]\n        .find((n) => WS_RE.test((n.getAttribute?.('aria-label') ?? '') + ' ' + (n.textContent ?? '')));
       if (reopen != null) {
         reopen.click();
         await window.__gy.until(() => window.__gy.q('[role=dialog]') != null, 8000);
@@ -414,10 +419,18 @@ try {
     // 实测 0.2.1 的入口是侧栏 aria-label「插件」，不是「设置」按钮；统一成元素或 {n,t} 记录
     //（上一版把两种形状混进一个变量，取 .n.click() 直接 TypeError。
     //  ⚠️ 这段是**模板字符串内部**，注释里不能出现反引号——会把模板提前结束。）
-    const exact = [...document.querySelectorAll('[aria-label]')]
-      .find((n) => /^(插件|Plugins|设置|Settings)$/.test((n.getAttribute('aria-label') ?? '').trim()) && n.offsetParent !== null);
+    // ⚠️ 必须**优先插件导航项**：上一版把「插件/Plugins」和「设置/Settings」混进同一个正则，
+    //    而 .find() 按 DOM 顺序取第一个 ⇒ 英文 UI（0.1.5-rc.3 实测）先撞上 Settings，
+    //    点进的是设置页而不是插件页 ⇒ cardShown=false，长得像"该代次设置卡打不开"。
+    const navCands = [...document.querySelectorAll('[aria-label], button, a, [role=button], [role=menuitem]')]
+      .filter((n) => n.offsetParent !== null);
+    const labelOf = (n) => ((n.getAttribute?.('aria-label') ?? '').trim() || (n.textContent ?? '').trim());
+    const isPlugins = (n) => /^(插件|Plugins|Plugin settings)$/i.test(labelOf(n));
+    const isSettings = (n) => /^(设置|Settings|Preferences)$/i.test(labelOf(n));
+    const exact = navCands.find(isPlugins) ?? null;
+    const fallback = navCands.find(isSettings) ?? null;
     const loose = cands.find((r) => /插件|Plugins/i.test(r.t) && r.n.offsetParent !== null);
-    const target = exact ?? loose?.n ?? null;
+    const target = exact ?? loose?.n ?? fallback;
     if (target == null) {
       return { found: false, candidates: cands.map((r) => r.t.slice(0, 20)).slice(0, 10),
         ariaSample: [...document.querySelectorAll('[aria-label]')].map((n) => (n.getAttribute('aria-label') ?? '').slice(0, 18)).slice(0, 24) };
@@ -427,7 +440,8 @@ try {
     const cardShown = await window.__gy.until(() => /dsh-suggest-ghost|幽灵|补全建议|Suggest Ghost/i.test(document.body.innerText ?? ''), 18000);
     const body = document.body.innerText ?? '';
     const at = body.search(/dsh-suggest-ghost|幽灵/i);
-    return { found: true, clicked: (exact?.getAttribute?.('aria-label') ?? loose?.t ?? '').slice(0, 20), cardShown,
+    return { found: true, clicked: (exact != null ? labelOf(exact) : (loose?.t ?? (fallback != null ? labelOf(fallback) : ''))).slice(0, 20),
+      via: exact != null ? 'plugins-nav' : (loose != null ? 'loose' : 'settings-fallback'), cardShown,
       snippet: at < 0 ? null : body.slice(at, at + 90).replace(/\\s+/g, ' ') };
   })()`);
   await send('Emulation.clearDeviceMetricsOverride').catch(() => {});
