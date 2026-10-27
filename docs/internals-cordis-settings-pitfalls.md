@@ -4,6 +4,11 @@
 字符串字段（`_ops` 客户端到宿主，`_push` 宿主到客户端）。#16、#17、#18 三个缺陷
 都长在通道语义上，而不是长在业务逻辑上，所以先看这一页再动手改代码。
 
+> **2026-10-27 更正**：「只剩一条通道」描述的是**本插件当前用的**通道，不是宿主的
+> 上限。宿主另有一条插件可自建、且不需要改宿主的 typert Remote 流通道，已在沙箱实测
+> 可达（含逐帧、取消、多标签页语义）。写法与全部实测结论见下文「第二条通道」一节，
+> 背景在 Gitea #36 / #40。
+
 描述的代码：`src/index.ts`、`src/client/index.ts`、`src/hotness-store.ts`、
 `src/settings.ts`、`src/domain.ts`。
 
@@ -544,6 +549,134 @@ eventCtx.on('settings/document-updated', (ns, revision) => { /* ... */ });
    「其它错误、不排队」那一支。
 5. 宿主动了但客户端看不到：查载荷是否已被下一次推送覆盖（陷阱 3）。
 
+## 第二条通道：插件自带的 typert Remote 流（2026-10-27 实测可达）
+
+本页开头那句「本插件与宿主之间只剩一条通道」**只对 settings 面成立**。宿主 0.2.1-rc.2
+上还有第二条通道，且**插件不需要改宿主、不需要 typert codegen、不需要 `./typert` 工件**
+就能用。2026-10-27 在隔离沙箱里跑通（Gitea #36 / #40 的 task-31），证据如下。
+
+### 为什么不需要 codegen：网关有 SRC 兜底
+
+`dsh-api-gateway/lib/index.js:1224-1229` 解析一个 endpoint 时先查严格注册表
+（`ctx.typert.local.get`），**查不到就退回 SRC 模式**：`resolveSrcDescriptor`
+（`:1230-1248`）遍历 `ctx.reflect.props` 里所有 Service，凡实例上带 `typertRemote`
+绑定（`TypertRemoteService` 基类或 `readonly typertRemote = bindTypertRemote(this, key)`）
+且方法上有 `@Remote` 标记的，就按方法参数名现造描述符（`:1249-1275`，参数一律
+`source:'json'` + `codec:{mode:'src-json'}`，名为 `signal` 且位于末位的就是取消参数）。
+`claimsEndpoint`（`:876-883`）同样把 SRC 声明的 endpoint 认作自己的。
+
+⇒ 登记条件与 typert-loader / generator **无关**（那套只负责严格 schema；见
+`dsh-typert-loader/lib/index.js:11-13` 与 `:27-29`）。
+
+### 宿主侧最小写法
+
+```ts
+import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
+
+class ProbeService extends TypertRemoteService {
+  constructor(ctx: Context) { super(ctx, 'probeRs'); }        // 服务键 = 命名空间来源
+
+  @Remote({ mode: 'stream' })
+  async *frames(count: number, gapMs: number, signal: AbortSignal): AsyncIterable<Frame> {
+    for (let i = 0; i < count; i++) { if (signal.aborted) return; yield { seq: i }; }
+  }
+}
+
+export function apply(ctx: Context) { new ProbeService(ctx); }   // cordis 构造即注册
+```
+
+包要能被 profile 组合起来，`package.json` 必须有 **`dsh.bundle`**（本插件用
+`{"bundle":{"patch":"./cordis.patch.yml"},"client":{"platform":"web"}}`），且那份
+bundled patch 里**自己插入条目**：
+
+```yaml
+- insert:
+  - id: probe-rs
+    name: dsh-probe-rs
+```
+
+沙箱实测的两种「不响」形态（都不是白名单）：`dsh: profile bundle "x" declares no
+dsh.bundle in its package.json`；以及只往沙箱 profile 的 `cordis.patch.yml` 追加
+`- id/- name` 而 `dsh.profile.bundles` 里没有该包 ⇒ 条目根本不进树、宿主一声不响。
+**组合来源是 profile `package.json` 的 `dsh.profile.bundles` + `dependencies`，
+patch 文件只是盖配置**（dev-sandbox 建的沙箱副本同理）。
+
+**依赖必须能按普通 Node 解析找到**（2026-10-27 实测，别按「宿主反正有」想当然）：把探针
+`node_modules` 摘掉、只用软链挂进 profile 树时，宿主直接抛
+`probe-rs (dsh-probe-rs): failed to import: Error [ERR_MODULE_NOT_FOUND]: Cannot find
+package '@deepseek-ai/dsh-typert-protocol' imported from /home/wujue/tmp/probe-rs/lib/host.js`；
+把探针**实体拷进** `profiles/web/node_modules/` 并在同一 node_modules 里放上
+`@deepseek-ai/dsh-typert-protocol` 之后，同一个包立刻正常挂载。⇒ 结论：
+`@deepseek-ai/dsh-typert-protocol` 要进插件的 `dependencies` 并随 profile 正常安装；
+软链指向**树外**目录会让解析跟着 realpath 跑出 profile 树（本插件的 `lib/` 之所以没事，
+是因为它就装在树内）。这条不是宿主缺陷，是安装形状。
+
+### 客户端侧最小写法（有一个真陷阱）
+
+```ts
+export const inject = ['remote'];                       // 只需要 remote 本身
+const unmount = await ctx.remote.$mount(contribution);  // contribution 手写
+const done = ctx.inject(['remote.probeRs'], (child) => useIt(child.remote.probeRs));
+```
+
+- **`ctx.remote.probeRs.<method>()` 直接属性访问会抛
+  `cannot get property "remote.probeRs" without inject`**（沙箱实测原文）。这与
+  `src/client/index.ts` 里 `remote.settings` 那条是**同一个 cordis reflect 规则**：
+  命名空间服务是子服务键，必须显式声明。修法就是上面那行**懒 `ctx.inject`**，与
+  `dsh-experimental-client-ui-cot-translation/lib/client.js:1027-1029` 同形。
+  实测注入在 `$mount` 之后 95–148ms 就绪。
+- **`contribution` 可以手写**：`createTypertRemoteInfo(spec, z)` 是
+  `@deepseek-ai/dsh-typert-protocol` 的公开纯工厂（`lib/types/remote-info.js:10`，
+  零运行时依赖）。浏览器侧**必须把它内联进 bundle**（子路径
+  `@deepseek-ai/dsh-typert-protocol/remote-info` 在 `__ModuleLoader__` 里不可解析；
+  cot 的产物就是把工厂抄进 `client.js:16` 起）。
+- **每个参数都得带 `mode:'strict'` 的 codec + `typeSymbol` + `create()`**，否则
+  mount 当场抛（`dsh-api-gateway/lib/client.browser.js:2101-2109`）。宿主走 SRC 时
+  不做严格校验，**校验只发生在客户端**——两侧严格度不对称，别指望宿主兜住脏参数。
+- **调用是位置参数**，不是具名对象：`prepareInvocation`（`client.browser.js:1851-1879`）
+  把 `values[i]` 按顺序映射到 `parameter.wire`，末尾可多带一个 `AbortSignal`；
+  传成 `{count, gapMs}` 会得到 `expected 2 business argument(s) plus an optional
+  AbortSignal, got 1`。
+- 一元返回 `{ok, value}` **信封**（`:1829-1836`），不是裸值；流**同步**返回
+  `ClientStreamHandle`（`:1843-1850`，`AsyncIterable` + `send`/`end`/`dispose`）。
+
+### 实测到的生命周期语义（沙箱 0.2.1-rc.2，探针在 `/home/wujue/tmp/probe-rs`）
+
+| 场景 | 客户端现象 | 宿主侧 |
+|---|---|---|
+| 正常跑完 6 帧 ×200ms | 帧间隔 200ms 准时，`streamComplete` | `stream OPEN` → 6×`YIELD` → `COMPLETE` |
+| `ac.abort()` 于 3095ms | 收 7 帧后 `streamError:"probe-cancel"`，取消后 0 帧 | `ABORTED during gap 7: reason=Error: Remote stream cancelled` |
+| `handle.dispose()` 于 3130ms | 收 6 帧，**迭代安静结束**（`streamComplete`、无 error） | 同上 `ABORTED during gap 6` |
+| 两个标签页各开一条流 | 各自独立计数 | 关掉第二个页面后 **438ms** 内宿主记到 `ABORTED`；第一个页面帧数继续增长（23→33），**未受影响** |
+
+⇒ 「用户改草稿即撤帧」应当用 **`dispose()`**（无错误面、无多余帧），而不是 abort
+（会在迭代里抛）。撤帧是**逻辑流粒度**，不是 peer 粒度，多标签页互不干扰。
+438ms 那个数受探针自身 300ms 帧间隔限制；传输层是 socket close 即刻 abort
+（`dsh-api-gateway/lib/index.js:423-425`、`:445-447`）。
+
+### 鉴权与授权的实际边界
+
+- 传输鉴权与 GUI 同一条 cookie 会话：upgrade 先 `connection.admitConnection(req)`，
+  无凭据直接 401（实测 `GET /api/remote.mux` 无 cookie → 401；而插件自己的
+  webServer exact 路由 `/api/gitea-dispatch/waiting` 无 cookie → **200**，因为
+  webServer 选路是 exact→最长 prefix→fallback，插件路由抢在宿主 `/api` 鉴权路由之前，
+  `dsh-host-webserver/lib/index.js:494-499`）。**这条通道比自建 HTTP 路由更安全。**
+- 授权只卡非 owner：`prepareInvocation`（`:1175-1190`）里 `principal.kind === 'owner'`
+  直接跳过访问控制；浏览器 GUI 就是 owner Peer（`dsh-client-connection/lib/index.js:714`）。
+  非 owner 调用若方法没声明 `resources`/lookup，`callResources` 归成 `global`
+  （`dsh-api-gateway/lib/index.js:50`），再交 `remoteAccess.decide` 判定。
+- 宿主侧取消参数**必须**叫 `signal` 且位于末位（`:1251-1253`，否则
+  `gateway/signature-invalid`）。
+
+### 还没做到的
+
+- 严格 schema 仍要 codegen 才有，而 **codegen 在插件仓自跑不了**：`@Remote` 标记符号
+  只认 `<root>/packages/**` 里注册的包，且注册要求该包**有 TS 源码**——已发布的
+  `dsh-typert-protocol` 不含 `src/`（2026-10-27 实跑两条都失败，见 #36 第四节）。
+  SRC 兜底不需要它，代价是宿主侧不校验入参。
+- 探针不进测试链：`/home/wujue/tmp/probe-rs/{src/host.ts,src/client.ts,build.mjs,drive.mjs}`
+  是临时件，随沙箱一并清理；要复现就按上面三段写法重建。
+
 ## 上游待确认
 
 `docs/upstream-feedback-settings-proxy.md` 是给内核/dsh-settings 维护者的反馈草稿，
@@ -572,3 +705,11 @@ eventCtx.on('settings/document-updated', (ns, revision) => { /* ... */ });
       有就是注定被拒的写入，只能分诊留痕，别当成功。（陷阱 1.5）
 - [ ] 新增的事件监听挂在 `ctx.root`？（陷阱 5）
 - [ ] 需要在运行中读到用户改的值，走 `describe()` 而不是闭包里的 `config`？（陷阱 4）
+- [ ] 帧是不是又走回 settings 面了？每帧一次 `_push` = 整份 profile 重写 + HMR 事务 +
+      58 命名空间快照 RPC（实测 `writeMs` 361–2260ms），而且会让 #36 的验收判据
+      「增量帧的 `push landed` 计数恒为 0」直接失败。要多帧就走「第二条通道」那节。
+- [ ] 新建 typert 通道的客户端时，`remote.<ns>` 有没有用**懒 `ctx.inject`** 取？
+      直接属性访问在运行期抛 `cannot get property ... without inject`。
+- [ ] 排障时读 profile / patch 结构，有没有**只打印键名与长度**？`grep -n -A 2`
+      会把相邻**值行**带进输出，而 live `cordis.patch.yml` 里存在明文密钥条目
+      （另有 8 处 `apiKeyEnv` 是环境变量间接引用，说明明文不是必需的）。
