@@ -412,6 +412,20 @@ All notable changes to this project will be documented in this file.
 
 ### 修复
 
+- **「这组宿主根本没有持久层」从此默认可见**（#88 / PR #104）：`hotness persistence absent: no storageDomain service after 5000ms`
+  走 `warn`（不读阈值 ⇒ 默认必可见）。原先那条 `domain unavailable` 是**运行时不可达的死码**——它在
+  `ctx.inject(['storageDomain'])` 回调里，没有该服务时回调根本不跑 ⇒ 提了级也永远不会出现。
+  现在把判定挪出回调（`injectFired` 在入口置位，宽限期到点若从未被叫到就发 warn），5s 兜底覆盖两支：
+  `pending` 卡住（原有）+ 从未被叫到（新增）
+  - `hotness dirty cap cleared` 同步提 `warn`，带 `n=` / `clears=` / `droppedTotal=`，并与
+    `persistence.dirtyCapCleared` 对账 ⇒ **留痕与真实丢弃必须同源**（未就绪期间静默丢累积不再是无声的）
+  - **反向有闸**：静态闸把 warn 集合钉成**恰好 5 条**（多提级即红）+ 场景 4 要求正常 boot 时
+    warn/info/debug 三通道都没有状态行 ⇒ #98 建立的「健康进程 0 行」不受影响
+  - 顺手修了**闸自己的洞**：原扫描按单行匹配 `'warn')` ⇒ **一次换行就能绕过**；改成整调用（含续行）匹配
+  - ⚠️ **`whenReady` 不许被兑现**已写成断言（附因果注释）：兑现它会触发 `index.ts` 消费点的一次 `hotNow`
+    补推 ⇒ 宽限期到点**凭空多写一次热度格**（`hot-throttle-smoke` 场景 5 实测拦住）。最终形态是「只开口、不改写时序」
+  - 回归：同一份冒烟**改前 3 FAIL → 改后全 PASS**；#101 那五条留痕的级别一字未动
+
 - **热表恢复流程的两条失败告警不再被默认留痕阈值静音**（#97 / PR #101）：`hotness restore FAILED`（`src/hotness-store.ts:393`）
   与 `hotness domain unavailable`（`:317`）改走 `warn`（`traceAt` 对 `warn` 不读阈值 ⇒ 配置弄不丢），默认阈值下即可到达用户侧；
   四条状态迁移（`domain opened` / `restored` / `ready` / `busy, retrying`）**保持 `info`** ⇒ #98 建立的「健康进程 0 行」不受影响
