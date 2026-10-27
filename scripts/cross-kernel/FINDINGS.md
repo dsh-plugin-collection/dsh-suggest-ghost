@@ -386,7 +386,7 @@ composer 里的 overlay），**没有调任何内部 handler**。
 | ⑤ 重启一次后热表不回零 | ✅ `hotness restored n=1 tableSize=1`，`_hot total=1` | ✅ `n=3 tableSize=3`，`total=3` | ✅ `n=1 tableSize=1`，`total=1` |
 
 **三代全绿。** ⚠️ **但 0.1.7-rc.2 那行"当前不可复跑"** —— task-36 在同一份构建、同一套驱动上
-四次都建立不起对照组（`bound=false / no-session`），见 §10.3 的撤回说明。0.2.0 / 0.2.1 两行不受影响。 每代次都是**该代次自己的 `dsh` bin** 起的实例（`/proc/<pid>/cmdline` 逐次
+四次都建立不起对照组（`bound=false / no-session`），见 §10.3 的撤回说明。0.2.0 / 0.2.1 两行不受影响。 **（§11 已判明：三条工具面缺陷，非产品面 ⇒ 本行恢复为 GREEN（当前可复跑，冷启动 ×3）；撤回记录保留在 §10.3/§11。）** 每代次都是**该代次自己的 `dsh` bin** 起的实例（`/proc/<pid>/cmdline` 逐次
 核过，例如 `node /home/wujue/dsh-versions/0.1.7-rc.2/node_modules/.bin/dsh --profile web --port 0 --no-open`），
 插件是**实体副本**（`apply called; artifact mtime` 三代同一份 `938048b` 构建），
 `@deepseek-ai` 走**整目录**软链，冷启动、无 HMR。
@@ -576,3 +576,56 @@ node scripts/dev-sandbox.mjs --home ~/dsh-sbx-cf-0212 --deploy . --bin …（同
 node scripts/cross-kernel/gui-round.mjs --home … --label without-decl --fresh-log --shot …FAIL-no-remote-settings-decl.png
 # 收尾：git checkout -- src/client/index.ts && npm run build && git status --porcelain src lib  （必须为空）
 ```
+
+## 11. 0.1.7-rc.2「建不起对照组」的成因：**三条工具面缺陷叠加**，快照形状假设不成立（2026-10-27，task-37）
+
+**判定 = (b) 工具面。** 产品面的会话归属/快照形状（`current` vs `retainedBy.mainView`，§1c 第 4 条点名的那条）**不是成因**：
+模态关掉之后，`currentSessionIdOf` 的两条来源在本代次都工作，`bound` 正常建立。
+
+三条缺陷互不相干，而**每一条单独都足以产出同一行日志**（`no-session / bound=false / generated=0`）：
+
+1. **首屏「内测声明」模态从来没被关掉。** 0.1.7-rc.2 的 GUI 第一屏是模态，确认按钮文案是中文「继续」，
+   而驱动 `dismiss()` 的标签表里只有英文 `Continue` ⇒ 模态盖住 composer ⇒ 消息发不出去 ⇒
+   宿主**一个会话事件都收不到**。更误导的是：picker 步骤的兜底分支会点「继续」，于是
+   **它把模态的「继续」当成了 picker 的「继续」**，返回 `viaContinue:true, ready:false`
+   —— 一个"我执行过了"的假信号（本轮实测就是这么被带偏第一轮的）。
+2. **Node 侧常量被原样写进页内脚本。** `(PREFER_EXISTING === true ? existing : null)` 出现在
+   `evaluate` 的模板字符串里 ⇒ 页内 `ReferenceError: PREFER_EXISTING is not defined` ⇒
+   「点新会话 / 点已有会话」这一步**从来没执行过**（每轮静默失败，只在 `rounds[].newSession.pageError` 里露出来）。
+   引入者是 `2b48d24`（§10 反证那一轮）⇒ **同轮的 0.2.x 结论也只在它之前成立**。
+3. **冷启动目录列表竞态。** picker 打开后 9s 内没找到目标行就退到兜底分支；同一个 home 第二次跑就直接
+   `viaRow` 成功 ⇒ 冷沙箱第一轮常输在这里。现在改成「关掉重开一次再判」。
+
+### 物证（DOM 序列 + 宿主归属，两边都取）
+| | 修之前 | 修之后（同一沙箱、同一份构建） |
+|---|---|---|
+| DOM | `composerReady:false`、`phase:"inert"`、`composers:["DIV/inert/选择工作区"]` | `phase:"plain"`、`composerReady:true` |
+| 宿主 | 只有 `ops consumed: pull`，**零** turn/end、**零** suggestion、**零** dropped | `ops consumed: pull session=session-…`（真实会话 id）、`reason=no-session` 计数 **0** |
+
+### 冷启动复现（全新沙箱 ×3，全部 PASS）
+| home | verdict | 幽灵字数 | 备注 |
+|---|---|---|---|
+| `xk-ns-cold2` | **PASS** | 16 | 一次成功 |
+| `xk-ns-cold3` | **PASS** | 15 | 第一句 `suggestion dropped (empty or filtered)`、第二句 `generated` ⇒ §10.1 第 3 条的换问句重试机制生效，**不记成代次缺陷** |
+| `xk-ns-cold4` | **PASS** | 20 | 第三次；仓库侧留图 `0.1.7-rc.2-PASS-cold3x.png` |
+
+⇒ **§8.1 里 0.1.7-rc.2 那行改写为「GREEN（当前可复跑，冷启动 ×3）」**，撤回声明解除；
+但**撤回这件事本身要留着** —— 它记录了"证据的可复跑性"与"证据"是两件事（§9 对 0.1.5-rc.1 同理）。
+
+### 顺带补齐：判据 ④ 的反证在 0.1.7-rc.2 **成立**（§10.1 那行"未判定"可以判了）
+- 单变量：`src/client/index.ts:403` 的 `inject` 去掉 `'remote.settings'`，其余一字不动，同一份构建、同一套驱动。
+- 结果：`composerReady:false`、连 composer 都截不到 ⇒ 驱动改截**整页**，页面文案实测：
+  `HARNESS Failed to load plugins dsh-suggest-ghost web boot: 1 entry did not activate dsh-suggest-ghost: failed`
+- 物证：`docs/cross-kernel-shots/0.1.7-rc.2-CF-without-decl-FULLPAGE.png`
+- ⇒ **④ 从「0.2.1 硬约束成立」扩到「0.1.7-rc.2 同样成立」，且形态一致**（整页起不来，
+  不是"功能静默不可用"）⇒ 这条仍然支持 §10.5 递去 #40 的那句：一次写错的 `inject` 不该废掉整个 GUI。
+
+### 驱动因此补的两条（都在 `gui-round.mjs`）
+- `dismiss()` 加中文确认文案，并**限定作用域**：绝不点 picker 里的「继续」（那会选中列表当前目录而不是我们的 ws）。
+- `noBox` 时改截整页并记页面文案：反证组的界面根本没渲染，只留 `noBox:true` 等于没有物证。
+
+### 方法论（这次最该留下的一条）
+"看起来像产品缺陷"的症状可以由**三条互不相干的工具面缺陷**分别造成，而留痕文本一模一样。
+⇒ 判"某代次不支持"之前，至少要凑齐三件物证：**DOM 侧 `phase` 序列 + 宿主侧 `session=` 归属 + 一张整页截图**。
+只看留痕（尤其只看"某行没出现"）会误判 —— 这与 §6 那条「阈值 + 通道」两种失效方式是同一类问题，
+只是这次的"通道"换成了"模态盖住了输入框"。
