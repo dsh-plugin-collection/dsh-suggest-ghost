@@ -795,7 +795,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       //
       // ⚠️ 本函数原先在此处断言「volatile 字段不落盘，故内存里没有跨进程残留」，
       // 该断言**是错的**，两条观测都能反证：
-      //  - `_ops` / `_push` 实际写在 profile 文档里（本机 `/home/wujue/.dsh/profiles/web/cordis.patch.yml`
+      //  - `_ops` / `_push` 实际写在 profile 文档里（本机 `~/.dsh/profiles/web/cordis.patch.yml`
       //    里就有 `_ops: '{"rev":28,...}'` 与 `_push: '{"rev":268,...}'` 两行）；
       //  - 用一个复制了该 profile 的新实例做隔离验证时，它在**还没有任何客户端连上来**
       //    的情况下就打印了 `ops consumed: complete ... draftChars=12`，即启动就重放了

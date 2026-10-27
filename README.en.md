@@ -249,7 +249,7 @@ you are editing.** On this machine:
 
 ```
 ~/.dsh/profiles/web/node_modules/dsh-suggest-ghost
-  -> /home/wujue/workspace/dsh-plugins/dsh-suggest-ghost
+  -> ~/workspace/dsh-plugins/dsh-suggest-ghost
 ```
 
 Two related facts decide whether a verification round counts:

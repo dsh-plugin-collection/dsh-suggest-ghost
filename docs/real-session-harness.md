@@ -133,7 +133,7 @@ rm -rf "$SBX"
 
 ## 6. 安全与收尾（本仓口径）
 
-- 主仓 `/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost` 是 live 宿主加载的那份：只读，
+- 主仓 `<repo>` 是 live 宿主加载的那份：只读，
   不在里面改或构建；所有构建与实例都在 worktree / 沙箱目录里。
 - 起实例前先 `ss -ltnH "( sport = :<port> )"` 确认端口空闲；用完 kill，**并删沙箱目录**
   （里面有 `.credentials.yaml` 副本）。本轮结束时 `~/dsh-sbx*` 残留数 0、无监听端口、无进程。

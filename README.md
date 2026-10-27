@@ -268,7 +268,7 @@ Gitea 协作流程（评论命令的正确形式与回读、分支/PR 约定、`
 
 ```
 ~/.dsh/profiles/web/node_modules/dsh-suggest-ghost
-  -> /home/wujue/workspace/dsh-plugins/dsh-suggest-ghost
+  -> ~/workspace/dsh-plugins/dsh-suggest-ghost
 ```
 
 配套事实有两条，都会决定一轮验证算不算白跑：

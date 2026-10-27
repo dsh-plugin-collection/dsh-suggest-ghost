@@ -70,7 +70,7 @@
 
 **答案：不能，除非该会话此刻正被某个 agent 生命周期持有。** 逐条依据（宿主运行时
 `@deepseek-ai/dsh-session@0.2.1-rc.2` 等，取自本次运行的检出
-`/home/wujue/.npm/_npx/1e7f6d9597241db0/node_modules/@deepseek-ai/`；插件 devDependencies 写的是
+`~/.npm/_npx/<hash>/node_modules/@deepseek-ai/`；插件 devDependencies 写的是
 0.2.0-rc.2，行号按运行时这份核）：
 
 - `ctx.sessions` 是**纯内存**的活会话表：`dsh-session/lib/index.js:1708-1715`

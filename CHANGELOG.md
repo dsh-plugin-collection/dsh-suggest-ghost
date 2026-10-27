@@ -4,433 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### 日志
-
-- **留痕默认静默：健康进程从 9294 行降到 0 行，只有告警/错误到达用户侧。**
-  此前所有常态留痕（`push landed` / `hot push landed` / `ops consumed` / `fiber=N …` /
-  已被补救的 `HMR nested` 拒绝等）都走 `console.log`，用户开着终端或看
-  `~/.dsh/dsh-web.log` 时，这些行把真正需要看的东西埋掉了。实测一次健康长跑：
-  **9294 行 / 单一实例**，其中 59% 是「一切正常」的确认心跳与「已成功补救」的中间态。
-
-  新增 `src/trace.ts` 做分级投递（**不是**删日志）：
-
-  | 级别 | 默认 | 内容 |
-  |---|---|---|
-  | `warn` / `error` | **永远打印** | 真故障、补救失败、丢数据；不受任何开关影响 |
-  | `info` | 静默 | 状态迁移（apply、fiber 就位、域开关/恢复） |
-  | `debug` | 静默 | 心跳与中间态 |
-
-  开关：`DSH_SUGGEST_GHOST_TRACE=debug`（全量）/ `info` / `warn`（=默认）/ `off`。
-  未设或无法识别一律等于 `warn`。**默认静默用 `console.debug` 实现、不 `return`**，
-  所以信息没被删掉，开 `debug` 能原样拿回全部留痕（实测启动 0 行 ↔ debug 档 5 行）。
-
-  几处判据（都是实测定的，不是偏好）：
-
-  - `HMR nested` 拒绝 / `ops-clear-nested` / `hot-write-refused` / `deferred-wait` ——
-    **已入补写队列、会被补写**的中间态，降 `debug`。实测 953 次 nested 拒绝对应
-    960 次 deferred 落地、**0 次耗尽**，它全部被补回来了。真补救失败走
-    `dropped reason=attempts-exhausted`，那条仍是 `warn`。
-  - `ops-clear-landed`（成功清空）、`completion-inflight-extends`（草稿变长）、
-    `completion-aborted`（用户中断）——正常出口，降 `debug`。
-  - 完成链 7 个出口逐个标了 `level`，不再靠「默认 warn」兜底：
-    `timeout` / `failed` 是 `warn`（真挂住 / 真失败），其余五个是 `debug`。
-  - `traceFault` 改成 level-aware（默认 `warn`）——否则分级会**连故障一起静默**。
-
-  配套：12 个靠抓 `[ops-trace]` 文本断言的脚本补了 `console.debug/info/warn` 捕获
-  （只挂 `console.log` 会把「打到别的流」误判成「留痕没出现」），并在加载插件前
-  显式开档——**测试自己开档，不改生产默认**。
-
-### 度量
-
-- **`pull-ack-split` 的归类名把「宿主写了凭证」说成「客户端确认了」**（#91 落地后 16:20
-  自查，同一份表我先信了一遍）。原判据只是「窗口里出现过一笔带 `ackSession=<本会话>` 的
-  落地写」，那是**宿主的写**；从它到「客户端停止要账」中间隔着三件这张表**看不见**的事：
-  事件有没有到达那一页、那一页的 `frames.accept` 有没有把整条载荷丢掉
-  （`docs/pull-ack-investigation.md` 待办第 4 条，明确标注未验证）、以及**这条 pull 是不是
-  同一个页签发的**——`_ops` 里没有页标识，两个页签各 pull 同一会话一次，会被宿主侧
-  `PULL_REPEAT_TRACE_EVERY` 的连续计数串成「一个阶梯跑满」。改名
-  `凭证已落地(≠已确认)` / `窗口内零凭证`，并把三条不可见写进文件头与表尾读法。
-  - 顺带撤掉一条我自己算出来的**假数据**：想用「凭证落地时刻 vs pull 时刻」的毫秒滞后判
-    「应答来晚了还是没确认」，做法是给没有 `at=` 的 pull 行取**后一个**锚点的时间——锚点稀疏时
-    它给出 1,164,316ms 这种荒谬值（≈19 分钟），说明量法本身不成立。**这份数没有进任何结论**，
-    留在这里是因为「算出一个大数」比「算不出来」更容易被当成证据。
-  - 表的新读数（窗口 = 补键后，覆盖率 6%）：**17 个会话全部有凭证落地，零凭证 0 个**。也就是说
-    这一窗口里 B（字段缺席）与 D/E（判重吞掉整笔）**都没在咬**——与那条待验证假设一致：本进程
-    热表因 #89 的 `restore FAILED` 从 0 重新累积，每次 pull 的热度快照都在变 ⇒ 跨会话指纹必然
-    不同 ⇒ 每轮都写。**可证伪的预言**：等热表稳定（或重启后 restore 成功、`tableSize` 恒定），
-    「零凭证」那一档应当回来；回来之前不许说"D/E 不是主因"。
-
-### 修复
-
-- **`open()` 成功到注册释放钩子之间有一段可以抛的窗口，踩到就把域名永久占死**
-  （2026-10-23，用户选了「先查 storage domain 泄漏」）。现场：live 进程 42 行 `apply called`、
-  `hotness domain opened` **0 行**、`hotness restore FAILED` 若干，而盘上
-  `~/.dsh/storages/suggest_ghost_hotness.json` 仍有 2000 条 / 570KB —— 也就是**这个进程的持久化
-  是断的**，每次挂载都从空表重新累积（现场 `tableSize` 从 0 涨到 14），#88 想防的「共 0 条」
-  症状在真正意义上发生。
-  - **先杀死的是我自己的假设**。我原来写成「宿主 partialReload 不回收旧 fiber 的 `ctx.effect`
-    disposer（与 #17 僵尸 root 监听同族）」，两条实测把它推翻了：
-    ① 沙箱（`dev-sandbox --watch` + 真改 `lib/` 内容触发一笔干净重载）的顺序是
-    `ready → hotness domain closed released=1 → apply called(新 mtime) → opened attempt=1`
-    ⇒ **disposer 会跑，而且跑在新 fiber 重试之前**；
-    ② 补上「进入即留痕」的 `close requested` 之后 live 依然 0 行 —— 不是钩子跑了没输出，
-    而是**那个持有者根本没有钩子可跑**。
-  - **根因是顺序，在本仓这一侧**：`open()` 一返回，名字就归本 fiber 所有，而旧实现要等
-    读完表、解析完 record、合并进活表之后才 `ctx.effect(() => close())`。中间任何一步抛
-    ⇒ 被外层 catch 接住、降级成「staying in-memory」⇒ 域名被一个**无人认领**的句柄永久占住。
-    宿主那侧的释放语义是对的（`dsh-storage-domain/lib/index.js:385-386`：构造 Domain 时把
-    `domains.delete + reserved.delete` 作为 `onClosed` 传入，`close()` 幂等）。
-  - 修复（**只改注册时机；状态机 / 发布口径 / `ready` 时机一字未动**）：`open()` 成功后立刻
-    `domain = opened` + `ctx.effect(..., 'hotness domain close')`，再做任何可能抛的事。带名字
-    注册是为了让诊断面认得出是谁挂的钩子，也让测试能只挑自己那一个。
-  - 补的留痕（三条，都是这次调查的仪器）：`fiber=<n>` 前缀（42 行一模一样的 `apply called`
-    之间分不清「谁开的、谁关的、谁卡住」；序号在模块顶层，partialReload 会重新求值模块，
-    所以它是**每模块实例**递增，跨重载配对要连 `mtime` 一起看）、`close requested owned=…`
-    （进入即打：上一行 `closed` 在 `finally` 里，「一次都没出现」对「没跑」与「跑了但卡在
-    flush/写链」两种成因同形）、以及修正 `HOTNESS_OPEN_RETRY_MS` 上方那段引用旧探针读数的
-    时序注释（当时 `close()` 那侧没有任何留痕，那个先后关系**测不准**，不该继续当依据引用）。
-  - 回归：`hotness-reload-restore-smoke` 4 → **5 组**，第 5 组两半都要过（钩子已注册 **且**
-    跑完后名字真能腾出来——只断言前者会放过「注册了但 close 坏掉」）。**变异自证**：把
-    `domain = opened` + 注册挪回恢复之后 ⇒ 只有第 5 组红、其余四组全绿，rc=1。
-  - ⚠️ 这条回归写了三版才真红过，两版都是**夹具自己的错**，记下来免得下次再犯：
-    ① 夹具把 `d.table` 永久替换成抛错，而宿主 `runClose()` 内部也要取表 ⇒ 连 `close()` 都被
-    夹具弄坏，测的是夹具不是产品；改成只炸第一口、把真实实现留给 close。
-    ② cordis 的 `ctx.effect(factory)` 是**注册当场调用 factory、拿返回值当 disposer**；
-    第一版收的是 factory 本身，于是「跑钩子」只是又跑一次工厂、`close` 一次都没被调用，
-    把正确的产品代码读成「注册了却腾不出名字」。
-  - **live 那个已经卡死的持有者不会自愈**：它产生于新留痕装上**之前**，所以「它是没注册钩子」
-    还是「注册了但 disposer 没跑」**已经无法证实**——能证实的只有「新代码里这段窗口不存在了」。
-    要清掉现场那个，要么重启进程，要么另做「重试到上限后经 `facility.get(name)` 认领那个无人
-    认领的句柄」的兜底（宿主把该方法标为 diagnostic surface，属另一条设计取舍，本轮不偷偷做）。
-
-- **热重载不再把"没恢复成的空热表"当权威发布**（#88）：宿主侧插件被 HMR 热重载时，`dsh-storage-domain`
-  的**同名域独占**会让新 fiber 的 `open()` 直接被拒（`domain 'suggest_ghost_hotness' is already open`），
-  旧实现是 `catch` 一把抓住就 `settleReady()` ⇒ `ready=true` 且表是空的 ⇒ 卡片显示「共 0 条」，而这份空表
-  还会被当权威写进 `_hot` 格（**症状与"数据被清了"完全同形，实际盘上 2000 条一条不少**）
-  - `open` 被拒改为**有界重试**（150ms × 40 ≈ 6s，每轮 await timer —— 沿用 23 GB 日志那次的护栏口径），
-    到上限才降级
-  - 新增**三态 `status`**：默认 `unavailable`（没有恢复流程在跑 ⇒ 内存态就是权威、格子照发；`pending`
-    只能由"真的拿到 facility"进入，否则无存储域的组合会把格子**永久扣住** —— 这条默认值是被
-    `payload-split-smoke` 的 4 组红教回来的）；拿到 facility 才 `pending`；成功 `restored`；放弃 `unavailable`；
-    另有 5s 兜底（`unref`）防 `pending` 卡死
-  - **`pending` 期间不写 `_hot`**（闸门在 `src/index.ts`），被扣住时打 `hot push withheld`
-  - **恢复流程全程正面留痕**：`hotness domain opened attempt=N` / `hotness restored n=N tableSize=M` /
-    `hotness ready dirty=N restored=bool`，以及 `domain busy, retrying` / `restore FAILED` / `domain unavailable`
-    ⇒ 上线 4 分钟就在生产环境抓到了真因（`busy, retrying` ×40 → `restore FAILED`），此前它是静默的
-  - 脏上限那条护栏不再静默：清空保留，但留痕带 `n=` 与累计 `clears=` / `droppedTotal=`
-  - 回归：`scripts/hotness-reload-restore-smoke.mjs`（同文件**改前 4 红 → 改后 4 绿**，已接进 `test:smoke`，
-    44 → 45 项）；夹具只假在"open 被拒"这一层，重试/状态/留痕/上限计数全是被测真代码
-
-### 修复
-- **宿主留痕仍占满终端：一次数行数的复算 + 两处形状修正**（2026-10-23，用户「你看看现在
-  这个插件依然有很多的日志」）。`~/.dsh/dsh-web.log` 665 行里本插件占约 600 行，按形态数：
-
-  | 留痕 | 行数 | 这次动没动 |
-  | --- | --- | --- |
-  | `ops consumed: pull …` | **229** | 加同会话重复闸（`#1` + 每 5 条一行带计数） |
-  | `push write refused …` | **107**（= 54 次被拒 × 2 行） | 合并成一行 |
-  | `hot push landed via deferred pump` | 88 | 未动（见下面的「没动的三条」） |
-  | `ops consumed: complete …` | 60 | 未动（三个 harness 按每 op 一行断言） |
-  | `deferred push landed rev=…` | 54 | 未动（与上面 54 次被拒一一对应） |
-
-  - **`ops consumed: pull` 的 229 行是同一句话的复读**：18 个会话、每个会话连着 **5 条**，
-    正好是客户端一个完整的退避阶梯（`PULL_MAX_ATTEMPTS=4` + 首发），而**一个阶梯里只有
-    第 1 条前后有写落地**，后面 4 条宿主一个字节都不写（按格判重：载荷内容没变）。中间
-    那 3 条在宿主侧的动作逐字相同 ⇒ 判据从「每条 pull 一行」改成「同会话连续重复只留
-    头尾」，闸门本体抽成纯函数 `src/trace-gate.ts` 的 `stepRepeatTrace`（与客户端
-    `stepReasonGate` 同族）。**重复变成报文里的计数而不是静音**（#17 的口径）：
-    `[pulls=5：客户端未确认对账]` 这一行比原来 5 行更好读，而 `#1` 无条件放行 ⇒ 三个按
-    「每 op 一行」断言的 harness 载体不丢。
-  - **一次被拒打两行**（54 次 = 107 行）：`traceOps` 那行带 `after=…ms`（#39 时长合法性
-    断言要它），`traceFault` 那行带 `kind #N` 计数桶，两行说的是同一件事。合并进
-    `traceFault` 一条，两个要件都保住（`carriedCompletion=1 after=…ms` 进报文、
-    `every=1` 继续不节流——带续写的丢弃恰恰不能等 50 次才记，#15 的教训）。
-  - 回归：`trace-gate-smoke` 从 14 组加到 **20 组**（量纲锚点 `PULL_REPEAT_TRACE_EVERY
-    === PULL_MAX_ATTEMPTS + 1`、一个阶梯 5 条 ⇒ 2 行、`every=1` 的**变异自证**回到 5 行、
-    key 变化必开门、229 行现场回放 ≤ 一半、以及「`ops consumed: pull` 字面串在宿主源码里
-    只许出现一处」）。最后这条是本轮**自己踩出来的**：`hot-throttle-smoke` 用
-    `indexOf('ops consumed: pull') + 700` 定位应答让路那段，我把这条串写进注释 ⇒ 锚点落到
-    注释上、判据空转；固定字符窗本身也是同一类脆断（新留痕行让 `hotNow` 刚好滑到 702
-    字符处），已把那处改成「留痕行之后的**第一笔** `pushToClient`」的语义锚点。
-  - **没动的三条，因为它们不是留痕问题**：`hot push landed via deferred pump`(88) +
-    `deferred push landed`(54) 是「即时写被 HMR 事务拒绝 ⇒ 由事务外泵补写」这条链的**成功**
-    半边，压掉它们就把 #15/#18 的验收证据一起压掉；真正的上游是**应答写建在事务内**
-    （每次 pull 应答先被拒、再等 500ms 泵 + 0.2~1.6s 写，客户端因此必然打空重试）与
-    **pull 的应答确认契约**（客户端只认 `historySessionId === pending.sessionId`）。
-  - **现场复测（宿主 15:01 热重载后的窗口，389 行）**：旧的第二行形态 **0 条**；`pull` 行
-    64 条里 29 条带计数 ⇒ 同一阶梯的复读确实被压掉了（换成旧形态约 180 条）。但**总行率
-    没降**：同一窗口里 `hot push landed via deferred pump` 57 + `push write refused` 52 +
-    `deferred push landed` 52 = 161 行，全在「即时写被事务拒 → 泵补写」那条链上。本轮只把
-    日志形状改对，没把噪声源关掉——这话说在前面，免得下一轮又按「降噪」去找新闸。
-  - 上游三条已由 `scripts/pull-ack-smoke.mjs`（六场景 22 组 + 变异对照）与
-    `docs/pull-ack-investigation.md` 钉死，**都成立、互不蕴含**：
-    **B** `ctx.sessions.get` 只认 `enter()` 过的活会话（侧栏/懒恢复的查不到）⇒ 应答里
-    `history` 与 `historySessionId` 两键一起缺席 ⇒ 按现判据永不收敛；
-    **D/E** `hotSigOf` 的 `historyKey` 把「无环」与「空环」都折成 `∅` ⇒ 两份应答指纹逐字
-    相同 `<HOT>∅<T>0<HIST>∅` ⇒ **换会话一个字节都不写**（B 缺的是载荷字段，D/E 缺的是那次写）；
-    **F** #89 的 `hotUsable` 在恢复 pending 期把**整格** `_hot` 扣住，而 ack 的 `history`
-    就住在这格。修法是最小契约的两半（载荷里带会话身份 + 判重认这个身份，pull 应答绕过按格
-    判重）——「只做一半」已被变异实测否掉：M2 单独只红 B、M4 单独只红 E。三条各自是行为
-    改造，不在本条偷偷做；本轮让 `pulls=5` 先当上游问题的现场计数器。
-
-- **落地留痕补 `hasHistory=` / `ackSession=`，把「三条成因各占多少」变成可算的数**
-  （2026-10-23，用户选的第一步：先量出来再动契约）。上一条目自己写了「三条成因在日志里
-  同形」，这条把那句话变成可判据：`hotBytes=` 分不出「2000 条热度但没带对账凭证」与
-  「什么都没带」，所以四行落地留痕（`push landed` / `hot push landed` /
-  `deferred push landed` / `hot push landed via deferred pump`）各补两个键，读的是
-  **落盘那串字节**而不是闭包里的意图（`src/trace-gate.ts` 的 `hotAckFields`）。
-  - **必须是三态不是布尔**：`1` 带凭证（含**空数组**——客户端判据是 `Array.isArray`，
-    空环同样可以确认）、`0` 这格写出去了但没带（场景 B）、`-` 这一笔根本不含热度格
-    （`cells=push` 与永远单格的补写）。布尔会把 `-` 吞成 `0`，「这一笔没带热格」就伪装成
-    「带了但没历史」——`trace-gate-smoke` 新增一条专门的**变异断言**把这件事钉住
-    （14 → 20 → **23 组**）。另两条断言钉「正文里出现 `"history":[` 不算带凭证」（靠 JSON
-    转义把键位与正文分开）与「正文伪造 `ackSession` 命不中」，否则统计可被内容污染。
-  - `scripts/pull-ack-split.mjs`：把每个会话的 pull 与「有没有一笔写带走 `ackSession=<本会话>`」
-    join 成占比表。**它的第一版是我自己错的**：按整份日志统计 ⇒ 22/24 个会话被判成
-    「D/E 整笔被吞」，而真实原因是那 593 条落地行来自补键**之前**、它们的 ack 根本没法看见
-    ——**缺席被当成了证据**。现在统计窗口从第一条带键的落地行起算，并把窗口外的量单独报成
-    覆盖率。这条正是本仓那条口径的现场版：判据变瞎要靠自己注入进去验，不是靠数行数。
-  - **现场首测（16:0x 宿主热重载后，覆盖率 1%，还不能给占比）**：窗口内 4 个会话
-    7 行 pull，**全部** `A 可确认`（`hasHistory=1 ackSession=<本会话>` 各 1/3/1/6 笔）；
-    `hot push withheld` 窗口内 0 行。探针另测到一条**机制串联**：同一进程里先 pull 一个
-    空环会话（写出 `hasHistory=1`）、紧接着 pull 一个解析不到的会话 ⇒ 后者**一行落地都没有**
-    ——B 的应答被 D/E 的判重吞掉了，两条成因在真实进程里是串联而不是并列。
-  - 因此记一条**待验证的假设**（不是结论）：D/E 的可见度可能取决于热表是否在变——本进程
-    热表从 0 重新累积（见 #89 那条 `restore FAILED`），每次 pull 的热度快照都不同 ⇒ 指纹必变
-    ⇒ 每轮都有写；而旧日志里 `tableSize=2000` 恒定那一段，跨会话指纹逐字相同 ⇒ 换会话零写。
-    验法：等窗口攒到 ≥50% 覆盖率再跑一次这张表，并对 `tableSize` 恒定/在涨两段分别统计。
-    占比出来之前，"哪条是主因"不许写进任何结论。
-
-- **设置卡两个「最少输入字符」同名，用户与排障者都读错了对象**（2026-10-23，用户指出
-  「一个 3 一个 4，你看不到吗」——我上一条回复把它误诊成「3 没保存」）。卡片里
-  `historyMinChars`（历史前缀补全阈值）与 `inlineMinChars`（停顿续写阈值）共用 label
-  「最少输入字符」，分属两个 section 各出现一次；用户存的 3 是**历史补全**那个（profile 里
-  `historyMinChars: 3` 一直在，保存成功过），续写仍按默认 4 判定——「我重新」3 字不触发的
-  真正解释。修法：label 带模式名（「最少输入字符（历史补全）/（停顿续写）」），hint 同步写明
-  「两者各自独立」；README 表格跟着消歧。上一条「3 从未写进 profile」的诊断**只对了一半**
-  （`inlineMinChars` 确实不在盘上，但那是用户没改过它，不是保存失败）——保存静默失败的
-  修复本身仍成立（冲突是常态，空 catch 是真实缺陷），但触发这次排查的现象另有其人，记在此处。
-
-- **设置卡保存静默失败：「最少输入字符 = 3」从未写进 profile**（2026-10-23，用户报「停顿后
-  补充没生效」时顺带挖出）。`remoteSettingsScope.set` 是**单次 mutate + 空 catch**：宿主每
-  秒数笔 `_push`/`_hot`/`_ops` 写顶 revision，卡片拿的 revision 发出时几乎必然过期 ⇒ 冲突
-  拒绝 ⇒ 被 catch 吞掉（注释还写着「宿主随后推来的事件会带回真值」——带回的是**旧**真值，
-  用户以为存上了）。现场证据：profile 的 config 段里根本没有 `inlineMinChars` 键，宿主一直
-  按默认 4 判定，用户 3 字的草稿因此不触发。
-  - 修复：set 改**冲突重试环**——每轮现取最新 revision（闭包变量由 document-updated 刷新）、
-    与 `_ops` 写共用同一份预算/退避（`opsConflictRetryAllowed` / `opsConflictBackoffMs`，
-    边界不写第二份）；非冲突拒绝与预算耗尽都 `console.warn`——设置保存是低频显式动作，
-    「没存上」必须可见。
-  - 回归：`ops-write-verify-smoke` 新增 5 钉静态守卫（async 重试环 / 两条 warn 串 /
-    共用边界 / 现取 revision），剥注释后查码（删码留评会假绿，先堵上）。
-
-- **「幽灵永不出」的最终根因：HMR reload 后 root 监听器不随旧 fiber 回收，僵尸 handler
-  抢事件并在 inactive context 上抛穿**（2026-10-22 live）。链路：`settings/document-updated`
-  必须监听 root（cordis 事件只向上传播），而 loader 的 `partialReload` **不会**回收旧 fiber
-  经 `root.on` 挂上的 handler（probe 实测：手动 `fiber.dispose()` 会回收，reload 路径不回收
-  ——两条路径语义不一致本身就是上游问题）。今天 28 次重载后，每条 `_ops` 写入被**最早的
-  僵尸**先消费：它的 `lastOpsPayload` 守卫是旧闭包、判不出「已被新 fiber 消费」，走到
-  `handleComplete → ctx.sessions.get` 抛 `cannot get required service "sessions" in
-  inactive context`，批次就地中断——`hotness ops applied`/`_ops cleared`/一切 settle 行
-  消失、`_ops` 滞留盘上、新 fiber 永远收不到 complete。现场签名：`ops consumed: complete`
-  之后**没有任何后续行**。
-  - 修复：`eventCtx.on(...)` 的 **off 接住并挂进 `ctx.effect` 的清理**（effect disposer 在
-    reload/dispose 两条路径都跑）；handler 里的 `consumeOps` 包 **try/catch + `ops-consume-threw`
-    留痕**（毒丸不许炸穿事件分发，也不许静默）。
-  - ⚠️ **修复只约束新注册的 handler——已经挂上 root 的僵尸只能靠重启宿主清除**。这就是
-    「需要我重启 DSH 不」这个问题在 20:20 之后的正确答案：**要**，一次。
-  - 回归：`deferred-writes-smoke` 静态守卫（off 接住 / effect 清理 / try-catch / 留痕四钉）。
-    行为级 harness 做不了——probe 证明「手动 extend+dispose」与 loader reload 的 inject
-    调度语义不同（前者会让后续 fiber 的 inject 永不触发），拿它当「reload 的等价类」会测
-    一个不存在的行为。**假设有据可查比有脚本更重要**，这条边界记在这里。
-  - 上游反馈：`docs/upstream-feedback-settings-proxy.md` 补第三条诉求（root 监听的
-    reload 回收语义与 dispose 对齐）。
-
-- **连打期续写永不出结果（`completion generated` 整段为 0）——单飞抢占改成前缀豁免**
-  （2026-10-22，用户报「输入词汇没有任何幽灵文本」）。旧行为：每条新 `complete` 无条件
-  `abort()` 同会话在途生成。实测一次续写生成要 **5~10s**，而 `inlineDelayMs=100` 下连打时
-  每 1~3 个字符就来一条新 complete ⇒ 在途生成**永远**在出结果前被中止——live 现场
-  `completion generated` 自 17:30 起为 0，只剩 `preempted`/`aborted`。CHANGELOG 早前预言的
-  那条（「若 preempted 暴增而 generated 未涨，应回调」）成真；**修的不是延迟值，是抢占判据**：
-  - `decideInflightPreemption(inflightDraft, draft)`（纯函数，`src/completion-gate.ts`）：
-    草稿只是**变长**（用户在追加）⇒ `keep`——让在途那份对着旧草稿跑完，客户端 #33
-    「边打边等」的对齐判据本来就接受 `payload.draft` 是当前草稿的前缀，结果由对齐取舍；
-    草稿**非前缀**变化（删/改/替换）⇒ `preempt`（旧行为）；在途草稿读不到 ⇒ `preempt`
-    （宁可多中止一次，不让「判不了」变成「永远 keep」）。
-  - `handleComplete` 接线：`keep` 时不 abort、不另起（单飞不变：至多一个在途），并留
-    `completion skip: draft only grew`（traceFault 每 20 条——这条 complete 被消费但不产生
-    生成动作，#17 教训：不许静默）。`completionInflightDraft` 与 pending 槽配对记录发起时
-    的草稿；settle 后残留串永不参与判定（读方先查活 controller）。
-  - 为什么冲突风暴期间没暴露：并发丢包**顺带节流**了 complete（丢掉的不会抢占）；队列把
-    投递修可靠之后，「每击键必达 ⇒ 每击键必抢」的饥饿才显形——本条是上一轮修复的**直接
-    后果**，记在这里是为了不让下一次「修好一条链、引爆另一条」再写成意外。
-  - 回归：`completion-pipeline-smoke` 新增 2 组（判据穷尽 keep/preempt 边界 + 接线在场），
-    现 43 组。另注：`我重新` 只有 3 字，低于 `inlineMinChars=4` 的触发阈值——那是设计，
-    用户可在设置卡调低阈值；本条修的是**够长之后依然不出**的那一半。
-
-- **`--cleanup` 现在能清掉「工作区在沙箱目录之外」的残留**（#83）：原先只认 `<home>/ws` ⇒ 历史遗留的
-  `~/dsh-sbx-<entry>-ws` 或显式 `--ws` 指到别处时，它会**把残留报出来、然后删不掉** ⇒ 使用者看到
-  「有残留」的报告配上「清理成功」的退出码，两者互相矛盾。现在三处一起补：建沙箱时把 `WS` 的实际值写进
-  **沙箱目录**里的 `.dsh-sandbox-home`（写在沙箱目录而不是工作区里是关键：否则就成了「要先知道路径才能读到路径」）、
-  枚举额外扫 `~/dsh-sbx-*-ws`、**每一处没删掉的东西都写明「这条命令不会删它，原因 X，删除方式 Y」**
-  - 删除闸门与护栏**一条都没放松**：通配扫到的每一处都过同一道闸门（标记文件或空 git 仓签名 + 干净 + 无提交 +
-    无远端 + 无凭据）⇒ 脏的/认不出的**不删、报出、退出码 1**。护栏拆成「判据（不退出）」与「断言（die）」两版：
-    通配命中的一处不合格，正确反应是「**这一处**不删 + 报出来」，而不是让整条命令死掉（那样后面几处永远看不到）
-  - `--residual` 与 `--cleanup` **共用同一份枚举与判定** ⇒ 逐行输出与退出码一致（只读模式只说「会删（`--cleanup` 时）」）
-
-## [Unreleased]
-
-### 修复
-
-- **HMR `partialReload` 在配置事务里重跑 `apply()` → 补写泵被毒化，pull 应答/续写/清空全丢**
-  （0.7.1 现场，2026-10-22）。`drainDeferred` 的定时器在 `apply()` 的同步续体里建立、靠「建它时
-  `AsyncLocalStorage` 的 store 是 undefined」拿到事务外锚点；但 agent 改插件源码、重建 `lib/` 会触发
-  HMR 重载，**那次 apply 本身跑在配置写入事务里** ⇒ 新定时器继承 `store=true`，此后每笔补写都被
-  `HMR transactions cannot be nested` 拒绝（现场留痕：`deferred push write refused again in the
-  apply()-time pump`、`deferred hot push dropped reason=attempts-exhausted`）。后果不是日志（有界重试
-  已经限住），而是**功能全断**：pull 应答、续写、`_ops` 清空都补不进去；客户端拿不到应答就反复重发
-  pull，`_ops` 写入本身成功、revision 一路涨；再叠加客户端并发的 complete 写，就出现用户看到的
-  `_ops write conflict retries exhausted` 与 `completion not shown: payloadDraftChars=-1`。
-  - **建泵那一拍切出事务**：若宿主提供 `root.get('hmr').executing`（内核的 `AsyncLocalStorage`），
-    用它的 `exit(cb)` 建 `setInterval`（`runOutsideHmrTransaction`，取不到就原样建，不依赖私有面）。
-    实测同一沙箱的退路表：`executing.exit(() => 写)` OK、bump revision。
-  - **兜底重建**：取不到手腕的宿主上，泵写拿到结构性拒绝即标记 `deferredPumpPoisoned`；下一次
-    **可证明在事务外**的回调（`session/event`、任何即时写成功、`persistence.whenReady`）重建定时器，
-    留痕 `deferred pump re-armed outside the HMR transaction`。**不在失败回调里重建**——那只会捕获
-    同一个 `store=true`，再造一个同样失败的泵。
-  - 回归：`scripts/pump-hmr-escape-smoke.mjs`（5 组：有 `executing.exit` 时「事务内 boot 后第一次
-    pull 就补写成功」，无需任何恢复事件）；`scripts/pump-rearm-smoke.mjs`（7 组：无手腕时先毒化、
-    会话事件重建、之后 push/`_hot`/`_ops` 清空全部真实落盘）。两条都进 `test:e2e`（构建之后）。
-
-- **客户端 `_ops` 写在同页内自抢 revision，冲突预算被烧光、`complete` 丢失**。`writeOps` 是
-  「describe 取 revision → mutate(expected)」CAS，而同一页有两条互不知情的写入源：每次输入停顿的
-  `complete` 与会话切换/未应答重试的 `pull`。并发时 A 的 describe 与 mutate 之间被 B 插队；宿主每消费
-  一次还会把 `_ops` 写回空值（revision 再 +1）⇒ 旧实现 3 次预算几乎必然耗尽，console 成组刷
-  `_ops write conflict retries exhausted: expectedRevision=N ... now N+1`，`complete` 丢掉后就是
-  `completion not shown`。
-  - 新增 `src/client/ops-write-queue.ts`：**串行队列**（至多一个 describe→mutate 在途、FIFO）；
-    `complete` 在排队中 **last-wins**（被取代者兑现 `false` = 未发送，在途不取消）；`pull` 不合并
-    （每条核对账独立）；`run` 抛错该项 `false` 且队列继续。写面唯一入口 `writeOps(payload, kind)`。
-  - 冲突重试从「立即重试、共 3 次」改成 **5 次 + 25/50/100/200ms 退避**（`OPS_WRITE_MAX_ATTEMPTS` /
-    `opsConflictBackoffMs` / `opsConflictRetryAllowed`，两条冲突分支共用同一份边界）。剩下的冲突只来自
-    宿主侧写入，退避给它让出落盘窗口。
-  - **单项 8s 看门狗**（`OpsWriteQueue` 的 `itemTimeoutMs`）：串行化把「一条 RPC 永不兑现」从
-    「丢一条写」升级成「整条通道卡死」（唯一在途槽被永久占住）。超时项判 `false`、放行后续；
-    迟到兑现被丢弃、不翻转结果。代价是超时瞬间可能与迟到 run 短暂并发——迟到的是旧载荷，
-    宿主按全等去重 + `seq` 单调 + pull 幂等，不产生错误状态。
-  - 回归：`scripts/ops-write-queue-smoke.mjs`（8 组：串行/FIFO、complete last-wins、在途不可取代、
-    pull 不合并、异常续跑、退避序列与上限、重试边界、看门狗放行），接进 `test:smoke`。
-
-- **`_hot` 被 clearOps 槽饿死的宿主侧活锁**（2026-10-22 live 现场，客户端「控制台一直刷」的
-  第三个上游，比客户端两个问题更根本）。泵每 tick 只补一个槽，旧规则「热度格只有
-  `deferred` 队列空着才轮得到」；而 pull 洪水（客户端每 200/400/800ms 重试 + 每次输入停顿
-  的 complete）让 clearOps 槽**永远有下一条** ⇒ `_hot`（应答的历史环/热度）永不落地 ⇒ 客户端
-  `historySessionId` 对不上 ⇒ `pendingPull` 判不出「已对账」继续重试 ⇒ 洪水由饥饿本身维持。
-  循环的每一环单独看都「有界」，合起来是永不收敛的活锁——日志表现为同几个会话的
-  `ops consumed: pull` 无休无止。
-  - 修复：新增 `tryDrainHotPayload()`（判据：有写面、无在途写、槽里压着热度、合并窗口
-    到期），调用点恰好 3 处——泵 tick 空窗 + pump push **与** clear 的**写成功 finally**。
-    「写成功」本身证明当下上下文在事务外，搭便车是安全的；不要求队列空（那正是被饿死的
-    条件本身）。**`drainHotFromPump` 自己的 finally 不加**——「失败重排 + finally 再写」就是
-    上一次 23 GB 微任务紧循环的原始形状；`flushPush` 的 finally 也不加（它可能在事务内，
-    搭上去等于烧热度预算并误标毒化）。
-  - 回归：`scripts/hot-starvation-smoke.mjs`（4 组；3 条 150ms 间隔的 pull 造出「连续两拍队列
-    非空」窗口，断言 `_hot` 落地**前至多一笔**非热写——修复后 1 笔、旧规则 2 笔；变异自证：
-    删掉两处 finally 搭便车 ⇒ S2 报红且其余全绿）。`scripts/deferred-writes-smoke.mjs` 加静态
-    守卫（调用恰好 3 处、`drainHotFromPump` 体内禁止出现）。两条都进链（前者 `test:e2e`）。
-
-- **客户端留痕的「交替刷屏」**（2026-10-22，用户刷新后仍报"控制台在刷"的剩余来源之一）。#39 的
-  理由闸只防「同理由连打」，对 `hot-cell-only ↔ suggestion-cell-changed` 这种**来回交替**每次
-  都放行——宿主两格高频交替写时 `push-cell:` 黄线又成串。补第二把闸：`stepSlotEmit` 槽级冷却
-  （同一 slot 每 5s 至多一行；冷却期内最新理由攒成 pending，冷却结束后下一次调用放行——
-  **新理由不丢只迟到**，无定时器驱动）。`traceClear` 连 pending 一起作废。冒烟新增 4 组
-  （交替 100 次只出 1 行 / pending 放行 / 5000ms 边界与 last-wins / 非 print 不产生 pending），
-  `trace-gate-smoke` 现 14 组；写第一版时第 4 组当场抓到「`lastEmitAt: 0` 哨兵撞假时钟」的
-  实现 bug（首次必打不能依赖时钟量级巧合，改 `null` 哨兵）。`ghost-frame-cell-e2e` 的
-  push-cell 字面断言按新口径更新（<5s 的 harness 里只该看到 ≤2 行；「两种理由各自成立」
-  的性质移交 trace-gate 的确定性假时钟断言，不是删断言）。
-
-- **常态证据留痕降级到 Verbose 通道**（2026-10-22 第三次校准，用户「刷新后控制台还在刷」的
-  最后一条；含一次**自我驳回**：先降到 `console.log` 被实测打回——**Chrome 默认级别包含
-  Info**，log 并不隐藏，默认视图里真正关着的只有 Verbose 档 = `console.debug`）。冷却闸
-  生效后 `push-cell` 已经降到每 5s 一行，但**正常使用**的页签里事件流不停（agent 会话每回合
-  都有推送），5s 一行对「控制台默认该是安静的」这个预期仍然吵。按「是不是故障」分通道：
-  `push-cell` / `inline-arm-cancel` / `deferred-repaint` / `render-source` 是「判据在跑、
-  优化在场」的**工作量证据**，不是故障 ⇒ `console.debug`（默认隐藏，devtools 勾 Verbose
-  全量可见，诊断能力不删只改门）；故障槽（`stale-frame`、`tab-abandon`、`accept-gate-*`、
-  `conflict exhausted`）保持 `console.warn`。`completion not shown` **整行**降 debug：
-  上一版按「草稿够不够长」分 warn/log 也被 `draftChars=521 reason=none` 驳回——生成耗时
-  1.1~17s 的现实里「载荷还没到」是瞬态，单条事件分不出「还没到」与「永不到」，标故障级别
-  就是噪声源；#39 要的是**这行存在**，不是默认可见。冷却闸与理由闸对所有通道照旧。
-  `ghost-frame-cell-e2e` 的 console 捕获补上 debug 通道（不补就是「采集不到 = 没打」的
-  harness 瞎，不是产品回归——留痕断言当场会红）。
-
-
-- **冲突退避与 pull 重试的量纲校准**（2026-10-22 第三次现场，用户刷新后仍见
-  `conflict retries exhausted: expected 733, now 734`）。串行队列消掉页面自抢后，剩下的冲突来自
-  **宿主每批消费写 2~3 笔**（应答 `_push`/`_hot` + `_ops` 清空）与其它页签的同 ns 写入。旧参数被
-  live 栈证伪：冲突只落后**一笔** revision，而宿主单笔写的实测在途是 **0.2~1.6s**（writeMs）——
-  客户端总退避 375ms **比一次在途写还短**，5 连败是必然而不是运气。同理 pull：应答路径 =
-  事务拒绝 → 泵 500ms tick → 写 0.2~1.6s ⇒ 最早一拍应答 ≈0.7~2.1s 后，旧值 200ms 的头两次重试
-  必然打空，而**每次打空又是一轮「客户端写 + 宿主消费 + 至多两笔应答/清空写」**——重试洪水自己
-  就是 revision 顶升器（live 计数：8 分钟 285 批 pull、其中同一会话 35+ 次）。
-  - `_ops` 冲突重试：`OPS_WRITE_MAX_ATTEMPTS` 5→8，退避 25/50/100/200 → **100/200/400/800/1600**
-    （总窗口 ≈5.9s，覆盖 2~3 个宿主写窗口；封顶后持平是设计，冒烟断言跟着改成「封顶前严格递增」）。
-  - pull 重试：`PULL_RETRY_BASE_MS` 200→**600**（600/1200/2400/4800，第一次就要等得起应答路径），
-    `PULL_MAX_ATTEMPTS` 5→4（总窗口没缩短，砍的全是注定打空的前几枪）。
-  - 结构性欠账（本轮没做，记为下一步）：**把「应答写」与「`_ops` 清空」合并成一笔**——宿主每批
-    消费从 2~3 笔写降到 1~2 笔，revision 顶升与整档重写同时减半；清空带 CAS（盘上载荷不等就放弃
-    搭载），零写批仍由泵单独清。那才是把冲突概率从根上砍掉的修法，退避只是让它不再必然发生。
-
-- **pull 对账的「每批固定三行」压成一行**（2026-10-22，用户重启后仍报终端噪音——这次数的是
-  行数：每条 pull 对账 = `ops batch received` + `ops consumed: pull` + `deferred _ops cleared`
-  三行起步，链路已经健康，噪音是留痕形状本身）。三处：
-  - `ops batch received` 只为**异常批**保留（多 op 批、整批被拒——#17 取证链要「输入证据」）；
-    单 op 正常批的输入证据由逐 op 的 `ops consumed: …` 行覆盖，那行同时带会话与动作。
-  - 两条「清空成功」行（`_ops cleared after consume` / `deferred _ops cleared …`）走
-    `traceFault('ops-clear-landed', …, 20)`：首次必打（证明补清空链在通），之后每 20 次一行
-    带计数。成功清空是常态；**refused/failed 行一字未动**（那些才是要看的）。
-  - 回归不受影响：`deferred-writes-smoke` 的静态断言查的是串在场（节流不改串）；
-    `hmr-write-loop` / `pump-rearm` / `hot-starvation` 的留痕峰值当场变矮
-    （17→14 / 21→17 / 20→14 行）——降噪效果由既有断言的余量直接可见。
-
-- **宿主侧 tee 日志的两条零信息留痕**（2026-10-22，用户问「终端那边是不是也刷」——实测
-  `dsh-web-now.log` 90% 行是本插件的，其中两条纯回声）。判据都从「每次写都打」改成「状态
-  变化才打」：
-  - `live settings refreshed`：**125 行全部 `applied=25` 原样重复**——旧判据「revision 变了
-    就打」把宿主自己每次 `_push`/`_hot`/`_ops` 写的回声都打了出来。#19 的验收判据是「设置页
-    改了有没有被重新读到」，它等价于 **applied 变了**（改开关 ⇒ 生效键数必动），所以判据换成
-    applied 变化：不丢验收信息，只丢回声。
-  - `hotness ops applied`：**71 行全部 `changed=0` 且 tableSize 恒定**——`changed=0` 且表大小
-    没动时这行是 `ops batch received` 的复读。改成「changed>0 或 tableSize 变 ⇒ 必打；否则
-    攒计数，第 1 次 + 每 20 批并一行带 `[unchanged #N]`」。#17 的「客户端写了、宿主没动」
-    诊断路径不受影响（received 行恒打，applied 变化必打）。
-  - `ops consumed: complete` / `pull` **一字未动**：3 个 harness 按「每 op 一行」断言，且
-    #15 的现场判据（complete 之后日志一片空白）依赖逐行在场。洪水线数（received+consumed
-    每批两行）会随客户端串行化落地自然回落——那是上游修复的效果，不靠再关这里的闸。
-
-- **客户端的类型检查覆盖面显著增强**（#34 / #81，**过渡件**）：`client tsc` **23 → 8**，分三个 commit 各自实测（每步**新增 0 条**）
-  - ① **带扩展名的相对说明符统一成宿主侧的 `.js`**（账是 **19 处 = 会报的 13 + 永不报的 6**，其中 6 处是
-    `import type`、被擦除故不报 TS5097）⇒ 23 → 15（TS5097 9→1，剩下的是下面那处白名单例外）
-  - ② **`tsconfig.client.json` 头部两处失真修掉**：「当前报 31 条」⇒ 23；以及那句
-    「`connection/reset` 不是合法事件名」**是错的**（宿主在 emit、类型面有声明、宿主自家客户端包同款监听 3 处）
-    ⇒ 不改它，下一个人会照错结论去"修"一行**本来正确**的代码
-  - ③ **用本地镜像面纠正了「接错」**（15 → 8，消掉 6×TS2339 + 1×TS2345）：此前 tsc 把 `ctx.get('sessions')`
-    解析成**服务端** `SessionStore`，而运行时是宿主**客户端**服务 ⇒ 那 7 条一直是"类型面在骗人"
-  - **`lib/client.js` 与发布前逐字节相同**（134,880 字节）⇒ **本组改动无运行时行为变化**，升级后不需要复验真实回合
-  - ⚠️ **它是断言、不是验证**：取得点写 `as unknown as ClientSessionsSurface`，此后按本地镜像检查。⇒
-    **耐久形态是把 `@types/react` 与两个宿主客户端包排进 devDependencies**、让 tsc 直接对着宿主真面查、
-    **把整块镜像删掉**（见 #85，待用户拍）。本条措辞一律写「已用本地镜像面纠正接错、等依赖收口」，
-    **不写成"客户端类型面已接对"**
-  - **两道闸接进 `test:smoke`（41 → 43 项），都由机器守**：
-    - **白名单闸**钉「文件 + 行号 + 目标说明符」三者：唯一例外 `accept-guard.ts:51 → './history.ts'`
-      必须保持 `.ts` —— Node 的 type-stripping **不做** `.js→.ts` 回退（实测 `ERR_MODULE_NOT_FOUND`），而
-      5 条链上脚本**故意按 TS 源码直载**（防「产物陈旧会假绿」）。四个失效方向实测全红，包括
-      **"把这条例外顺手修好"** ⇒ 命中 0 也红，并提示去查那 5 条有没有被改成载 `lib/`（那是禁止方向）
-    - **漂移闸**逐个成员名回宿主 d.ts 核存在性，**且把边界写进脚本输出**：
-      「**绿 ≠ 镜像正确，只 = 这些名字还在宿主面上**」⇒ 抓得到改名/删除，**抓不到签名与语义变化**
-
-## [0.7.0] - 2026-10-22
+## [0.7.0] - 2026-10-27
 
 **本版是行为版**（不是补丁版）：一轮针对「幽灵文本一次性呈现」的链路改造 —— 终帧契约 / 载荷按格拆分 / 热度格写合并窗口 / 让路 / 未判定残留载体 / 冷启动回读。其中含客户端判据与传输载荷形状的变化，升级后建议按 `docs/real-session-harness.md` 的口径复验一轮真实回合。
 
@@ -931,6 +505,430 @@ All notable changes to this project will be documented in this file.
   回归：`scripts/suggestion-language-smoke.mjs` 用例 11–17（11/12 钉 ②、14/15 钉 ③，四例在对应修复前
   实测均返回 English；16 摘自语料 A，17 是英文探针），新增 `scripts/language-evidence-smoke.mjs` 端到端
   钉 ①（修复前实测 TypeError），两者均已入 `test:smoke` 链（现 27 项）
+
+### 日志
+
+- **留痕默认静默：健康进程从 9294 行降到 0 行，只有告警/错误到达用户侧。**
+  此前所有常态留痕（`push landed` / `hot push landed` / `ops consumed` / `fiber=N …` /
+  已被补救的 `HMR nested` 拒绝等）都走 `console.log`，用户开着终端或看
+  `~/.dsh/dsh-web.log` 时，这些行把真正需要看的东西埋掉了。实测一次健康长跑：
+  **9294 行 / 单一实例**，其中 59% 是「一切正常」的确认心跳与「已成功补救」的中间态。
+
+  新增 `src/trace.ts` 做分级投递（**不是**删日志）：
+
+  | 级别 | 默认 | 内容 |
+  |---|---|---|
+  | `warn` / `error` | **永远打印** | 真故障、补救失败、丢数据；不受任何开关影响 |
+  | `info` | 静默 | 状态迁移（apply、fiber 就位、域开关/恢复） |
+  | `debug` | 静默 | 心跳与中间态 |
+
+  开关：`DSH_SUGGEST_GHOST_TRACE=debug`（全量）/ `info` / `warn`（=默认）/ `off`。
+  未设或无法识别一律等于 `warn`。**默认静默用 `console.debug` 实现、不 `return`**，
+  所以信息没被删掉，开 `debug` 能原样拿回全部留痕（实测启动 0 行 ↔ debug 档 5 行）。
+
+  几处判据（都是实测定的，不是偏好）：
+
+  - `HMR nested` 拒绝 / `ops-clear-nested` / `hot-write-refused` / `deferred-wait` ——
+    **已入补写队列、会被补写**的中间态，降 `debug`。实测 953 次 nested 拒绝对应
+    960 次 deferred 落地、**0 次耗尽**，它全部被补回来了。真补救失败走
+    `dropped reason=attempts-exhausted`，那条仍是 `warn`。
+  - `ops-clear-landed`（成功清空）、`completion-inflight-extends`（草稿变长）、
+    `completion-aborted`（用户中断）——正常出口，降 `debug`。
+  - 完成链 7 个出口逐个标了 `level`，不再靠「默认 warn」兜底：
+    `timeout` / `failed` 是 `warn`（真挂住 / 真失败），其余五个是 `debug`。
+  - `traceFault` 改成 level-aware（默认 `warn`）——否则分级会**连故障一起静默**。
+
+  配套：12 个靠抓 `[ops-trace]` 文本断言的脚本补了 `console.debug/info/warn` 捕获
+  （只挂 `console.log` 会把「打到别的流」误判成「留痕没出现」），并在加载插件前
+  显式开档——**测试自己开档，不改生产默认**。
+
+### 度量
+
+- **`pull-ack-split` 的归类名把「宿主写了凭证」说成「客户端确认了」**（#91 落地后 16:20
+  自查，同一份表我先信了一遍）。原判据只是「窗口里出现过一笔带 `ackSession=<本会话>` 的
+  落地写」，那是**宿主的写**；从它到「客户端停止要账」中间隔着三件这张表**看不见**的事：
+  事件有没有到达那一页、那一页的 `frames.accept` 有没有把整条载荷丢掉
+  （`docs/pull-ack-investigation.md` 待办第 4 条，明确标注未验证）、以及**这条 pull 是不是
+  同一个页签发的**——`_ops` 里没有页标识，两个页签各 pull 同一会话一次，会被宿主侧
+  `PULL_REPEAT_TRACE_EVERY` 的连续计数串成「一个阶梯跑满」。改名
+  `凭证已落地(≠已确认)` / `窗口内零凭证`，并把三条不可见写进文件头与表尾读法。
+  - 顺带撤掉一条我自己算出来的**假数据**：想用「凭证落地时刻 vs pull 时刻」的毫秒滞后判
+    「应答来晚了还是没确认」，做法是给没有 `at=` 的 pull 行取**后一个**锚点的时间——锚点稀疏时
+    它给出 1,164,316ms 这种荒谬值（≈19 分钟），说明量法本身不成立。**这份数没有进任何结论**，
+    留在这里是因为「算出一个大数」比「算不出来」更容易被当成证据。
+  - 表的新读数（窗口 = 补键后，覆盖率 6%）：**17 个会话全部有凭证落地，零凭证 0 个**。也就是说
+    这一窗口里 B（字段缺席）与 D/E（判重吞掉整笔）**都没在咬**——与那条待验证假设一致：本进程
+    热表因 #89 的 `restore FAILED` 从 0 重新累积，每次 pull 的热度快照都在变 ⇒ 跨会话指纹必然
+    不同 ⇒ 每轮都写。**可证伪的预言**：等热表稳定（或重启后 restore 成功、`tableSize` 恒定），
+    「零凭证」那一档应当回来；回来之前不许说"D/E 不是主因"。
+
+### 修复
+
+- **`open()` 成功到注册释放钩子之间有一段可以抛的窗口，踩到就把域名永久占死**
+  （2026-10-23，用户选了「先查 storage domain 泄漏」）。现场：live 进程 42 行 `apply called`、
+  `hotness domain opened` **0 行**、`hotness restore FAILED` 若干，而盘上
+  `~/.dsh/storages/suggest_ghost_hotness.json` 仍有 2000 条 / 570KB —— 也就是**这个进程的持久化
+  是断的**，每次挂载都从空表重新累积（现场 `tableSize` 从 0 涨到 14），#88 想防的「共 0 条」
+  症状在真正意义上发生。
+  - **先杀死的是我自己的假设**。我原来写成「宿主 partialReload 不回收旧 fiber 的 `ctx.effect`
+    disposer（与 #17 僵尸 root 监听同族）」，两条实测把它推翻了：
+    ① 沙箱（`dev-sandbox --watch` + 真改 `lib/` 内容触发一笔干净重载）的顺序是
+    `ready → hotness domain closed released=1 → apply called(新 mtime) → opened attempt=1`
+    ⇒ **disposer 会跑，而且跑在新 fiber 重试之前**；
+    ② 补上「进入即留痕」的 `close requested` 之后 live 依然 0 行 —— 不是钩子跑了没输出，
+    而是**那个持有者根本没有钩子可跑**。
+  - **根因是顺序，在本仓这一侧**：`open()` 一返回，名字就归本 fiber 所有，而旧实现要等
+    读完表、解析完 record、合并进活表之后才 `ctx.effect(() => close())`。中间任何一步抛
+    ⇒ 被外层 catch 接住、降级成「staying in-memory」⇒ 域名被一个**无人认领**的句柄永久占住。
+    宿主那侧的释放语义是对的（`dsh-storage-domain/lib/index.js:385-386`：构造 Domain 时把
+    `domains.delete + reserved.delete` 作为 `onClosed` 传入，`close()` 幂等）。
+  - 修复（**只改注册时机；状态机 / 发布口径 / `ready` 时机一字未动**）：`open()` 成功后立刻
+    `domain = opened` + `ctx.effect(..., 'hotness domain close')`，再做任何可能抛的事。带名字
+    注册是为了让诊断面认得出是谁挂的钩子，也让测试能只挑自己那一个。
+  - 补的留痕（三条，都是这次调查的仪器）：`fiber=<n>` 前缀（42 行一模一样的 `apply called`
+    之间分不清「谁开的、谁关的、谁卡住」；序号在模块顶层，partialReload 会重新求值模块，
+    所以它是**每模块实例**递增，跨重载配对要连 `mtime` 一起看）、`close requested owned=…`
+    （进入即打：上一行 `closed` 在 `finally` 里，「一次都没出现」对「没跑」与「跑了但卡在
+    flush/写链」两种成因同形）、以及修正 `HOTNESS_OPEN_RETRY_MS` 上方那段引用旧探针读数的
+    时序注释（当时 `close()` 那侧没有任何留痕，那个先后关系**测不准**，不该继续当依据引用）。
+  - 回归：`hotness-reload-restore-smoke` 4 → **5 组**，第 5 组两半都要过（钩子已注册 **且**
+    跑完后名字真能腾出来——只断言前者会放过「注册了但 close 坏掉」）。**变异自证**：把
+    `domain = opened` + 注册挪回恢复之后 ⇒ 只有第 5 组红、其余四组全绿，rc=1。
+  - ⚠️ 这条回归写了三版才真红过，两版都是**夹具自己的错**，记下来免得下次再犯：
+    ① 夹具把 `d.table` 永久替换成抛错，而宿主 `runClose()` 内部也要取表 ⇒ 连 `close()` 都被
+    夹具弄坏，测的是夹具不是产品；改成只炸第一口、把真实实现留给 close。
+    ② cordis 的 `ctx.effect(factory)` 是**注册当场调用 factory、拿返回值当 disposer**；
+    第一版收的是 factory 本身，于是「跑钩子」只是又跑一次工厂、`close` 一次都没被调用，
+    把正确的产品代码读成「注册了却腾不出名字」。
+  - **live 那个已经卡死的持有者不会自愈**：它产生于新留痕装上**之前**，所以「它是没注册钩子」
+    还是「注册了但 disposer 没跑」**已经无法证实**——能证实的只有「新代码里这段窗口不存在了」。
+    要清掉现场那个，要么重启进程，要么另做「重试到上限后经 `facility.get(name)` 认领那个无人
+    认领的句柄」的兜底（宿主把该方法标为 diagnostic surface，属另一条设计取舍，本轮不偷偷做）。
+
+- **热重载不再把"没恢复成的空热表"当权威发布**（#88）：宿主侧插件被 HMR 热重载时，`dsh-storage-domain`
+  的**同名域独占**会让新 fiber 的 `open()` 直接被拒（`domain 'suggest_ghost_hotness' is already open`），
+  旧实现是 `catch` 一把抓住就 `settleReady()` ⇒ `ready=true` 且表是空的 ⇒ 卡片显示「共 0 条」，而这份空表
+  还会被当权威写进 `_hot` 格（**症状与"数据被清了"完全同形，实际盘上 2000 条一条不少**）
+  - `open` 被拒改为**有界重试**（150ms × 40 ≈ 6s，每轮 await timer —— 沿用 23 GB 日志那次的护栏口径），
+    到上限才降级
+  - 新增**三态 `status`**：默认 `unavailable`（没有恢复流程在跑 ⇒ 内存态就是权威、格子照发；`pending`
+    只能由"真的拿到 facility"进入，否则无存储域的组合会把格子**永久扣住** —— 这条默认值是被
+    `payload-split-smoke` 的 4 组红教回来的）；拿到 facility 才 `pending`；成功 `restored`；放弃 `unavailable`；
+    另有 5s 兜底（`unref`）防 `pending` 卡死
+  - **`pending` 期间不写 `_hot`**（闸门在 `src/index.ts`），被扣住时打 `hot push withheld`
+  - **恢复流程全程正面留痕**：`hotness domain opened attempt=N` / `hotness restored n=N tableSize=M` /
+    `hotness ready dirty=N restored=bool`，以及 `domain busy, retrying` / `restore FAILED` / `domain unavailable`
+    ⇒ 上线 4 分钟就在生产环境抓到了真因（`busy, retrying` ×40 → `restore FAILED`），此前它是静默的
+  - 脏上限那条护栏不再静默：清空保留，但留痕带 `n=` 与累计 `clears=` / `droppedTotal=`
+  - 回归：`scripts/hotness-reload-restore-smoke.mjs`（同文件**改前 4 红 → 改后 4 绿**，已接进 `test:smoke`，
+    44 → 45 项）；夹具只假在"open 被拒"这一层，重试/状态/留痕/上限计数全是被测真代码
+
+### 修复
+- **宿主留痕仍占满终端：一次数行数的复算 + 两处形状修正**（2026-10-23，用户「你看看现在
+  这个插件依然有很多的日志」）。`~/.dsh/dsh-web.log` 665 行里本插件占约 600 行，按形态数：
+
+  | 留痕 | 行数 | 这次动没动 |
+  | --- | --- | --- |
+  | `ops consumed: pull …` | **229** | 加同会话重复闸（`#1` + 每 5 条一行带计数） |
+  | `push write refused …` | **107**（= 54 次被拒 × 2 行） | 合并成一行 |
+  | `hot push landed via deferred pump` | 88 | 未动（见下面的「没动的三条」） |
+  | `ops consumed: complete …` | 60 | 未动（三个 harness 按每 op 一行断言） |
+  | `deferred push landed rev=…` | 54 | 未动（与上面 54 次被拒一一对应） |
+
+  - **`ops consumed: pull` 的 229 行是同一句话的复读**：18 个会话、每个会话连着 **5 条**，
+    正好是客户端一个完整的退避阶梯（`PULL_MAX_ATTEMPTS=4` + 首发），而**一个阶梯里只有
+    第 1 条前后有写落地**，后面 4 条宿主一个字节都不写（按格判重：载荷内容没变）。中间
+    那 3 条在宿主侧的动作逐字相同 ⇒ 判据从「每条 pull 一行」改成「同会话连续重复只留
+    头尾」，闸门本体抽成纯函数 `src/trace-gate.ts` 的 `stepRepeatTrace`（与客户端
+    `stepReasonGate` 同族）。**重复变成报文里的计数而不是静音**（#17 的口径）：
+    `[pulls=5：客户端未确认对账]` 这一行比原来 5 行更好读，而 `#1` 无条件放行 ⇒ 三个按
+    「每 op 一行」断言的 harness 载体不丢。
+  - **一次被拒打两行**（54 次 = 107 行）：`traceOps` 那行带 `after=…ms`（#39 时长合法性
+    断言要它），`traceFault` 那行带 `kind #N` 计数桶，两行说的是同一件事。合并进
+    `traceFault` 一条，两个要件都保住（`carriedCompletion=1 after=…ms` 进报文、
+    `every=1` 继续不节流——带续写的丢弃恰恰不能等 50 次才记，#15 的教训）。
+  - 回归：`trace-gate-smoke` 从 14 组加到 **20 组**（量纲锚点 `PULL_REPEAT_TRACE_EVERY
+    === PULL_MAX_ATTEMPTS + 1`、一个阶梯 5 条 ⇒ 2 行、`every=1` 的**变异自证**回到 5 行、
+    key 变化必开门、229 行现场回放 ≤ 一半、以及「`ops consumed: pull` 字面串在宿主源码里
+    只许出现一处」）。最后这条是本轮**自己踩出来的**：`hot-throttle-smoke` 用
+    `indexOf('ops consumed: pull') + 700` 定位应答让路那段，我把这条串写进注释 ⇒ 锚点落到
+    注释上、判据空转；固定字符窗本身也是同一类脆断（新留痕行让 `hotNow` 刚好滑到 702
+    字符处），已把那处改成「留痕行之后的**第一笔** `pushToClient`」的语义锚点。
+  - **没动的三条，因为它们不是留痕问题**：`hot push landed via deferred pump`(88) +
+    `deferred push landed`(54) 是「即时写被 HMR 事务拒绝 ⇒ 由事务外泵补写」这条链的**成功**
+    半边，压掉它们就把 #15/#18 的验收证据一起压掉；真正的上游是**应答写建在事务内**
+    （每次 pull 应答先被拒、再等 500ms 泵 + 0.2~1.6s 写，客户端因此必然打空重试）与
+    **pull 的应答确认契约**（客户端只认 `historySessionId === pending.sessionId`）。
+  - **现场复测（宿主 15:01 热重载后的窗口，389 行）**：旧的第二行形态 **0 条**；`pull` 行
+    64 条里 29 条带计数 ⇒ 同一阶梯的复读确实被压掉了（换成旧形态约 180 条）。但**总行率
+    没降**：同一窗口里 `hot push landed via deferred pump` 57 + `push write refused` 52 +
+    `deferred push landed` 52 = 161 行，全在「即时写被事务拒 → 泵补写」那条链上。本轮只把
+    日志形状改对，没把噪声源关掉——这话说在前面，免得下一轮又按「降噪」去找新闸。
+  - 上游三条已由 `scripts/pull-ack-smoke.mjs`（六场景 22 组 + 变异对照）与
+    `docs/pull-ack-investigation.md` 钉死，**都成立、互不蕴含**：
+    **B** `ctx.sessions.get` 只认 `enter()` 过的活会话（侧栏/懒恢复的查不到）⇒ 应答里
+    `history` 与 `historySessionId` 两键一起缺席 ⇒ 按现判据永不收敛；
+    **D/E** `hotSigOf` 的 `historyKey` 把「无环」与「空环」都折成 `∅` ⇒ 两份应答指纹逐字
+    相同 `<HOT>∅<T>0<HIST>∅` ⇒ **换会话一个字节都不写**（B 缺的是载荷字段，D/E 缺的是那次写）；
+    **F** #89 的 `hotUsable` 在恢复 pending 期把**整格** `_hot` 扣住，而 ack 的 `history`
+    就住在这格。修法是最小契约的两半（载荷里带会话身份 + 判重认这个身份，pull 应答绕过按格
+    判重）——「只做一半」已被变异实测否掉：M2 单独只红 B、M4 单独只红 E。三条各自是行为
+    改造，不在本条偷偷做；本轮让 `pulls=5` 先当上游问题的现场计数器。
+
+- **落地留痕补 `hasHistory=` / `ackSession=`，把「三条成因各占多少」变成可算的数**
+  （2026-10-23，用户选的第一步：先量出来再动契约）。上一条目自己写了「三条成因在日志里
+  同形」，这条把那句话变成可判据：`hotBytes=` 分不出「2000 条热度但没带对账凭证」与
+  「什么都没带」，所以四行落地留痕（`push landed` / `hot push landed` /
+  `deferred push landed` / `hot push landed via deferred pump`）各补两个键，读的是
+  **落盘那串字节**而不是闭包里的意图（`src/trace-gate.ts` 的 `hotAckFields`）。
+  - **必须是三态不是布尔**：`1` 带凭证（含**空数组**——客户端判据是 `Array.isArray`，
+    空环同样可以确认）、`0` 这格写出去了但没带（场景 B）、`-` 这一笔根本不含热度格
+    （`cells=push` 与永远单格的补写）。布尔会把 `-` 吞成 `0`，「这一笔没带热格」就伪装成
+    「带了但没历史」——`trace-gate-smoke` 新增一条专门的**变异断言**把这件事钉住
+    （14 → 20 → **23 组**）。另两条断言钉「正文里出现 `"history":[` 不算带凭证」（靠 JSON
+    转义把键位与正文分开）与「正文伪造 `ackSession` 命不中」，否则统计可被内容污染。
+  - `scripts/pull-ack-split.mjs`：把每个会话的 pull 与「有没有一笔写带走 `ackSession=<本会话>`」
+    join 成占比表。**它的第一版是我自己错的**：按整份日志统计 ⇒ 22/24 个会话被判成
+    「D/E 整笔被吞」，而真实原因是那 593 条落地行来自补键**之前**、它们的 ack 根本没法看见
+    ——**缺席被当成了证据**。现在统计窗口从第一条带键的落地行起算，并把窗口外的量单独报成
+    覆盖率。这条正是本仓那条口径的现场版：判据变瞎要靠自己注入进去验，不是靠数行数。
+  - **现场首测（16:0x 宿主热重载后，覆盖率 1%，还不能给占比）**：窗口内 4 个会话
+    7 行 pull，**全部** `A 可确认`（`hasHistory=1 ackSession=<本会话>` 各 1/3/1/6 笔）；
+    `hot push withheld` 窗口内 0 行。探针另测到一条**机制串联**：同一进程里先 pull 一个
+    空环会话（写出 `hasHistory=1`）、紧接着 pull 一个解析不到的会话 ⇒ 后者**一行落地都没有**
+    ——B 的应答被 D/E 的判重吞掉了，两条成因在真实进程里是串联而不是并列。
+  - 因此记一条**待验证的假设**（不是结论）：D/E 的可见度可能取决于热表是否在变——本进程
+    热表从 0 重新累积（见 #89 那条 `restore FAILED`），每次 pull 的热度快照都不同 ⇒ 指纹必变
+    ⇒ 每轮都有写；而旧日志里 `tableSize=2000` 恒定那一段，跨会话指纹逐字相同 ⇒ 换会话零写。
+    验法：等窗口攒到 ≥50% 覆盖率再跑一次这张表，并对 `tableSize` 恒定/在涨两段分别统计。
+    占比出来之前，"哪条是主因"不许写进任何结论。
+
+- **设置卡两个「最少输入字符」同名，用户与排障者都读错了对象**（2026-10-23，用户指出
+  「一个 3 一个 4，你看不到吗」——我上一条回复把它误诊成「3 没保存」）。卡片里
+  `historyMinChars`（历史前缀补全阈值）与 `inlineMinChars`（停顿续写阈值）共用 label
+  「最少输入字符」，分属两个 section 各出现一次；用户存的 3 是**历史补全**那个（profile 里
+  `historyMinChars: 3` 一直在，保存成功过），续写仍按默认 4 判定——「我重新」3 字不触发的
+  真正解释。修法：label 带模式名（「最少输入字符（历史补全）/（停顿续写）」），hint 同步写明
+  「两者各自独立」；README 表格跟着消歧。上一条「3 从未写进 profile」的诊断**只对了一半**
+  （`inlineMinChars` 确实不在盘上，但那是用户没改过它，不是保存失败）——保存静默失败的
+  修复本身仍成立（冲突是常态，空 catch 是真实缺陷），但触发这次排查的现象另有其人，记在此处。
+
+- **设置卡保存静默失败：「最少输入字符 = 3」从未写进 profile**（2026-10-23，用户报「停顿后
+  补充没生效」时顺带挖出）。`remoteSettingsScope.set` 是**单次 mutate + 空 catch**：宿主每
+  秒数笔 `_push`/`_hot`/`_ops` 写顶 revision，卡片拿的 revision 发出时几乎必然过期 ⇒ 冲突
+  拒绝 ⇒ 被 catch 吞掉（注释还写着「宿主随后推来的事件会带回真值」——带回的是**旧**真值，
+  用户以为存上了）。现场证据：profile 的 config 段里根本没有 `inlineMinChars` 键，宿主一直
+  按默认 4 判定，用户 3 字的草稿因此不触发。
+  - 修复：set 改**冲突重试环**——每轮现取最新 revision（闭包变量由 document-updated 刷新）、
+    与 `_ops` 写共用同一份预算/退避（`opsConflictRetryAllowed` / `opsConflictBackoffMs`，
+    边界不写第二份）；非冲突拒绝与预算耗尽都 `console.warn`——设置保存是低频显式动作，
+    「没存上」必须可见。
+  - 回归：`ops-write-verify-smoke` 新增 5 钉静态守卫（async 重试环 / 两条 warn 串 /
+    共用边界 / 现取 revision），剥注释后查码（删码留评会假绿，先堵上）。
+
+- **「幽灵永不出」的最终根因：HMR reload 后 root 监听器不随旧 fiber 回收，僵尸 handler
+  抢事件并在 inactive context 上抛穿**（2026-10-22 live）。链路：`settings/document-updated`
+  必须监听 root（cordis 事件只向上传播），而 loader 的 `partialReload` **不会**回收旧 fiber
+  经 `root.on` 挂上的 handler（probe 实测：手动 `fiber.dispose()` 会回收，reload 路径不回收
+  ——两条路径语义不一致本身就是上游问题）。今天 28 次重载后，每条 `_ops` 写入被**最早的
+  僵尸**先消费：它的 `lastOpsPayload` 守卫是旧闭包、判不出「已被新 fiber 消费」，走到
+  `handleComplete → ctx.sessions.get` 抛 `cannot get required service "sessions" in
+  inactive context`，批次就地中断——`hotness ops applied`/`_ops cleared`/一切 settle 行
+  消失、`_ops` 滞留盘上、新 fiber 永远收不到 complete。现场签名：`ops consumed: complete`
+  之后**没有任何后续行**。
+  - 修复：`eventCtx.on(...)` 的 **off 接住并挂进 `ctx.effect` 的清理**（effect disposer 在
+    reload/dispose 两条路径都跑）；handler 里的 `consumeOps` 包 **try/catch + `ops-consume-threw`
+    留痕**（毒丸不许炸穿事件分发，也不许静默）。
+  - ⚠️ **修复只约束新注册的 handler——已经挂上 root 的僵尸只能靠重启宿主清除**。这就是
+    「需要我重启 DSH 不」这个问题在 20:20 之后的正确答案：**要**，一次。
+  - 回归：`deferred-writes-smoke` 静态守卫（off 接住 / effect 清理 / try-catch / 留痕四钉）。
+    行为级 harness 做不了——probe 证明「手动 extend+dispose」与 loader reload 的 inject
+    调度语义不同（前者会让后续 fiber 的 inject 永不触发），拿它当「reload 的等价类」会测
+    一个不存在的行为。**假设有据可查比有脚本更重要**，这条边界记在这里。
+  - 上游反馈：`docs/upstream-feedback-settings-proxy.md` 补第三条诉求（root 监听的
+    reload 回收语义与 dispose 对齐）。
+
+- **连打期续写永不出结果（`completion generated` 整段为 0）——单飞抢占改成前缀豁免**
+  （2026-10-22，用户报「输入词汇没有任何幽灵文本」）。旧行为：每条新 `complete` 无条件
+  `abort()` 同会话在途生成。实测一次续写生成要 **5~10s**，而 `inlineDelayMs=100` 下连打时
+  每 1~3 个字符就来一条新 complete ⇒ 在途生成**永远**在出结果前被中止——live 现场
+  `completion generated` 自 17:30 起为 0，只剩 `preempted`/`aborted`。CHANGELOG 早前预言的
+  那条（「若 preempted 暴增而 generated 未涨，应回调」）成真；**修的不是延迟值，是抢占判据**：
+  - `decideInflightPreemption(inflightDraft, draft)`（纯函数，`src/completion-gate.ts`）：
+    草稿只是**变长**（用户在追加）⇒ `keep`——让在途那份对着旧草稿跑完，客户端 #33
+    「边打边等」的对齐判据本来就接受 `payload.draft` 是当前草稿的前缀，结果由对齐取舍；
+    草稿**非前缀**变化（删/改/替换）⇒ `preempt`（旧行为）；在途草稿读不到 ⇒ `preempt`
+    （宁可多中止一次，不让「判不了」变成「永远 keep」）。
+  - `handleComplete` 接线：`keep` 时不 abort、不另起（单飞不变：至多一个在途），并留
+    `completion skip: draft only grew`（traceFault 每 20 条——这条 complete 被消费但不产生
+    生成动作，#17 教训：不许静默）。`completionInflightDraft` 与 pending 槽配对记录发起时
+    的草稿；settle 后残留串永不参与判定（读方先查活 controller）。
+  - 为什么冲突风暴期间没暴露：并发丢包**顺带节流**了 complete（丢掉的不会抢占）；队列把
+    投递修可靠之后，「每击键必达 ⇒ 每击键必抢」的饥饿才显形——本条是上一轮修复的**直接
+    后果**，记在这里是为了不让下一次「修好一条链、引爆另一条」再写成意外。
+  - 回归：`completion-pipeline-smoke` 新增 2 组（判据穷尽 keep/preempt 边界 + 接线在场），
+    现 43 组。另注：`我重新` 只有 3 字，低于 `inlineMinChars=4` 的触发阈值——那是设计，
+    用户可在设置卡调低阈值；本条修的是**够长之后依然不出**的那一半。
+
+- **`--cleanup` 现在能清掉「工作区在沙箱目录之外」的残留**（#83）：原先只认 `<home>/ws` ⇒ 历史遗留的
+  `~/dsh-sbx-<entry>-ws` 或显式 `--ws` 指到别处时，它会**把残留报出来、然后删不掉** ⇒ 使用者看到
+  「有残留」的报告配上「清理成功」的退出码，两者互相矛盾。现在三处一起补：建沙箱时把 `WS` 的实际值写进
+  **沙箱目录**里的 `.dsh-sandbox-home`（写在沙箱目录而不是工作区里是关键：否则就成了「要先知道路径才能读到路径」）、
+  枚举额外扫 `~/dsh-sbx-*-ws`、**每一处没删掉的东西都写明「这条命令不会删它，原因 X，删除方式 Y」**
+  - 删除闸门与护栏**一条都没放松**：通配扫到的每一处都过同一道闸门（标记文件或空 git 仓签名 + 干净 + 无提交 +
+    无远端 + 无凭据）⇒ 脏的/认不出的**不删、报出、退出码 1**。护栏拆成「判据（不退出）」与「断言（die）」两版：
+    通配命中的一处不合格，正确反应是「**这一处**不删 + 报出来」，而不是让整条命令死掉（那样后面几处永远看不到）
+  - `--residual` 与 `--cleanup` **共用同一份枚举与判定** ⇒ 逐行输出与退出码一致（只读模式只说「会删（`--cleanup` 时）」）
+
+### 修复
+
+- **HMR `partialReload` 在配置事务里重跑 `apply()` → 补写泵被毒化，pull 应答/续写/清空全丢**
+  （0.7.1 现场，2026-10-22）。`drainDeferred` 的定时器在 `apply()` 的同步续体里建立、靠「建它时
+  `AsyncLocalStorage` 的 store 是 undefined」拿到事务外锚点；但 agent 改插件源码、重建 `lib/` 会触发
+  HMR 重载，**那次 apply 本身跑在配置写入事务里** ⇒ 新定时器继承 `store=true`，此后每笔补写都被
+  `HMR transactions cannot be nested` 拒绝（现场留痕：`deferred push write refused again in the
+  apply()-time pump`、`deferred hot push dropped reason=attempts-exhausted`）。后果不是日志（有界重试
+  已经限住），而是**功能全断**：pull 应答、续写、`_ops` 清空都补不进去；客户端拿不到应答就反复重发
+  pull，`_ops` 写入本身成功、revision 一路涨；再叠加客户端并发的 complete 写，就出现用户看到的
+  `_ops write conflict retries exhausted` 与 `completion not shown: payloadDraftChars=-1`。
+  - **建泵那一拍切出事务**：若宿主提供 `root.get('hmr').executing`（内核的 `AsyncLocalStorage`），
+    用它的 `exit(cb)` 建 `setInterval`（`runOutsideHmrTransaction`，取不到就原样建，不依赖私有面）。
+    实测同一沙箱的退路表：`executing.exit(() => 写)` OK、bump revision。
+  - **兜底重建**：取不到手腕的宿主上，泵写拿到结构性拒绝即标记 `deferredPumpPoisoned`；下一次
+    **可证明在事务外**的回调（`session/event`、任何即时写成功、`persistence.whenReady`）重建定时器，
+    留痕 `deferred pump re-armed outside the HMR transaction`。**不在失败回调里重建**——那只会捕获
+    同一个 `store=true`，再造一个同样失败的泵。
+  - 回归：`scripts/pump-hmr-escape-smoke.mjs`（5 组：有 `executing.exit` 时「事务内 boot 后第一次
+    pull 就补写成功」，无需任何恢复事件）；`scripts/pump-rearm-smoke.mjs`（7 组：无手腕时先毒化、
+    会话事件重建、之后 push/`_hot`/`_ops` 清空全部真实落盘）。两条都进 `test:e2e`（构建之后）。
+
+- **客户端 `_ops` 写在同页内自抢 revision，冲突预算被烧光、`complete` 丢失**。`writeOps` 是
+  「describe 取 revision → mutate(expected)」CAS，而同一页有两条互不知情的写入源：每次输入停顿的
+  `complete` 与会话切换/未应答重试的 `pull`。并发时 A 的 describe 与 mutate 之间被 B 插队；宿主每消费
+  一次还会把 `_ops` 写回空值（revision 再 +1）⇒ 旧实现 3 次预算几乎必然耗尽，console 成组刷
+  `_ops write conflict retries exhausted: expectedRevision=N ... now N+1`，`complete` 丢掉后就是
+  `completion not shown`。
+  - 新增 `src/client/ops-write-queue.ts`：**串行队列**（至多一个 describe→mutate 在途、FIFO）；
+    `complete` 在排队中 **last-wins**（被取代者兑现 `false` = 未发送，在途不取消）；`pull` 不合并
+    （每条核对账独立）；`run` 抛错该项 `false` 且队列继续。写面唯一入口 `writeOps(payload, kind)`。
+  - 冲突重试从「立即重试、共 3 次」改成 **5 次 + 25/50/100/200ms 退避**（`OPS_WRITE_MAX_ATTEMPTS` /
+    `opsConflictBackoffMs` / `opsConflictRetryAllowed`，两条冲突分支共用同一份边界）。剩下的冲突只来自
+    宿主侧写入，退避给它让出落盘窗口。
+  - **单项 8s 看门狗**（`OpsWriteQueue` 的 `itemTimeoutMs`）：串行化把「一条 RPC 永不兑现」从
+    「丢一条写」升级成「整条通道卡死」（唯一在途槽被永久占住）。超时项判 `false`、放行后续；
+    迟到兑现被丢弃、不翻转结果。代价是超时瞬间可能与迟到 run 短暂并发——迟到的是旧载荷，
+    宿主按全等去重 + `seq` 单调 + pull 幂等，不产生错误状态。
+  - 回归：`scripts/ops-write-queue-smoke.mjs`（8 组：串行/FIFO、complete last-wins、在途不可取代、
+    pull 不合并、异常续跑、退避序列与上限、重试边界、看门狗放行），接进 `test:smoke`。
+
+- **`_hot` 被 clearOps 槽饿死的宿主侧活锁**（2026-10-22 live 现场，客户端「控制台一直刷」的
+  第三个上游，比客户端两个问题更根本）。泵每 tick 只补一个槽，旧规则「热度格只有
+  `deferred` 队列空着才轮得到」；而 pull 洪水（客户端每 200/400/800ms 重试 + 每次输入停顿
+  的 complete）让 clearOps 槽**永远有下一条** ⇒ `_hot`（应答的历史环/热度）永不落地 ⇒ 客户端
+  `historySessionId` 对不上 ⇒ `pendingPull` 判不出「已对账」继续重试 ⇒ 洪水由饥饿本身维持。
+  循环的每一环单独看都「有界」，合起来是永不收敛的活锁——日志表现为同几个会话的
+  `ops consumed: pull` 无休无止。
+  - 修复：新增 `tryDrainHotPayload()`（判据：有写面、无在途写、槽里压着热度、合并窗口
+    到期），调用点恰好 3 处——泵 tick 空窗 + pump push **与** clear 的**写成功 finally**。
+    「写成功」本身证明当下上下文在事务外，搭便车是安全的；不要求队列空（那正是被饿死的
+    条件本身）。**`drainHotFromPump` 自己的 finally 不加**——「失败重排 + finally 再写」就是
+    上一次 23 GB 微任务紧循环的原始形状；`flushPush` 的 finally 也不加（它可能在事务内，
+    搭上去等于烧热度预算并误标毒化）。
+  - 回归：`scripts/hot-starvation-smoke.mjs`（4 组；3 条 150ms 间隔的 pull 造出「连续两拍队列
+    非空」窗口，断言 `_hot` 落地**前至多一笔**非热写——修复后 1 笔、旧规则 2 笔；变异自证：
+    删掉两处 finally 搭便车 ⇒ S2 报红且其余全绿）。`scripts/deferred-writes-smoke.mjs` 加静态
+    守卫（调用恰好 3 处、`drainHotFromPump` 体内禁止出现）。两条都进链（前者 `test:e2e`）。
+
+- **客户端留痕的「交替刷屏」**（2026-10-22，用户刷新后仍报"控制台在刷"的剩余来源之一）。#39 的
+  理由闸只防「同理由连打」，对 `hot-cell-only ↔ suggestion-cell-changed` 这种**来回交替**每次
+  都放行——宿主两格高频交替写时 `push-cell:` 黄线又成串。补第二把闸：`stepSlotEmit` 槽级冷却
+  （同一 slot 每 5s 至多一行；冷却期内最新理由攒成 pending，冷却结束后下一次调用放行——
+  **新理由不丢只迟到**，无定时器驱动）。`traceClear` 连 pending 一起作废。冒烟新增 4 组
+  （交替 100 次只出 1 行 / pending 放行 / 5000ms 边界与 last-wins / 非 print 不产生 pending），
+  `trace-gate-smoke` 现 14 组；写第一版时第 4 组当场抓到「`lastEmitAt: 0` 哨兵撞假时钟」的
+  实现 bug（首次必打不能依赖时钟量级巧合，改 `null` 哨兵）。`ghost-frame-cell-e2e` 的
+  push-cell 字面断言按新口径更新（<5s 的 harness 里只该看到 ≤2 行；「两种理由各自成立」
+  的性质移交 trace-gate 的确定性假时钟断言，不是删断言）。
+
+- **常态证据留痕降级到 Verbose 通道**（2026-10-22 第三次校准，用户「刷新后控制台还在刷」的
+  最后一条；含一次**自我驳回**：先降到 `console.log` 被实测打回——**Chrome 默认级别包含
+  Info**，log 并不隐藏，默认视图里真正关着的只有 Verbose 档 = `console.debug`）。冷却闸
+  生效后 `push-cell` 已经降到每 5s 一行，但**正常使用**的页签里事件流不停（agent 会话每回合
+  都有推送），5s 一行对「控制台默认该是安静的」这个预期仍然吵。按「是不是故障」分通道：
+  `push-cell` / `inline-arm-cancel` / `deferred-repaint` / `render-source` 是「判据在跑、
+  优化在场」的**工作量证据**，不是故障 ⇒ `console.debug`（默认隐藏，devtools 勾 Verbose
+  全量可见，诊断能力不删只改门）；故障槽（`stale-frame`、`tab-abandon`、`accept-gate-*`、
+  `conflict exhausted`）保持 `console.warn`。`completion not shown` **整行**降 debug：
+  上一版按「草稿够不够长」分 warn/log 也被 `draftChars=521 reason=none` 驳回——生成耗时
+  1.1~17s 的现实里「载荷还没到」是瞬态，单条事件分不出「还没到」与「永不到」，标故障级别
+  就是噪声源；#39 要的是**这行存在**，不是默认可见。冷却闸与理由闸对所有通道照旧。
+  `ghost-frame-cell-e2e` 的 console 捕获补上 debug 通道（不补就是「采集不到 = 没打」的
+  harness 瞎，不是产品回归——留痕断言当场会红）。
+
+
+- **冲突退避与 pull 重试的量纲校准**（2026-10-22 第三次现场，用户刷新后仍见
+  `conflict retries exhausted: expected 733, now 734`）。串行队列消掉页面自抢后，剩下的冲突来自
+  **宿主每批消费写 2~3 笔**（应答 `_push`/`_hot` + `_ops` 清空）与其它页签的同 ns 写入。旧参数被
+  live 栈证伪：冲突只落后**一笔** revision，而宿主单笔写的实测在途是 **0.2~1.6s**（writeMs）——
+  客户端总退避 375ms **比一次在途写还短**，5 连败是必然而不是运气。同理 pull：应答路径 =
+  事务拒绝 → 泵 500ms tick → 写 0.2~1.6s ⇒ 最早一拍应答 ≈0.7~2.1s 后，旧值 200ms 的头两次重试
+  必然打空，而**每次打空又是一轮「客户端写 + 宿主消费 + 至多两笔应答/清空写」**——重试洪水自己
+  就是 revision 顶升器（live 计数：8 分钟 285 批 pull、其中同一会话 35+ 次）。
+  - `_ops` 冲突重试：`OPS_WRITE_MAX_ATTEMPTS` 5→8，退避 25/50/100/200 → **100/200/400/800/1600**
+    （总窗口 ≈5.9s，覆盖 2~3 个宿主写窗口；封顶后持平是设计，冒烟断言跟着改成「封顶前严格递增」）。
+  - pull 重试：`PULL_RETRY_BASE_MS` 200→**600**（600/1200/2400/4800，第一次就要等得起应答路径），
+    `PULL_MAX_ATTEMPTS` 5→4（总窗口没缩短，砍的全是注定打空的前几枪）。
+  - 结构性欠账（本轮没做，记为下一步）：**把「应答写」与「`_ops` 清空」合并成一笔**——宿主每批
+    消费从 2~3 笔写降到 1~2 笔，revision 顶升与整档重写同时减半；清空带 CAS（盘上载荷不等就放弃
+    搭载），零写批仍由泵单独清。那才是把冲突概率从根上砍掉的修法，退避只是让它不再必然发生。
+
+- **pull 对账的「每批固定三行」压成一行**（2026-10-22，用户重启后仍报终端噪音——这次数的是
+  行数：每条 pull 对账 = `ops batch received` + `ops consumed: pull` + `deferred _ops cleared`
+  三行起步，链路已经健康，噪音是留痕形状本身）。三处：
+  - `ops batch received` 只为**异常批**保留（多 op 批、整批被拒——#17 取证链要「输入证据」）；
+    单 op 正常批的输入证据由逐 op 的 `ops consumed: …` 行覆盖，那行同时带会话与动作。
+  - 两条「清空成功」行（`_ops cleared after consume` / `deferred _ops cleared …`）走
+    `traceFault('ops-clear-landed', …, 20)`：首次必打（证明补清空链在通），之后每 20 次一行
+    带计数。成功清空是常态；**refused/failed 行一字未动**（那些才是要看的）。
+  - 回归不受影响：`deferred-writes-smoke` 的静态断言查的是串在场（节流不改串）；
+    `hmr-write-loop` / `pump-rearm` / `hot-starvation` 的留痕峰值当场变矮
+    （17→14 / 21→17 / 20→14 行）——降噪效果由既有断言的余量直接可见。
+
+- **宿主侧 tee 日志的两条零信息留痕**（2026-10-22，用户问「终端那边是不是也刷」——实测
+  `dsh-web-now.log` 90% 行是本插件的，其中两条纯回声）。判据都从「每次写都打」改成「状态
+  变化才打」：
+  - `live settings refreshed`：**125 行全部 `applied=25` 原样重复**——旧判据「revision 变了
+    就打」把宿主自己每次 `_push`/`_hot`/`_ops` 写的回声都打了出来。#19 的验收判据是「设置页
+    改了有没有被重新读到」，它等价于 **applied 变了**（改开关 ⇒ 生效键数必动），所以判据换成
+    applied 变化：不丢验收信息，只丢回声。
+  - `hotness ops applied`：**71 行全部 `changed=0` 且 tableSize 恒定**——`changed=0` 且表大小
+    没动时这行是 `ops batch received` 的复读。改成「changed>0 或 tableSize 变 ⇒ 必打；否则
+    攒计数，第 1 次 + 每 20 批并一行带 `[unchanged #N]`」。#17 的「客户端写了、宿主没动」
+    诊断路径不受影响（received 行恒打，applied 变化必打）。
+  - `ops consumed: complete` / `pull` **一字未动**：3 个 harness 按「每 op 一行」断言，且
+    #15 的现场判据（complete 之后日志一片空白）依赖逐行在场。洪水线数（received+consumed
+    每批两行）会随客户端串行化落地自然回落——那是上游修复的效果，不靠再关这里的闸。
+
+- **客户端的类型检查覆盖面显著增强**（#34 / #81，**过渡件**）：`client tsc` **23 → 8**，分三个 commit 各自实测（每步**新增 0 条**）
+  - ① **带扩展名的相对说明符统一成宿主侧的 `.js`**（账是 **19 处 = 会报的 13 + 永不报的 6**，其中 6 处是
+    `import type`、被擦除故不报 TS5097）⇒ 23 → 15（TS5097 9→1，剩下的是下面那处白名单例外）
+  - ② **`tsconfig.client.json` 头部两处失真修掉**：「当前报 31 条」⇒ 23；以及那句
+    「`connection/reset` 不是合法事件名」**是错的**（宿主在 emit、类型面有声明、宿主自家客户端包同款监听 3 处）
+    ⇒ 不改它，下一个人会照错结论去"修"一行**本来正确**的代码
+  - ③ **用本地镜像面纠正了「接错」**（15 → 8，消掉 6×TS2339 + 1×TS2345）：此前 tsc 把 `ctx.get('sessions')`
+    解析成**服务端** `SessionStore`，而运行时是宿主**客户端**服务 ⇒ 那 7 条一直是"类型面在骗人"
+  - **`lib/client.js` 与发布前逐字节相同**（134,880 字节）⇒ **本组改动无运行时行为变化**，升级后不需要复验真实回合
+  - ⚠️ **它是断言、不是验证**：取得点写 `as unknown as ClientSessionsSurface`，此后按本地镜像检查。⇒
+    **耐久形态是把 `@types/react` 与两个宿主客户端包排进 devDependencies**、让 tsc 直接对着宿主真面查、
+    **把整块镜像删掉**（见 #85，待用户拍）。本条措辞一律写「已用本地镜像面纠正接错、等依赖收口」，
+    **不写成"客户端类型面已接对"**
+  - **两道闸接进 `test:smoke`（41 → 43 项），都由机器守**：
+    - **白名单闸**钉「文件 + 行号 + 目标说明符」三者：唯一例外 `accept-guard.ts:51 → './history.ts'`
+      必须保持 `.ts` —— Node 的 type-stripping **不做** `.js→.ts` 回退（实测 `ERR_MODULE_NOT_FOUND`），而
+      5 条链上脚本**故意按 TS 源码直载**（防「产物陈旧会假绿」）。四个失效方向实测全红，包括
+      **"把这条例外顺手修好"** ⇒ 命中 0 也红，并提示去查那 5 条有没有被改成载 `lib/`（那是禁止方向）
+    - **漂移闸**逐个成员名回宿主 d.ts 核存在性，**且把边界写进脚本输出**：
+      「**绿 ≠ 镜像正确，只 = 这些名字还在宿主面上**」⇒ 抓得到改名/删除，**抓不到签名与语义变化**
 
 ## [0.6.0] - 2026-10-20
 
