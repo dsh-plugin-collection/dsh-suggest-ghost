@@ -60,6 +60,9 @@ const scenario = async (name, fn) => {
   }
 };
 
+/** 本脚本建过的临时存储目录，结尾统一回收。 */
+const tempDirs = [];
+
 /**
  * 真栈 + 只把 `open()` 包一层拒绝（前 rejectTimes 次抛 already-open，之后放行真实实现）。
  * rejectTimes=0 ⇒ 「正常 boot」；rejectTimes 足够大 ⇒ 烧穿 40×150ms 重试预算 ⇒ FAILED。
@@ -71,6 +74,7 @@ const realStack = async (rejectTimes, hist, withDomain = true) => {
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const dir = mkdtempSync(join(tmpdir(), 'dsh-htlevel-'));
+  tempDirs.push(dir); // 跑完自己收：别在 /tmp 里留垃圾（既有 hotness 冒烟已经留了 40 个 dsh-hreload-*）
   writeFileSync(join(dir, 'suggest_ghost_hotness.json'), JSON.stringify({
     unit: { name: 'suggest_ghost_hotness', version: 1 },
     tables: { entries: Object.fromEntries(hist.map((r) => [r.text, r])) },
@@ -221,6 +225,11 @@ await scenario('`=debug`：四条状态迁移全部可见（证明第 4 条是�
   }
 });
 
+// 自收临时目录（失败也要收）
+for (const d of tempDirs) {
+  try { (await import('node:fs')).rmSync(d, { recursive: true, force: true }); } catch { /* 忽略 */ }
+}
+console.log(`· 已回收 ${tempDirs.length} 个临时存储目录`);
 console.log(results.join('\n'));
 console.log(failed === 0
   ? '✅ hotness-trace-level-smoke: 两向都钉住（失败告警默认可见；状态类默认仍静默，=debug 可取回）'
