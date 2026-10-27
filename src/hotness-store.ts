@@ -26,6 +26,7 @@ import {
 } from '@deepseek-ai/dsh-storage-domain';
 import z from 'zod';
 import { traceAt } from './trace.js';
+import type { TraceLevel } from './trace.js';
 import type { HotnessChangeHook, HotnessOp } from './hotness.js';
 import { HOT_TABLE_MAX_ENTRIES, HotnessTable } from './hotness.js';
 
@@ -48,11 +49,18 @@ const RECORD_TEXT_MAX_CHARS = 2000;
  * `dsh-suggest-ghost:` 子串会造成假阳性。⇒ **拿"某字符串没出现"当证据是不可靠的**，
  * 所以这里给恢复流程配上必然出现的正向锚点：缺哪一行，就直接看出卡在哪一步。
  * 前缀与 `ops-trace` 一致 ⇒ 现有的 grep 口径不用改。
+ *
+ * **级别是分开的，不是一律 `info`**（#97）：#98（`a608e4f`「留痕默认静默」）把
+ * 「只有告警到达用户侧」确立成设计目标，默认阈值 `warn`（`src/trace.ts:61`）。
+ * 按那个定义，`restore FAILED` 与 `domain unavailable` **本身就是告警**（恢复没发生 /
+ * 根本没有持久层，用户看到的「共 0 条」就是它们的后果），却和四条状态迁移共用 `info`
+ * ⇒ 在把健康进程刷成 0 行的同时，把不健康的那两行也静音了。⇒ 失败类走 `warn`
+ * （`traceAt` 对 warn **不读阈值**，必然到达用户侧），状态类保持 `info`
+ * （默认静默、`=info` 可见）。**一行都不许变吵**：判据见
+ * `scripts/hotness-trace-level-smoke.mjs` 的两个方向。
  */
-const hotnessTraceLine = (message: string): void => {
-  // 状态迁移（域开/关、恢复、就绪）比逐事件心跳更重要一档：`=info` 就能看到
-  // 「这个 fiber 走到哪一步」，默认仍静默。
-  traceAt('info', message);
+const hotnessTraceLine = (message: string, level: TraceLevel = 'info'): void => {
+  traceAt(level, message);
 };
 
 /**
@@ -170,8 +178,8 @@ export function setupHotnessPersistence(ctx: Context): {
   // 本 fiber 的留痕通道：每条自动带 `fiber=<序号>`，让「谁开的、谁关的、谁卡住的」可对得上。
   const fiberId = FIBER_SEQ + 1;
   FIBER_SEQ = fiberId;
-  const hotnessTrace = (message: string): void => {
-    hotnessTraceLine(`fiber=${fiberId} ${message}`);
+  const hotnessTrace = (message: string, level: TraceLevel = 'info'): void => {
+    hotnessTraceLine(`fiber=${fiberId} ${message}`, level);
   };
   /** 脏标记：text → 最新记账值（null = 待删除）。flush 前累积，flush 取快照清空。 */
   const dirty = new Map<string, Readonly<{ count: number; lastSeq: number; pinned: boolean }> | null>();
@@ -306,7 +314,7 @@ export function setupHotnessPersistence(ctx: Context): {
         if (facility === undefined) {
           // 没有持久层：内存态即权威。但必须说一声，且 `restored` 保持 false ——
           // 消费方要能把「环境没持久层」与「重载竞态没等到释放」分开呈现。
-          hotnessTrace('hotness domain unavailable: no storageDomain facility');
+          hotnessTrace('hotness domain unavailable: no storageDomain facility', 'warn');
           restoreStatus = 'unavailable';
           settleReady();
           return;
@@ -378,7 +386,11 @@ export function setupHotnessPersistence(ctx: Context): {
       } catch (error) {
         // 重试也没拿到句柄 ⇒ 仍然降级，但留一行正面痕：这是 #88 里唯一能把「放弃」与
         // 「根本没持久层」「恢复成功」三者分开的锚点。
-        hotnessTrace(`hotness restore FAILED, staying in-memory: ${String((error as Error)?.message ?? error).slice(0, 90)}`);
+        // ⚠️ 走 `warn` 而不是 `info`（#97）：这行按 #98 自己的定义就是告警，而默认阈值
+        // 是 `warn` ⇒ 挂在 `info` 上等于把「恢复失败」这件事静音；#88 的现场验证（以及
+        // #93 的修复效果）只能靠这两行判断，静音就让 #88 收不了口。
+        // 下面那条 `ctx.logger.warn` **不算数**：健康进程里 logger 不落地（见 trace.ts 顶部）。
+        hotnessTrace(`hotness restore FAILED, staying in-memory: ${String((error as Error)?.message ?? error).slice(0, 90)}`, 'warn');
         restoreStatus = 'unavailable'; // 放弃之后内存态即权威，格子要照常说话
         ctx.logger.warn(`dsh-suggest-ghost: hotness persistence unavailable, staying in-memory: ${String(error)}`);
         settleReady(); // 降级同样终结恢复阶段：内存态即权威，消费方无需再等
