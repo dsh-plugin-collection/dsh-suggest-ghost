@@ -697,3 +697,104 @@ harness 页上那行状态词：§10 记的是 **`dsh-suggest-ghost: loading`**�
 - **`loading` 与 `failed` 两个状态词的成因**：见 §12.2，本轮无证据。
 - **模型空返回率**：ctrl2 三轮全空、ctrl1/ctrl3 首轮即中 —— 只够说明"重试是必需的"，
   不够给任何代次或路由下结论（那是 probe-llm 那片的事）。
+## 13. 老代次三片真 GUI 重验：0.1.2-rc.1 / 0.1.5-rc.3 / 0.1.7-rc.1（2026-10-27，构建 0.7.0，冷启动 ×2）
+
+Gitea #41 / task-34。分片是**最老的三代**（0.2.x 与 0.1.7-rc.2 在 §8 / §11）。
+每代次都在**全新冷沙箱**上跑**两次**独立 GUI 轮（lead 采纳的口径：**证据 ≠ 证据的可复跑性**），
+依赖一律来自**被测那代次的树**（`--live-nm`，见 §13.2 第 1 步）——本轮第一版把依赖留给了
+live profile（0.2.1 那份），0.1.7-rc.1 那两行绿因此**作废重跑**，这正是技能 §1 说的
+"两份内核模块实例"矩阵失真。
+
+### 13.1 结论
+
+| 判据 | 0.1.2-rc.1 | 0.1.5-rc.3 | 0.1.7-rc.1 |
+|---|---|---|---|
+| ① composer 出现浅灰幽灵（截图为证） | ✅ cold1 9 字「什么时候该用工作树」/ cold2 18 字 | ✅ cold1 20 字 / cold2 16 字（另 cold3 8 字） | ✅ cold1 19 字 / cold2 8 字 |
+| ② 同次 `_push`：rev 递增 + 非空 + `final=true` + 有会话归属 | ✅ rev=2 final=true frame=1 chars=9/18 | ✅ rev=2 final=true frame=1 chars=20/16 | ✅ rev=2 final=true frame=1 chars=19/8 |
+| ③ 健康启动无 #101/#104 三条 warn | ✅ 三条各 0 命中 | ✅ 同 | ✅ 同 |
+| ④ 设置卡可打开 | ⚪ **未判定**（见 §13.4） | ⚪ **未判定**（见 §13.4） | ✅ `cardShown=true` |
+| ⑤ 重启一次后热表不回零 | ✅ `_hot total=1`（重启后仍 1） | ✅ 同 | ✅ 同 |
+
+⇒ **UI 面 + 功能面在这三代都成立**：老代次不是"装配能过但界面上看不见"。
+④ 单独未判定，不与前四条混算，也不因"其余四条绿"默认它没事。
+
+物证：`docs/cross-kernel-shots/<代次>-PASS-0.7.0-coldN.png`（**截 composer 区域**，
+判据是 `#dsh-suggest-ghost-overlay` 且 `data-shown=1`、`display!=none`、文本非空；
+本轮每张都人眼复核过浅灰文字确实在图里）。机器侧证据：
+`node scripts/cross-kernel/volatile-evidence.mjs --home <沙箱> --gen <代次>`。
+
+**supersedes**：`<代次>-PASS.png` / `-PASS-fixed.png`（产出于 `4b72fae`，#95）。
+`src/client/**` 与 `lib/client.js` 自那以后一字未动 ⇒ 旧图本身不算错，但截图之后
+`802ef61`（0.7.0 发布，"清掉包内的本机绝对路径"）改的就是产物字节 ⇒ 旧图答不了
+"跑的是哪份产物"。旧图**保留**，本节是"当前可复跑"的那一份。
+
+### 13.2 老代次装配配方（四步，每步都对应一次实测失败——少一步就"不监听"）
+
+`dsh web` 不监听时**不报错、零输出**，所以这四步只能逐个排。全部由
+`scripts/cross-kernel/prune-bundles.mjs` 一次做完（幂等，会打印每步动了什么）：
+
+1. **依赖必须来自被测树**：`dev-sandbox --live-nm ~/dsh-versions/<gen>/node_modules`。
+   默认它把依赖逐条软链到**真实 profile** 的 node_modules（= live 那份 0.2.1）⇒
+   插件的裸导入拿到 0.2.1 的宿主包，而内核是 0.1.x ⇒ 矩阵失真，跑出来的绿不可信。
+2. **`.bin/dsh` 的形状按代次不同**：0.1.5-rc.3 的 `.bin/dsh` 是 **`#!/bin/sh` 包装脚本**，
+   而 dev-sandbox 用 `node <bin>` 起 ⇒ `SyntaxError: Invalid or unexpected token`。
+   老树改用 JS 入口 `node_modules/@deepseek-ai/dsh/lib/bin.js`（0.1.2 / 0.1.7 两者皆可）。
+3. **bundles 必须裁到该树解析得到的**：live 的 23 条里有
+   `@deepseek-ai/dsh-experimental-agent-team-profile` 这类老树没发布的包，0.1.5 的
+   `dsh-app-boot` 对不可解析 bundle 是**硬失败**：
+   `Error: dsh: cannot resolve profile bundle "@deepseek-ai/dsh-experimental-agent-team-profile"`。
+   裁到 `dsh-base + dsh-web-app + 本插件`（`dsh-web-app` 缺了就回到"不监听零输出"）。
+4. **patch 条目也必须一起裁**（本工具第一版在这里写错过一句"留着是空操作"）：
+   嵌在别的顶层条目里的 `webhook-listener` 会让 0.1.5 抛
+   `failed to apply loader entry webhook-listener (cordis:group)`。
+   白名单：本插件条目（**id 是 `suggest-ghost`，不等于包名**）+ `hmr` +
+   LLM 路由四条（`llm-pi-ai` / `agent-default-model` / `permission` / `locale`）。
+   少了 LLM 那几条 ⇒ 没有模型可打 ⇒ 不出幽灵，而那**不是**代次缺陷。
+5. 另需 `<home>/node_modules` → 被测树的 node_modules：dev-sandbox 把插件放在
+   `<home>/plugin/`，那里没有可向上解析的 node_modules，0.1.5 实测报
+   `failed to import loader entry suggest-ghost: Cannot find package '@deepseek-ai/schemastery'`。
+
+HMR 那条前置（技能 §1b）**有效**：0.1.2 / 0.1.5 两棵树里的
+`@deepseek-ai/cordis-plugin-hmr` 都是 **1.0.17**（带 `registerConfig`），patch 保留
+`- id: hmr` + `disabled: false` ⇒ 本轮三代都没有出现"启动即崩"。
+⚠️ 包名是**带作用域**的 `@deepseek-ai/cordis-plugin-hmr`，技能里写的非作用域名在树里不存在。
+
+### 13.3 volatile 的落点随代次不同（②⑤ 取证必须两处都读）
+
+| 代次 | `_push` / `_hot` 落在 |
+|---|---|
+| 0.1.7-rc.1 | `<home>/profiles/web/cordis.patch.yml`（本插件条目的 `config._push`） |
+| 0.1.5-rc.3 / 0.1.2-rc.1 | **`<home>/settings.yaml`**（老内核的 settings 存储），profile patch 里没有 |
+
+⇒ 只读 profile patch 会把后两者判成"没有证据"——那是**读错了地方**，不是插件没写。
+`scripts/cross-kernel/volatile-evidence.mjs` 两处都读并在输出里标 `source`。
+值是跨多行的单引号标量（内含建议正文），解析必须走到行尾闭合引号。
+
+### 13.4 ④ 在 0.1.2 / 0.1.5-rc.3 **未判定**（不写成通过，也不写成缺陷）
+
+观察到的事实（0.1.5-rc.3）：侧栏**没有** Plugins 入口（枚举可见标签只有
+`Settings`/`New session`/`Add workspace`…），但 **Settings → Plugins 是存在的**
+（先进 Settings 再枚举，`Plugins` 出现并可点）；点进去后
+`document.body.innerText` 里**找不到** `dsh-suggest-ghost` 字样，
+而我们 client 的 `<style data-plugin-css="dsh-suggest-ghost">` **确实注入了 1 个**。
+0.1.2-rc.1 的探针连 Settings 都没找到（探针在重启后立刻跑，页面尚未就绪，属探针时机问题）。
+
+⇒ 结论只能是**未判定**：现有证据既不足以说"卡片渲染出来了"（正文不可观测），
+也不足以说"该代次打不开设置卡"（client 产物在、入口在）。
+两种待排的可能：① 插件页是虚拟列表，卡片在视口外 ⇒ innerText 取不到；
+② 0.1.x 的 settings UI 不渲染第三方插件卡。
+下一步（不阻塞本节结论）：进 Plugins 页后按**元素**而不是按 innerText 找卡，并滚到可见。
+⚠️ ①/④ 的差别不影响本节主结论：**幽灵画得出来本身已经证明 client bundle 在这三代都加载并运行了**。
+
+### 13.5 本轮给驱动补的两条（都是"英文 UI"这一类）
+
+- 工作区入口：`gui-round.mjs` 原来只按中文 `aria-label="添加工作区"/"选择工作区"` 找入口。
+  0.1.5-rc.3 / 0.1.2-rc.1 整页是英文（`Add workspace` / `Choose workspace`）⇒ 得到
+  「没有可用入口」⇒ 工作区设不上 ⇒ composer 永远 `phase=inert` ⇒ 必然不出幽灵，
+  长得像"该代次不支持"。与 §11 修的 `dismiss()` 标签表是**同一类工具缺口**。
+- 设置卡导航项：原来 `exact` 的正则把「插件/Plugins」和「设置/Settings」混在一起，
+  `.find()` 按 DOM 顺序先撞上 `Settings` ⇒ 点进设置页却判"卡没出现"。改成**优先插件项**、
+  Settings 只作 fallback，并在结果里标 `via`（`plugins-nav` / `loose` / `settings-fallback`）
+  ⇒ 让"点错页"这件事自己说话。
+- **没改的一条，留给后来人**：Settings → Plugins 是**两级**导航，驱动只会找顶层一项
+  （§13.4 那个未判定就卡在这里）。
