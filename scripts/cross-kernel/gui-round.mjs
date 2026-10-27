@@ -91,11 +91,20 @@ window.__gy = {
   wait: (ms) => new Promise((r) => setTimeout(r, ms)),
   until: async (fn, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (fn()) return true; await window.__gy.wait(120); } return false; },
   dismiss: async () => {
-    const labels = ['保留当前显示', '暂不开启', '以后再说', '知道了', '不用了', '保留原样', 'Continue', 'Got it', '暂不启用'];
+    // ⚠️ 0.1.7-rc.2 的**首屏是「内测声明」模态**（截图为证：docs/cross-kernel-shots 里那张
+    //    cold-r2 之前形态），它的确认按钮文案是中文「继续」，而原列表里只有英文 Continue
+    //    ⇒ 从来没被关掉过。模态盖住 composer ⇒ 消息发不出去、宿主一个会话事件都收不到
+    //    ⇒ 表现就是 no-session / bound=false / generated=0，长得完全像"这代次坏了"。
+    //    ⚠️ 这段注释在页内模板字符串里：**不能出现反引号**（会提前结束模板，我自己刚踩过）。
+    //    task-36/37 那四次的**主因是这条**（不是快照形状 current vs retainedBy）。
+    const labels = ['保留当前显示', '暂不开启', '以后再说', '知道了', '不用了', '保留原样',
+      'Continue', 'Got it', '暂不启用', '继续', '同意', '我已阅读'];
     const closed = [];
     for (let k = 0; k < 10; k += 1) {
       let hit = false;
       for (const d of window.__gy.qa('[role=dialog]')) {
+        // 但**绝不能**在这里点工作区选择器的「继续」—— 那会选中列表当前目录而不是我们的 ws。
+        if (/选择工作区目录|添加工作区|选择工作区/.test(d.textContent ?? '')) continue;
         const bs = [...d.querySelectorAll('button')];
         const b = bs.find((x) => labels.some((L) => window.__gy.name(x).includes(L)))
           ?? bs.find((x) => window.__gy.name(x).includes('关闭') || window.__gy.name(x) === '×');
@@ -256,7 +265,22 @@ try {
     const findRow = () => [...dlg().querySelectorAll('button, [role=button], [role=treeitem], li, [title]')]
       .find((n) => window.__gy.name(n) === name || (n.getAttribute?.('title') ?? '') === name);
     let row = null;
-    const rowAppeared = await window.__gy.until(() => { row = findRow(); return row != null; }, 9000);
+    let rowAppeared = await window.__gy.until(() => { row = findRow(); return row != null; }, 9000);
+    // ⚠️ 冷启动第一轮常见竞态：目录列表是异步取的，行还没进来就被判「没有那一行」，
+    //    于是退到「继续」分支 —— 而「继续」在 0.1.7 上选中的不是我们要的工作区
+    //    （composer 一直 inert ⇒ 后面全线 no-session / bound=false）。
+    //    task-36/37 那四次「建不起对照组」的头号成因就是这个竞态 + 下面那处插值 bug。
+    //    ⇒ 关掉重开一次再判，别一上来就走兜底分支。
+    if (!rowAppeared) {
+      const closeBtn = [...dlg().querySelectorAll('button')].find((b) => /取消|Cancel/.test(window.__gy.name(b)));
+      if (closeBtn != null) { closeBtn.click(); await window.__gy.wait(500); }
+      const reopen = window.__gy.byText('添加工作区') ?? window.__gy.byText('选择工作区');
+      if (reopen != null) {
+        reopen.click();
+        await window.__gy.until(() => window.__gy.q('[role=dialog]') != null, 8000);
+        rowAppeared = await window.__gy.until(() => { row = findRow(); return row != null; }, 9000);
+      }
+    }
     if (!rowAppeared) {
       const edit = window.__gy.btnIn('[role=dialog]', '编辑路径');
       if (edit != null) { edit.click(); await window.__gy.wait(600); return { needPath: true, opener: openerLabel, names: btnNames() }; }
@@ -265,7 +289,10 @@ try {
       if (cont != null) {
         cont.click();
         const ready = await window.__gy.until(() => (window.__gy.composer()?.dataset.phase ?? 'inert') !== 'inert', 12000);
-        return { viaContinue: true, opener: openerLabel, label: window.__gy.name(cont).slice(0, 12), ready, composers: window.__gy.composers() };
+        // 走这条路必须自带取证：dialog 里究竟有什么行、要找的名字是什么（否则下一轮还得重跑）。
+        return { viaContinue: true, opener: openerLabel, label: window.__gy.name(cont).slice(0, 12), ready,
+          want: name, rowTags: btnNames(), dialogLabels: [...document.querySelectorAll('[role=dialog]')]
+            .map((d) => (d.getAttribute('aria-label') ?? '').slice(0, 20)), composers: window.__gy.composers() };
       }
       return { step: '列表里没有那一行', opener: openerLabel, hasEdit: false, names: btnNames() };
     }
@@ -321,7 +348,10 @@ try {
     const ns = await evaluate(`(async () => {
       await window.__gy.dismiss();
       const existing = [...document.querySelectorAll('[aria-label]')].find((n) => /^会话/.test((n.getAttribute('aria-label') ?? '').trim()) && n.offsetParent !== null);
-      const b = (PREFER_EXISTING === true ? existing : null) ?? window.__gy.byText('新会话') ?? window.__gy.byText('新建会话')
+      // ⚠️ 这里必须是**宿主侧插值进来的布尔字面量**（前面踩过：直接把 Node 侧常量名写进
+      //    页内脚本 ⇒ 页内 ReferenceError ⇒ 这一步静默不执行 ⇒ client 报 no-session/bound=false，
+      //    看起来完全像"这代次坏了"）。task-37 就是被这一行卡住的。
+      const b = ((${PREFER_EXISTING}) === true ? existing : null) ?? window.__gy.byText('新会话') ?? window.__gy.byText('新建会话')
         ?? [...document.querySelectorAll('[aria-label]')].find((n) => /New session|新建会话|在.*中新建会/.test(n.getAttribute('aria-label') ?? ''));
       if (b == null) return { found: false };
       b.click();
@@ -329,11 +359,23 @@ try {
       return { found: true, label: window.__gy.name(b).slice(0, 24) };
     })()`);
     const typed = await cdpType('() => window.__gy.q(\'[role="textbox"]\') ?? window.__gy.composer()', ASKS[attempt], true);
+    // ⚠️ 提交要**验**：回车在某些代次的 composer 上只插换行、不发送（表现为 typed=true 而宿主
+    //    一个事件都收不到 ⇒ 没有 turn/end ⇒ 没有 suggestion ⇒ 看起来像"这代次不生成建议"）。
+    //    判据：回车后草稿若还在 ⇒ 点发送按钮兜底，并把两条路径的结果都记进 ts。
+    const ts = await evaluate(`(async () => {
+      const g = window.__gy;
+      const stillThere = (g.q('[role="textbox"]')?.textContent ?? g.composer()?.textContent ?? '').trim().length;
+      if (stillThere === 0) return { submitted: true, how: 'enter' };
+      const send = g.byText('发送消息') ?? g.byText('发送') ?? g.byText('Send');
+      if (send != null && send.disabled !== true) { send.click(); await g.wait(600); }
+      const left = (g.q('[role="textbox"]')?.textContent ?? g.composer()?.textContent ?? '').trim().length;
+      return { submitted: left === 0, how: left === 0 ? 'send-button' : 'neither', draftLeft: left };
+    })()`);
     const got = await evaluate(`(async () => {
       const ok = await window.__gy.until(() => { const g = window.__gy.ghost(); return g.exists === true && g.shown === true && g.visible === true && g.chars > 0; }, ${Math.max(20000, Math.floor(GHOST_TIMEOUT_MS / ASKS.length))});
       return { ok, ghost: window.__gy.ghost() };
     })()`);
-    rounds.push({ ask: ASKS[attempt].slice(0, 24), newSession: ns, typed, ...got });
+    rounds.push({ ask: ASKS[attempt].slice(0, 24), newSession: ns, typed, submit: ts, ...got });
     if (got.ok === true) { appeared = got; break; }
   }
   out.steps.rounds = rounds;
@@ -342,7 +384,15 @@ try {
   // 6) 截 **composer 区域**（不是整页）：向上多带 150px，把用户那句真问题也带进画面
   const shotRes = await screenshotRegion('[data-input-scroll]', 26, 150, 46);
   if (shotRes.noBox === true) {
-    out.steps.shot = { noBox: true, box: await evaluate(`(() => { const n = window.__gy.composer(); if (n == null) return null; const r = n.getBoundingClientRect(); return {x:r.x,y:r.y,w:r.width,h:r.height}; })()`) };
+    // 没有 composer 区域可截 ⇒ **改截整页**并记下页面文案。
+    // 反证组（去掉 remote.settings 声明）的界面根本没渲染，只留 noBox 就等于"没有物证"，
+    // 而 §10.1 那条结论当初就是靠整页图才站得住的 ⇒ 兜底必须是产图，不是产一个 null。
+    const full = await send('Page.captureScreenshot', { format: 'png' });
+    const fullPath = SHOT.replace(/\.png$/, '-FULLPAGE.png');
+    mkdirSync(dirname(fullPath), { recursive: true });
+    writeFileSync(fullPath, Buffer.from(full.data, 'base64'));
+    const pageText = await evaluate(`(() => (document.body?.innerText ?? '').replace(/\\s+/g, ' ').slice(0, 180))()`);
+    out.steps.shot = { noBox: true, fullPage: fullPath, pageText: redact(pageText) };
   } else {
     mkdirSync(dirname(SHOT), { recursive: true });
     writeFileSync(SHOT, Buffer.from(shotRes.data, 'base64'));
