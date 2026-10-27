@@ -14,6 +14,7 @@
 import assert from 'node:assert/strict';
 import { Context } from '@deepseek-ai/cordis';
 import { setupHotnessPersistence } from '../lib/hotness-store.js';
+import { HOT_TABLE_MAX_ENTRIES } from '../lib/hotness.js';
 
 // 本条测的就是**默认阈值** ⇒ 必须显式清掉外部注入的档位（否则从设过 debug 的 shell 里
 // 跑会假绿：状态类行也会"必须出现"，而那时测的已经不是默认值）。
@@ -109,6 +110,9 @@ const HIST = [
 ];
 
 // —— 1. 默认阈值 + 恢复永久失败 ⇒ `restore FAILED` **必须**在 console.warn 上 ——
+/** 只看 warn 通道（默认阈值下唯一会到用户侧的那条）。 */
+const warnSinkHas = (needle) => sinkWarn.some((l) => l.includes(needle));
+
 await scenario('默认阈值（不设环境变量）：open 永久被拒 ⇒ `restore FAILED` 必然到达用户侧（warn 通道）', async () => {
   captureOn();
   const { root } = await realStack(9999, HIST);
@@ -132,11 +136,26 @@ await scenario('默认阈值（不设环境变量）：open 永久被拒 ⇒ `re
 await scenario('级别切分：产物里恰好两处 hotnessTrace(…, \'warn\')，且必须是那两条告警', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../lib/hotness-store.js', import.meta.url), 'utf8');
-  const calls = src.split('\n')
-    .map((l, i) => [i + 1, l])
-    .filter(([, l]) => /hotnessTrace\(/.test(l) && !/const hotnessTrace =/.test(l));
-  const warned = calls.filter(([, l]) => /,\s*'warn'\s*\)/.test(l));
-  const needles = ['hotness domain unavailable', 'hotness restore FAILED'];
+  // 整调用扫描（含续行）：单行匹配会被"换个行"绕过，这道闸量的是"哪些调用点是 warn"，
+  // 不是"哪一行写着 warn"。
+  const callSites = [];
+  {
+    const lines = src.split('\n');
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!/hotnessTrace\(/.test(lines[i]) || /const hotnessTrace =/.test(lines[i])) continue;
+      let text = lines[i];
+      for (let k = i + 1; k < lines.length && k < i + 8; k += 1) {
+        text += ' ' + lines[k];
+        if (/\);/.test(lines[k])) break;
+      }
+      callSites.push([i + 1, text]);
+    }
+  }
+  const calls = callSites;
+  const warned = calls.filter(([, t]) => /,\s*'warn'\s*\)/.test(t));
+  // #88 续：warn 集合现在恰好是这五条 —— 两条原有失败 + 三条「不吭声就会静默丢数据」的
+  const needles = ['hotness domain unavailable', 'hotness restore FAILED',
+    'hotness persistence absent', 'hotness restore grace elapsed', 'hotness dirty cap cleared'];
   assert.ok(warned.length >= 1,
     `没有任何 hotnessTrace 走 warn ⇒ #97 的提级没落地（共 ${calls.length} 个调用点）`);
   for (const n of needles) {
@@ -157,28 +176,46 @@ await scenario('级别切分：产物里恰好两处 hotnessTrace(…, \'warn\')
 });
 
 // —— 3. 现状钉住（**含已知缺口**）：完全没有 storageDomain 服务的宿主 ⇒ 恢复流程零留痕 ——
-// 未覆盖项，说清楚：`hotness domain unavailable` 这行**运行时不可达** —— 它在
-// `ctx.inject(['storageDomain'], …)` 的回调里，而注入回调只在服务被提供时才跑；
-// 没有该服务 ⇒ 回调不跑，`restoreStatus` 停在初始值 'unavailable'（不是 'pending'），
-// 于是 5s 兜底那行 `restore grace elapsed` 也被 `if (restoreStatus === 'pending')` 挡掉。
-// 实测（本机，默认阈值，等过 5s 窗口）：hotness 相关留痕 **0 行**、ready=false、
-// status=unavailable、restored=false。⇒ 「这组宿主根本没持久层」这件事在默认阈值下
-// **仍然看不见**。不在本任务两行范围内 ⇒ 只做现状断言 + 报 lead，不在此修。
-await scenario('现状：无 storageDomain 服务 ⇒ 零留痕（把缺口钉成断言，将来偷偷变好/变坏都会红）', async () => {
+// —— 3. #88 未闭合那半（已修）：完全没有 storageDomain 的宿主，默认阈值下必须开口 ————
+// 原来的缺口：那句 `domain unavailable` 写在 `ctx.inject(['storageDomain'])` 回调里，
+// 无该服务时回调不跑；而 `restoreStatus` 初始就是 'unavailable'（非 'pending'）⇒ 5s 兜底
+// 也被 `if (restoreStatus === 'pending')` 挡掉 ⇒ 「这组宿主根本没有持久层」在默认阈值下看不见。
+// 现在判定挪到回调外：宽限期到点且**回调一次没跑过** ⇒ warn 一行，并把 ready 兑现。
+await scenario('无 storageDomain 服务：默认阈值下必须出现 warn 级「persistence absent」，且 whenReady 不许被兑现（不凭空多一次写）', async () => {
+  delete process.env.DSH_SUGGEST_GHOST_TRACE; // **默认阈值**：这条判据的全部意义就是不开档也要看得见
   captureOn();
   const { root } = await realStack(0, HIST, false);
   const { persistence } = setupHotnessPersistence(root);
-  await sleep(6200); // 盖过 HOTNESS_RESTORE_GRACE_MS=5000
+  const t0 = Date.now();
+  while (Date.now() - t0 < 9000 && !warnSinkHas('hotness persistence absent')) await sleep(100);
+  const waitedMs = Date.now() - t0;
   const hot = allLines().filter((l) => l.includes('hotness'));
+  const onWarn = sinkWarn.filter((l) => l.includes('hotness persistence absent'));
   const state = { status: persistence.status, restored: persistence.restored, ready: persistence.ready };
   captureOff();
-  assert.equal(state.status, 'unavailable', `无持久层时状态必须是 unavailable（实际=${state.status}）`);
-  assert.equal(state.restored, false, '无持久层却报告已恢复');
-  assert.equal(hot.length, 0,
-    `本场景按现状应当零留痕（实际 ${JSON.stringify(hot.slice(0, 2))}）⇒ 若这行开始变红，`
-    + '说明缺口被修好了，请把 #97 的评论一并更新，别让它停留在"看不见"');
-  console.log(`  NOT-COVERED  \`hotness domain unavailable\` 的运行时路径（ctx.inject 门后，无该服务时不可达；已报 lead）`);
-  console.log(`              实测状态：${JSON.stringify(state)}，留痕行数=${hot.length}`);
+  assert.ok(onWarn.length === 1,
+    `「没有持久层」必须且只能出现一行 warn（实际 warn 命中 ${onWarn.length}；全部 hotness 行=${hot.length}）`
+    + ' ⇒ 回到 info 就等于又看不见（#88 的原始症状）');
+  assert.match(onWarn[0] ?? '', /fiber=\d+/, '要带 fiber 序号，否则多 fiber 下分不清是谁');
+  assert.match(onWarn[0] ?? '', /仅内存|in-memory/, '要说清楚后果：本 fiber 的累积不会落盘');
+  assert.equal(state.status, 'unavailable', `状态仍是 unavailable（实际=${state.status}）`);
+  assert.equal(state.restored, false, '没有持久层却报告已恢复');
+  // ⚠️ 断的是 **whenReady 兑现**，不是 `ready` 布尔。两者不是一回事，我第一版断错了：
+  //  - `ready` 的语义是「持久层可用且恢复已跑完」⇒ 没有服务时它**就该**是 false；
+  //    而且 `flush()` 的第一道门是 `table === null`（压根没有介质可写），
+  //    所以「!ready 直接 return」在无服务时并不造成额外损失。
+  //  - 真正会「一直等」的是 **whenReady**（消费方据此补推完整快照）⇒ 这条才是 #88 说的兑现。
+  // `whenReady` 在这一支**不该**兑现（接口的既定语义），而且这条有实测代价撑着：
+  // 兑现版会在宽限期到点时触发一次 `hotNow` 补推 ⇒ 凭空多一次热度格写，
+  // 把 `hot-throttle-smoke` 场景 5（"窗口未到期的 pull 立刻写一次热度格"）直接打红。
+  // 所以判据是「开口但不改时序」：warn 必须到，whenReady 必须**不**兑现。
+  const settled = await Promise.race([
+    persistence.whenReady.then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 800)),
+  ]);
+  assert.equal(settled, false,
+    '无持久层时 whenReady 被兑现 ⇒ 会凭空触发一次 hotNow 补推（#102 的 throttle 冒烟实测会红）');
+  console.log(`  ✓ 判据在默认阈值下满足；等待 ${waitedMs}ms（= 宽限期 ${'5'}s，兜底语义）`);
 });
 
 // —— 4. 反向：正常 boot 在默认阈值下**不得**把状态类刷出来（#98 的降噪成果） ——
@@ -195,7 +232,7 @@ await scenario('反向（不许变吵）：默认阈值 + 正常 boot ⇒ 四条
   const debugs = [...sinkDebug];
   captureOff();
   assert.equal(persistence.restored, true, '正常 boot 没恢复成功 ⇒ 这一组样本无效（不是"静默"，是"没跑到"）');
-  const leaked = warns.filter((l) => /hotness domain opened|hotness restored|hotness ready|domain busy, retrying/.test(l));
+  const leaked = warns.filter((l) => /hotness domain opened|hotness restored|hotness ready|domain busy, retrying|hotness persistence absent|hotness restore grace|dirty cap cleared/.test(l));
   assert.equal(leaked.length, 0,
     `状态类被提级了（warn 命中 ${JSON.stringify(leaked.slice(0, 2))}）⇒ 健康进程会重新刷回 #98 清掉的噪声`);
   const alsoSilent = [...infos, ...debugs].filter((l) => /hotness domain opened|hotness restored|hotness ready/.test(l));
@@ -231,7 +268,29 @@ for (const d of tempDirs) {
 }
 console.log(`· 已回收 ${tempDirs.length} 个临时存储目录`);
 console.log(results.join('\n'));
+// —— 6. #88 续：那条护栏丢的是真实累积 ⇒ 默认阈值下必须看得见，且三个计数都在 ——
+await scenario('dirty cap cleared：默认阈值下走 warn，带 n= / clears= / droppedTotal=', async () => {
+  delete process.env.DSH_SUGGEST_GHOST_TRACE;
+  captureOn();
+  const { root } = await realStack(0, HIST, false);
+  const { hotness, persistence } = setupHotnessPersistence(root);
+  const over = HOT_TABLE_MAX_ENTRIES * 2 + 3;
+  for (let i = 0; i < over; i += 1) hotness.recordUserText(`帽${i}`, i + 1, 'sx');
+  await sleep(300);
+  const capWarn = sinkWarn.filter((l) => l.includes('dirty cap cleared'));
+  const counters = persistence.dirtyCapCleared;
+  captureOff();
+  assert.ok(capWarn.length >= 1,
+    `撞了 ${over} 条脏标记（上限 ${HOT_TABLE_MAX_ENTRIES * 2}）却零 warn ⇒ 静默丢累积又回来了`);
+  assert.match(capWarn[0] ?? '', /n=\d+/, `缺 n=（实际=${capWarn[0] ?? '无'}）`);
+  assert.match(capWarn[0] ?? '', /clears=\d+/, '缺 clears= 累计次数');
+  assert.match(capWarn[0] ?? '', /droppedTotal=\d+/, '缺 droppedTotal= 累计条数');
+  assert.ok(counters.dropped >= HOT_TABLE_MAX_ENTRIES * 2,
+    `取数口没长（${JSON.stringify(counters)}）⇒ 留痕与真实丢弃可能不同源`);
+  console.log(`  ✓ warn ${capWarn.length} 行，累计=${JSON.stringify(counters)}`);
+});
+
 console.log(failed === 0
-  ? '✅ hotness-trace-level-smoke: 两向都钉住（失败告警默认可见；状态类默认仍静默，=debug 可取回）'
+  ? '✅ hotness-trace-level-smoke: 三向都钉住（真失败默认可见 / 无持久层默认可见 / 状态类默认仍静默、=debug 可取回）'
   : `❌ hotness-trace-level-smoke: ${failed} 条失败`);
 process.exit(failed === 0 ? 0 : 1);
