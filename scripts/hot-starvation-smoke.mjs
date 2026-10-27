@@ -34,6 +34,12 @@ const SESSION = 'session-starve';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const trace = [];
+// ── 留痕分级（a608e4f #98）之后的捕获修正（#102）────────────────────────────
+// 常态留痕自那以后**不再走 console.log**：心跳走 console.debug、状态迁移走 console.info、
+// 告警走 console.warn。本脚本靠抓 `[ops-trace]` 文本断言行为 ⇒ 只挂 console.log 会把
+// 「打到别的流」误读成「行为坏了」（A2 的 nested 写其实一直在发生，实测 writes 与分级前逐字相同）。
+// 所以：① 测试自己把门槛放到 debug（不改生产默认）②捕获面覆盖 debug/info/warn 三条通道。
+process.env.DSH_SUGGEST_GHOST_TRACE ??= 'debug';
 const realLog = console.log.bind(console);
 console.log = (...args) => {
   const line = args.map(String).join(' ');
@@ -43,6 +49,12 @@ console.log = (...args) => {
     process.exit(99);
   }
 };
+
+// 别名指向**已挂钩的** console.log ⇒ 三条通道的留痕都进同一个捕获数组。
+const __traceSink = console.log;
+console.debug = __traceSink;
+console.info = __traceSink;
+console.warn = __traceSink;
 
 const als = new AsyncLocalStorage();
 let document = {};
