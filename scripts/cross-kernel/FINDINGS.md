@@ -385,7 +385,8 @@ composer 里的 overlay），**没有调任何内部 handler**。
 | ④ 设置卡可打开（client 面两个 inject 真的可用） | ✅ 插件页出现本插件卡与描述原文 | ✅ 同 | ✅ 同 |
 | ⑤ 重启一次后热表不回零 | ✅ `hotness restored n=1 tableSize=1`，`_hot total=1` | ✅ `n=3 tableSize=3`，`total=3` | ✅ `n=1 tableSize=1`，`total=1` |
 
-**三代全绿。** 每代次都是**该代次自己的 `dsh` bin** 起的实例（`/proc/<pid>/cmdline` 逐次
+**三代全绿。** ⚠️ **但 0.1.7-rc.2 那行"当前不可复跑"** —— task-36 在同一份构建、同一套驱动上
+四次都建立不起对照组（`bound=false / no-session`），见 §10.3 的撤回说明。0.2.0 / 0.2.1 两行不受影响。 每代次都是**该代次自己的 `dsh` bin** 起的实例（`/proc/<pid>/cmdline` 逐次
 核过，例如 `node /home/wujue/dsh-versions/0.1.7-rc.2/node_modules/.bin/dsh --profile web --port 0 --no-open`），
 插件是**实体副本**（`apply called; artifact mtime` 三代同一份 `938048b` 构建），
 `@deepseek-ai` 走**整目录**软链，冷启动、无 HMR。
@@ -459,3 +460,119 @@ grep -a 'hotness restored' ~/dsh-sbx-xk-<简写>/logs/sbx.log | tail -1
 ### 本轮新增的两条测量坑（都造成过假结论）
 1. **`grep -c 'push landed'` 会把 `hot push landed` 一起算进去**（子串匹配）⇒ 拿它算"每回合写几次"或 C 方案成本会**高一个量级**。要数就锚 `] push landed` 这种带前缀边界的形态
 2. **管道后的退出码不是命令的**：`ls -d X | sed ...` 即使 `X` 不存在，整条管道的退出码仍是 `sed` 的 0 ⇒ `||` 分支不触发，"不存在"被读成"存在但没打印"。⇒ 判存在性用显式 `[ -d X ] && ... || ...`，别接管道
+
+## 10. 判据 ④ 的反证：去掉 `remote.settings` 声明，GUI 上到底还有没有幽灵（2026-10-27，task-36）
+
+§8.1 的 ④ 只证明了"三代**能**用"，没证明"这一代**必须**有它"。本节补那条反证 —— 这也是
+当初把 `0.1.1-rc.2` 从支持列表删掉时所用的**同一类证据形状**（client fiber 不激活 ⇒ 界面上什么都没有）。
+
+**单变量**：只改 `src/client/index.ts:403` 一行，把 `'remote.settings'` 从 `inject` 里去掉
+（宿主侧 `src/index.ts` 的 `inject` 不动）。改完重建，**产物与提交版本逐字节一致**
+（`git status --porcelain src lib` 在还原后为空 ⇒ 反证期间唯一差异就是那一行声明）。
+
+### 10.1 结果：0.2.1-rc.2 **决定性**，0.1.7-rc.2 **未判定**
+
+| | 对照组（带声明） | 反证组（去掉声明） |
+|---|---|---|
+| **0.2.1-rc.2** | ✅ 幽灵出现「怎么杀掉占用进程」8 字；`建议格 push landed=4`；设置卡可开 | ❌ **整个 GUI 起不来**：页面只剩 `HARNESS / Failed to load plugins / dsh-suggest-ghost / web boot: 1 entry did not activate / dsh-suggest-ghost: loading`；DOM 实测 `composers=0`、`[data-input-scroll]=0`、`[role=textbox]=0`、overlay 不存在；宿主侧 `建议格 push landed=0`、`suggestion generated=0`、**`suggestion dropped=0`** |
+| **0.1.7-rc.2** | ❌ **对照组建立不起来**（见 §10.3）⇒ 反证无从判 | 未跑（无对照组就不跑，跑了也不算证据） |
+
+**反证比预期更强**：我原本预期"该代次插件 `failed` ⇒ 幽灵不出现"，实测是
+**一条 client fiber 激活不了，整个 web boot 直接拒绝渲染应用**（harness 兜底页 +
+`console.error` 抛 `Error: web boot: 1 entry did not activate`）。
+所以这条不只是"④ 是硬约束"的证据，还是一条**宿主行为事实**：
+在 0.2.1-rc.2 上，插件客户端声明写错 = **把用户的界面整个弄没**，
+而不是"我的功能静默不可用"。这条应该单独递到 #40（见 §10.6）。
+
+三条判据逐条交代：
+
+1. **打在真 GUI 上** ✅ —— 两张图都在 `docs/cross-kernel-shots/`：
+   `0.2.1-rc.2-PASS-with-decl.png`（幽灵可见）与 `0.2.1-rc.2-FAIL-no-remote-settings-decl.png`（同位置、什么都没有）。
+   没有用 in-process boot 的红绿替代。
+2. **同一 session 内保留对照组** ✅（0.2.1）—— 同一份构建、同一代次、同一沙箱，
+   先跑对照再 `--deploy` 探针构建冷启动跑反证，两轮之间只换了那一行声明。
+3. **措辞升级** ⇒ ④ 在 **0.2.1-rc.2** 上从"可用"改为 **「硬约束成立（附反证）」**。
+   对 0.1.1 那条删除理由：证据形状**一致**（`entry did not activate` ↔ 当年的
+   `pending (waiting for service: remote.settings)`），但那是**同形状推断**，
+   不是我在 0.1.1 上重跑出来的 —— 别把它写成"已复现"。
+
+### 10.2 为什么反证组的"没有幽灵"不是模型空返回冒充的
+
+`dropped=0` 与 `generated=0` 是排除它的关键：模型空返回会打 `suggestion dropped`，
+而本轮一次都没有 ⇒ 宿主根本没进入生成，因为**客户端 fiber 从未激活**（console 那条
+`1 entry did not activate` 是独立信号，来自浏览器而不是宿主日志）。
+这正是 §1c 那条纪律的落地：**"没幽灵"至少有三种成因，必须各自有独立信号才能分开。**
+
+### 10.3 ⚠️ 一条自我撤回：§8.1 里 **0.1.7-rc.2 那行 PASS 需要复核**
+
+本轮在 0.1.7-rc.2 上**四次**都建立不起对照组，症状固定：
+
+- 客户端**活着**（能收到 push、设置卡能开、`push-cell: applies=1` 之类留痕都在）；
+- 但 `inline-arm-cancel: reason=no-session draftChars=0 bound=false enabled=true` 反复出现；
+- 宿主侧 `suggestion generated=0`、`建议格 push landed=0`；
+- 磁盘上**确实有会话**（`sessions/--home-wujue-xk-cf-ws--/session-…/session.v4.jsonl.zstd`），
+  点侧栏已有会话（`--prefer-existing`）也一样拿不到当前会话。
+
+⇒ 两个结论必须分开写：
+1. **反证在 0.1.7-rc.2 未判定**（对照组不成立 ⇒ 差异无从归因，跑了也不算证据）。
+2. **§8.1 那行 0.1.7-rc.2 的 UI 面 PASS 是同一份构建、同一套驱动在另一份沙箱上拿到的**；
+   本轮拿不到 ⇒ 它可能依赖 warm 状态（那份沙箱在被删前已经过若干轮，界面上有历史会话）。
+   在有人复跑之前，**不要把 §8.1 的 0.1.7 那行当成可复跑的结论**。
+   这与 §9 对 `0.1.5-rc.1` 的处理是同一类问题：**证据的"当前可复跑性"要单独声明。**
+
+### 10.4 本轮新增的三条坑
+
+1. **`dialogGone=false` 在 0.1.7-rc.2 上是常态误报**：该代次界面上有**常驻的 `role=dialog` 容器**，
+   选择器关掉与否不能用 `[role=dialog] == null` 判。（我据此加了一次"再点主按钮"的兜底，
+   结果 `secondClick=null` —— 说明那个 dialog 根本不是选择器的，判据本身选错了。）
+2. **反证必须自带"排除模型空返回"的信号**，否则 `dropped` 与"fiber 死了"在 GUI 上同形。
+   现在驱动把浏览器 console 一起收（`out.steps.console`），并把宿主日志计数**按前缀边界分开**
+   （`(?<!hot )push landed` 与 `hot push landed` 各数一份 —— §9 那条坑的自动化版本，
+   0.2.1 对照轮实测 4 / 5，裸 grep 会报 9）。
+3. **模板字符串内部的注释不能出现反引号**：会把模板提前结束，`node --check` 才报得出来。
+   本轮在同一个文件里踩了**两次**（第二次就发生在给第一次写警告注释的时候）。
+
+### 10.5 反证顺带产出的两条（一条要递上游）
+
+1. **【上游诉求，可直接递】一条写错的 `inject` 应当只废掉那个插件，不应当废掉整个 GUI。**
+   现状（0.2.1-rc.2 实测）：插件 client 的 `inject` 里少一个服务 ⇒
+   `web boot: 1 entry did not activate / <插件>: loading` ⇒ 页面停在
+   `HARNESS / Failed to load plugins`，**用户什么界面都没有**（composer、侧栏、设置页全没）。
+   而"激活门控"本来就是 cordis 的静态语义（§1d），所以问题不在门控本身，
+   在于**门控失败被提升为整个 web boot 的致命错误**。
+   建议：单插件 fiber 失败降级为"该插件不可用 + 一条可发现的错误"，应用照常渲染，
+   并把失败插件名列在设置/插件页里。今天的形状意味着**任何一个第三方插件的
+   一行声明错误，都能把用户的整个 DSH 界面变白屏**，而插件作者拿到的只是一句
+   `loading`（不带"缺哪个服务"）。
+   附：错误文案里也没说清是哪个依赖没拿到 —— 与 §40 那条
+   `cannot get property "remote.<ns>" without inject` 指向性差是同一族问题。
+2. **【本仓纪律】"没有幽灵"的三种成因要用三个不同信号分开**：
+   `suggestion dropped`（模型空）/ `bound=false no-session`（会话归属）/
+   `composers=0 且 overlay 不存在`（fiber 没激活，界面根本没起来）。
+   只看 GUI 上"没字"三种都会一模一样 —— §1c 那条纪律在 0.2.x 上再次命中。
+
+### 10.6 证据文件
+
+| 文件 | 是什么 |
+|---|---|
+| `docs/cross-kernel-shots/0.2.1-rc.2-PASS-with-decl.png` | 对照组：composer 区域，浅灰幽灵「怎么杀掉占用进程」可见 |
+| `docs/cross-kernel-shots/0.2.1-rc.2-FAIL-no-remote-settings-decl.png` | 反证组：**整页**（不是 composer 区域），只有 `Failed to load plugins` harness 页 —— 因为界面根本没渲染，截 composer 区域无从截起 |
+| `docs/cross-kernel-shots/0.1.7-rc.2-UNDET-no-session-binding.png` | 0.1.7-rc.2 对照组失败现场（composer 在、无幽灵、`no-session`）⇒ 该代次反证**未判定** |
+
+> 命名说明：反证组那张是**整页截图**，与 §8 的"截 composer 区域"口径不同 ——
+> 这不是偷懒，是那一代次根本没有 composer 可截。图的内容差异本身就是结论的一部分。
+
+### 10.7 复现
+
+```bash
+# 对照（pristine 构建）
+node scripts/dev-sandbox.mjs --home ~/dsh-sbx-cf-0212 --rewrite 'port: 3983=port: 4141' \
+  --bin ~/dsh-versions/0.2.1-rc.2/node_modules/.bin/dsh
+node scripts/cross-kernel/gui-round.mjs --home ~/dsh-sbx-cf-0212 --gen 0.2.1-rc.2 \
+  --label with-decl --fresh-log --ws ~/xk-cf-ws --shot docs/cross-kernel-shots/0.2.1-rc.2-PASS-with-decl.png
+# 反证：删掉 src/client/index.ts:403 里的 'remote.settings' → npm run build → 冷重启
+printf '\n=== dev-sandbox 新启动 ===\n' >> ~/dsh-sbx-cf-0212/logs/sbx.log   # 计数窗口分界
+node scripts/dev-sandbox.mjs --home ~/dsh-sbx-cf-0212 --deploy . --bin …（同上）
+node scripts/cross-kernel/gui-round.mjs --home … --label without-decl --fresh-log --shot …FAIL-no-remote-settings-decl.png
+# 收尾：git checkout -- src/client/index.ts && npm run build && git status --porcelain src lib  （必须为空）
+```
