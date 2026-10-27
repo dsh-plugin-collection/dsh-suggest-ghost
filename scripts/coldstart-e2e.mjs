@@ -60,6 +60,13 @@ globalThis.__ghostTrace = [];
     if (line.includes('[ops-trace]')) globalThis.__ghostTrace.push(line);
     real(...args);
   };
+  // #102：常态留痕自 a608e4f 起不再走 console.log（心跳 debug、状态 info、告警 warn）。
+  // 本脚本的捕获必须覆盖三条通道，否则「窗口里没这行」会被读成「行为没发生」
+  // —— 小节 6/7 的红就是这么来的：留痕其实一直打着，只是打到了别的流上。
+  const sink = console.log;
+  console.debug = sink;
+  console.info = sink;
+  console.warn = sink;
 }
 
 /**
@@ -419,13 +426,19 @@ await section(6, '懒恢复补判：会话启动后才进店 → 第一次 pull 
   // 那次生成在本 harness 里必然失败（没有 LLM 路由），随后的一次写会把建议清掉。
   // 验的是「pull 应答那一刻**带上了**它」，所以看写留痕，不看最终值。
   createSession();
+  // 补判发生在**第一次** pull（本节刻意让会话在 apply 之后才进店）⇒ 取证窗口从这里开。
+  const firstPullTraceFrom = tracedFromApply().length;
   await coldStartPull(settings, SESSION);
+  const firstPullWindow = tracedFromApply().slice(firstPullTraceFrom, tracedFromApply().length);
   // **观察点从「写留痕」挪到「客户端能读到的那份」**，这不是放宽，是拆格之后唯一正确的位置：
   // 盘上那格的内容就是被恢复出来的那条，而按格判重（#50「第一次 pull 零写」的性质）意味着
   // 内容与盘上一致时**不该**再写一遍。旧断言之所以能靠「有一次写带上它」成立，是因为那时
   // 指纹算的是整份载荷、热度格每次都变 ⇒ 必然有一次写。拿那个当判据，等于把「多写一次」
   // 这个缺陷当成正确性的证据。
   const pullWritesBefore = medium.writes.length;
+  // #102 量具修正：留痕缓冲是**跨小节累积**的，全量 filter 会让本小节的 green 被
+  // 前面小节（2/5）留下的同类行喂饱 ⇒ "读的是本次 boot 的窗口"必须先证明，不然断言无意义。
+  const pullTraceFrom = tracedFromApply().length;
   await coldStartPull(settings, SESSION);
   // **取证点是宿主自己那行 `persisted push restored source=pull`，不是介质终值。**
   //
@@ -440,7 +453,18 @@ await section(6, '懒恢复补判：会话启动后才进店 → 第一次 pull 
   // 所以这里断言「宿主确实补判并把那条建议并进了应答」（restored 行 + turn 号），
   // 而「应答那一拍客户端能读到什么」由 `scripts/payload-split-smoke.mjs` 的场景 ⑤
   // 在受控夹具里量（那边不制造假回合）。两半合起来才是这条性质的完整覆盖。
-  const restored = tracedFromApply().filter((l) => /persisted push restored source=pull/.test(l));
+  // 三档计数一并打出来，让"读的是哪一段"这件事本身可被检查：
+  //  - 全量：跨小节累积的旧口径（本节曾经只读它 ⇒ green 是从小节 5 借来的）
+  //  - 第一次 pull 窗口：本节真正要验的那一拍
+  //  - 第二次 pull 窗口：应当**不再**有 restored（判定已收敛，重复出现才是问题）
+  const countOf = (lines) => lines.filter((l) => /persisted push restored source=pull/.test(l)).length;
+  const allRestored = countOf(tracedFromApply());
+  const firstRestored = countOf(firstPullWindow);
+  const secondRestored = countOf(tracedFromApply().slice(pullTraceFrom));
+  console.log(`     ℹ restored 行：全量=${allRestored} 第一次pull窗口=${firstRestored} 第二次pull窗口=${secondRestored}`);
+  const restored = firstRestored > 0 ? firstPullWindow.filter((l) => /persisted push restored source=pull/.test(l)) : [];
+  assert.ok(secondRestored === 0,
+    `第二次 pull 不该再补判一次（判定已收敛），却看到 ${secondRestored} 行 restored`);
   assert.ok(
     restored.some((l) => /turn=2/.test(l)),
     `第一次 pull 必须补判该会话的残留建议并留一行 restored（缺它就无法区分「判过且带上」与「没判所以没动」）：${JSON.stringify(restored)}`,
