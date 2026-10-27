@@ -129,20 +129,20 @@ export const KERNEL_GENERATIONS = [
     notes: '树为 npm 扁平布局，顶层 app-boot/dsh-base 齐备。',
   },
   {
-    id: '0.1.5-rc.1',
+    id: '0.1.5-rc.3',
     peerRange: '^0.1.5-rc.1',
-    bootModel: 'app-boot-mismatched',
+    bootModel: 'app-boot',
     hasAppBoot: true,
     hasDshBase: true,
-    appBootVersion: '0.1.5-rc.3',
     observedEntries: 241,
     notes:
-      '**完整树；@deepseek-ai 共 241 项**（2026-10-23 17:3x 复核；七棵树读数为 ' +
-      '198 / 224 / 241 / 278 / 284 / 289 / 306）。' +
-      'pnpm 布局：顶层 dsh-app-boot / dsh-base **存在**（可 import），但都是**软链**，' +
-      '解析到 .pnpm 下 **0.1.5-rc.3** 的副本；同树 dsh 自身是 0.1.5-rc.1。' +
-      '`.pnpm/node_modules` 这一层**不存在**（实测 MISSING）——不要写成"pnpm 兜底"。' +
-      '本代可以真冷启动，但装配用的是 0.1.5-rc.3 的启动器，回归表必须如实标出这一行。',
+      '**完整且自洽的树：@deepseek-ai 共 241 项**，顶层 dsh / dsh-base / dsh-app-boot / ' +
+      'dsh-session-projection **全部是 0.1.5-rc.3**（2026-10-26 复核）。' +
+      'peer 用 `^0.1.5-rc.1`（范围在 includePrerelease 下匹配 rc.3），门禁判 MET。' +
+      '⚠️ 历史：这里原本登记的是 `0.1.5-rc.1`，那是一棵**混合树**（dsh 是 rc.1、' +
+      'dsh-app-boot 软链到 rc.3，241 项）。2026-10-26 在本机给该树补装依赖时被 npm ' +
+      '删空、随后重建失败，rc.1 目录已不存在；现存的是自洽的 rc.3 树。' +
+      '因此**该代次此前的 rc.1 结论不能直接套到 rc.3 上**，需要在 rc.3 上重跑才有结论。',
   },
   {
     id: '0.1.7-rc.1',

@@ -41,6 +41,10 @@ import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+// 留痕自 2026-10-26 起分级：默认只有 warn/error 到达用户侧（心跳类走 console.debug 静默）。
+// 本脚本靠抓 `[ops-trace]` 文本断言行为，故在加载插件前把门槛放到 debug。
+// 这是**测试自己开档**，不改生产默认。
+process.env.DSH_SUGGEST_GHOST_TRACE ??= 'debug';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const logPath = process.argv[2] ?? join(homedir(), '.dsh', 'dsh-web.log');

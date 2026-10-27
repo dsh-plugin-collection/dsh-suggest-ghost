@@ -17,6 +17,10 @@ import assert from 'node:assert/strict';
 import { Context, Service } from '@deepseek-ai/cordis';
 import { setupHotnessPersistence } from '../lib/hotness-store.js';
 import { HOT_TABLE_MAX_ENTRIES } from '../lib/hotness.js';
+// 留痕自 2026-10-26 起分级：默认只有 warn/error 到达用户侧（心跳类走 console.debug 静默）。
+// 本脚本靠抓 `[ops-trace]` 文本断言行为，故在加载插件前把门槛放到 debug。
+// 这是**测试自己开档**，不改生产默认。
+process.env.DSH_SUGGEST_GHOST_TRACE ??= 'debug';
 
 let failed = 0;
 const scenario = async (name, fn) => {
@@ -39,8 +43,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 被当过两次证据，两次都错（单一 exporter 丢 info/debug；错误消息里的子串还会造成假阳性）。
 let captured = [];
 const realLog = console.log;
-const captureOn = () => { captured = []; console.log = (...a) => { captured.push(a.map(String).join(' ')); }; };
-const captureOff = () => { console.log = realLog; };
+const realDebug = console.debug;
+const realInfo = console.info;
+const realWarn = console.warn;
+// 留痕分级（2026-10-26）后必须覆盖四个通道：心跳 debug、迁移 info、故障 warn。
+// 只挂 console.log 会让「缺某一行」看起来像行为坏了，实际只是打到别的流。
+const captureSink = (...a) => { captured.push(a.map(String).join(' ')); };
+const captureOn = () => {
+  captured = [];
+  console.log = captureSink;
+  console.debug = captureSink;
+  console.info = captureSink;
+  console.warn = captureSink;
+};
+const captureOff = () => {
+  console.log = realLog;
+  console.debug = realDebug;
+  console.info = realInfo;
+  console.warn = realWarn;
+};
 
 /**
  * 真栈 + **只把 `open()` 包一层拒绝**：前 `rejectTimes` 次抛 `already-open`（与宿主同一种错误），

@@ -30,6 +30,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+// 留痕自 2026-10-26 起分级：默认只有 warn/error 到达用户侧（心跳类走 console.debug 静默）。
+// 本脚本靠抓 `[ops-trace]` 文本断言行为，故在加载插件前把门槛放到 debug。
+// 这是**测试自己开档**，不改生产默认。
+process.env.DSH_SUGGEST_GHOST_TRACE ??= 'debug';
+
 import {
   COMPLETION_DEADLINE_CODE,
   COMPLETION_DEADLINE_MS,
@@ -796,7 +801,10 @@ run('traceFault 的分桶与节流规则本体未变（7b 的复刻件因此仍�
   // 这三条 match 就是那个联动提醒，不是装饰。
   assert.match(hostSource, /const key = `\$\{kind\}\|\$\{faultSignature\(message\)\}`;/, '分桶键变了：7b 的 printer 复刻失效');
   assert.match(hostSource, /if \(seen !== 1 && seen % every !== 0\) return;/, '节流规则变了：7b 的 printer 复刻失效');
-  assert.match(hostSource, /traceOps\(`\$\{message\} \[\$\{kind\} #\$\{seen\}\]`\)/, '打印格式变了：累计计数不在报文里，阈值取舍的依据就没了');
+  // 2026-10-26：留痕改为分级通道（`traceAt(level, …)`），格式本体 `${message} [${kind} #${seen}]`
+  // 未变——变的只是投递级别（默认 debug 静默、故障 warn 可见）。这里钉住的仍是
+  // 「累计计数必须在报文里」，不是「必须叫 traceOps」。
+  assert.match(hostSource, /traceAt\(level, `\$\{message\} \[\$\{kind\} #\$\{seen\}\]`\)/, '打印格式变了：累计计数不在报文里，阈值取舍的依据就没了');
 });
 
 // ── 8b. 前缀豁免抢占判据（2026-10-22「幽灵永不出」的修复本体）────────────────

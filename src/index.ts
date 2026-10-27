@@ -17,6 +17,7 @@
 import { statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import z from '@deepseek-ai/schemastery';
+import { traceAt, traceNote } from './trace.js';
 import type { Volatile } from '@deepseek-ai/cosmokit';
 import type { Context } from '@deepseek-ai/cordis';
 import type { Session, SessionId } from '@deepseek-ai/dsh-session';
@@ -419,7 +420,7 @@ export const PULL_REPEAT_TRACE_EVERY = 5;
  * 不属于「可清理的调试噪声」，别把它和现场 dump 一起删。
  */
 const traceOps = (message: string): void => {
-  console.log(`[dsh-suggest-ghost][ops-trace] ${message}`);
+  traceAt('debug', message);
 };
 
 /**
@@ -443,7 +444,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   // 每次挂载打一行，回答两件事：**这个进程现在跑的是哪份构建**（mtime），以及
   // 刚才那次改动有没有真的把模块换进来（hmr partialReload 会重新 apply）。
   // 只在挂载时出现，正常一次进程一到几行，不是可清理的调试噪声。
-  traceOps(`apply called; artifact mtime=${LOADED_ARTIFACT_MTIME?.toISOString?.() ?? 'unknown'}`);
+  traceNote(`apply called; artifact mtime=${LOADED_ARTIFACT_MTIME?.toISOString?.() ?? 'unknown'}`);
   const resolved = resolveConfig(config);
   const states = new WeakMap<Session, SessionState>();
   const tracked = new Set<SessionState>();
@@ -560,13 +561,19 @@ export function apply(ctx: Context, config: GenerateConfig): void {
    *   历史上 `_ops` 清空的 nested-transaction 拒绝在一个进程里刷了 372 行同样的报文，
    *   那本身就是噪声；但一次都不打就又回到「静默失败」，所以是节流而不是静音。
    */
-  const traceFault = (kind: string, message: string, every = 50): void => {
+  const traceFault = (
+    kind: string,
+    message: string,
+    every = 50,
+    level: 'warn' | 'info' | 'debug' = 'warn',
+  ): void => {
     const key = `${kind}|${faultSignature(message)}`;
     const seen = (faultCounts.get(key) ?? 0) + 1;
     faultCounts.set(key, seen);
     if (seen !== 1 && seen % every !== 0) return;
-    traceOps(`${message} [${kind} #${seen}]`);
-    ctx.logger.warn(`dsh-suggest-ghost: ${message}`);
+    // warn = 故障（进崩溃转储）；显式传 debug 的是「会被补写」的中间态，不算故障。
+    traceAt(level, `${message} [${kind} #${seen}]`);
+    if (level === 'warn') ctx.logger.warn(`dsh-suggest-ghost: ${message}`);
   };
 
   let lastLiveTracedApplied: number | undefined;
@@ -1302,6 +1309,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
             inlineMinChars: cfg.inlineMinChars,
           }),
           decision.every,
+          decision.level,
         );
         return;
       }
@@ -1344,9 +1352,10 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       if (decideInflightPreemption(completionInflightDraft.get(sessionId), draft) === 'keep') {
         // 这条 complete 被消费但**不产生生成动作** ⇒ 必须留痕（#17 教训：「写了没动」
         // 不可见）。连打期每 1~3 字一条，属正常态，按类节流。
+        // 草稿变长 ⇒ 保留在途生成，这是**正常态**（连打期每 1~3 字一条）⇒ 心跳级。
         traceFault('completion-inflight-extends',
           `completion skip: draft only grew, in-flight generation kept (${sessionId} draftChars=${draftChars} inflightChars=${(completionInflightDraft.get(sessionId) ?? '').length})`,
-          20);
+          20, 'debug');
         return;
       }
       existing.abort();
@@ -2064,10 +2073,13 @@ export function apply(ctx: Context, config: GenerateConfig): void {
               pendingHotPayload = hotPayload;
               pendingHotFingerprint = hotFingerprint;
             }
+            // 已重新入队、会被补写 ⇒ 中间态，不是故障（同 push-nested 的判据）。
+            // 真补救失败走 `hot-drain-exhausted`（warn），那才是要看的。
             traceFault(
               'hot-write-refused',
               `hot write refused (${triage.cls}) re-staged=${pendingHotPayload === hotPayload ? 1 : 0} after=${Date.now() - pushStartedAt}ms: ${text}`,
               20,
+              'debug',
             );
           }
           if (payload === null) return; // 这次写只带了热度格：没有建议格可排队
@@ -2084,9 +2096,18 @@ export function apply(ctx: Context, config: GenerateConfig): void {
             // `sandbox.greps` 里根本没有 `push write refused` 这一条（只有 `hot write refused`
             // 与 `push refused inside settings transaction`），`push-failure-triage-smoke`
             // 断言的是分诊函数返回的 `cls`/`kind`，不是报文里的字面串。
+            // **这是「已排队、会被补写」的中间态，不是故障** ⇒ 心跳级（默认静默）。
+            // 实测 live：953 次 nested 拒绝对应 960 次 deferred 落地、0 次耗尽——
+            // 它全部被补回来了，打在用户侧只是噪声。真补救失败会走另一条
+            // `deferred … dropped reason=attempts-exhausted`（warn 级，永远可见）。
+            //
+            // 报文形状一字未动：`hmr-write-loop-smoke` 的 A3/A3b/A3c 按
+            // `/push write refused .*carriedCompletion=1/` 找载体并**要求 `after=` 在场**，
+            // 节流口径（`carriesCompletion ? 1 : 50`）也保持原样（`=debug` 档下要能复现）。
             traceFault(triage.kind,
               `push write refused (${triage.label}) (rev=${rev} queued${carriesCompletion ? ` carriedCompletion=1 after=${Date.now() - pushStartedAt}ms` : ''}): ${text}`,
-              carriesCompletion ? 1 : 50);
+              carriesCompletion ? 1 : 50,
+              'debug');
             // **主路径：排队补写**（建议格走 #47 那条硬化路径，语义未动）。
             // 排队之后**不**清指纹：载荷已经在槽里，清了指纹反而让同一内容的下一次推送
             // 再走一遍必被拒的即时写；槽项被丢弃且没有落盘时才把指纹放开。
@@ -2224,7 +2245,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     // 先淘汰「补了也没意义」的项，再取：顺序反过来就会把陈旧载荷先写回去。
     for (const evicted of deferred.evict(now)) {
       const item = evicted.item;
-      traceOps(
+      traceAt('warn', // 真丢数据 ⇒ 告警级
         `deferred ${deferredLabel(item.kind)} dropped reason=${evicted.reason} age=${evicted.ageMs}ms attempts=${evicted.attempts}`
         + `${item.kind === 'push' ? ` rev=${item.rev ?? 'n/a'} carriedCompletion=${item.carriesCompletion ? 1 : 0}` : ''}`,
       );
@@ -2255,7 +2276,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     if (deferredWaitSince !== null) {
       const waitedMs = now - deferredWaitSince;
       deferredWaitSince = null;
-      traceFault('deferred-wait', `deferred drain waited for the in-flight write to land before taking the lock (waitedMs=${waitedMs})`, 50);
+      // 等锁后照常拿到并写成功 ⇒ 正常互斥，不是故障。真正的卡死表现为
+      // `lock-timeout`（那条仍是 warn）。
+      traceFault('deferred-wait', `deferred drain waited for the in-flight write to land before taking the lock (waitedMs=${waitedMs})`, 50, 'debug');
     }
     // 热度格补写：借这一次 tick 试一把（条件与成功回调上的搭便车共用一个出口，见
     // `tryDrainHotPayload`）。这条路是事务外锚点，也是「被 HMR 事务拒绝」的合法出口——
@@ -2347,8 +2370,10 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         // 成功清空是**常态**（每批至多一次）：每批一行是终端噪音的第二来源。走 traceFault
         // 节流——第一次必打（证明「补清空」这条链在通），之后每 20 次一行带计数；
         // 失败/refused 行不受影响（那些才是要看的）。
+        // **成功**清空，一次正常收口 ⇒ 心跳级。注释原文就写着「成功清空是常态」；
+        // 走 warn 会把它当故障刷给用户。
         traceFault('ops-clear-landed',
-          `deferred _ops cleared after consume after=${Date.now() - queuedAt}ms attempts=${item.attempts + 1}`, 20);
+          `deferred _ops cleared after consume after=${Date.now() - queuedAt}ms attempts=${item.attempts + 1}`, 20, 'debug');
       },
       (error: unknown) => retryDeferred(item, error),
     );
@@ -2524,6 +2549,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       return;
     }
     // 在途期间同种槽已经被更新的入队占住：旧项确实被取代了，丢弃并放开指纹。
+    // `superseded-on-retry` 是**正常**的合并（更新的载荷已在队列里），不是故障 ⇒ 心跳级。
     traceOps(`deferred ${label} dropped reason=superseded-on-retry age=${Date.now() - item.enqueuedAt}ms`);
     if (item.kind === 'push') releaseDeferredPushFingerprint(item);
   }
@@ -2726,7 +2752,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           // 载荷留在盘上等补清空的代价是「进程重启后可能重放一次」（index 启动对账那段
           // 已记），而在盘上有新载荷时无条件清空会把 client 刚写、还没消费的 op 直接吃掉。
           deferred.enqueueClearOps(consumedPayload, Date.now());
-          traceFault(triage.kind, `_ops clear refused (${triage.label}) (queued for the apply()-time pump; payload stays on disk until then; re-consume is blocked only by the in-process payload guard): ${text}`);
+          // 已排队等 apply() 期补写 ⇒ 中间态，不是故障（与 push-nested 同判据）。
+          traceFault(triage.kind, `_ops clear refused (${triage.label}) (queued for the apply()-time pump; payload stays on disk until then; re-consume is blocked only by the in-process payload guard): ${text}`, 50, 'debug');
           return;
         }
         traceFault(triage.kind, `_ops clear failed (${triage.label}; payload stays on disk and will be re-read on next update): ${text}`);

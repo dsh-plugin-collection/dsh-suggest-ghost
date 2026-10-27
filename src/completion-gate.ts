@@ -94,6 +94,12 @@ export interface CompletionTrace {
   readonly kind: string;
   /** 节流阈值：第 1 次必报，之后每 `every` 次报一条带累计计数的。 */
   readonly every: number;
+  /**
+   * 投递级别（2026-10-26 留痕分级）。
+   * `warn` = 真故障、要人看；`debug` = 正常出口的心跳，默认静默。
+   * 缺省 `warn`（保守：宁可多报，不可漏掉故障）。
+   */
+  readonly level?: 'warn' | 'debug';
 }
 
 /**
@@ -107,23 +113,23 @@ const TRACES = {
   // 配置态异常：正常运营下这个分支**不该**被走到（client 在开关关闭时不该再发 complete
   // op），走到了就是契约不符。但一旦开关真的被关掉，每一次停顿都会命中它，默认 50 太吵
   // 也太迟——20 次一条，既能在现场里被看见，又不会盖过别的留痕。
-  'inline-disabled': { kind: 'completion-skip', every: 20 },
+  'inline-disabled': { kind: 'completion-skip', every: 20, level: 'debug' },
   // 阈值之下的短草稿是**正当**的不生成，但它是「25 次消失」里最可能的解释之一，
   // 必须能统计到。同样是每次停顿都可能命中，取 20。
-  'draft-too-short': { kind: 'completion-skip', every: 20 },
+  'draft-too-short': { kind: 'completion-skip', every: 20, level: 'debug' },
   // client 报了一个 host 不认的会话：真异常，且一旦出现就是**成串**的（同一个失效
   // 会话 id 会被反复重放），所以阈值比上面两条更紧，取 10 条一次。
-  'session-missing': { kind: 'completion-skip', every: 10 },
+  'session-missing': { kind: 'completion-skip', every: 10, level: 'debug' },
   // 出口 4：每次用户改草稿都可能命中（在途实测 19~28s，远大于连续打字时两次停顿的间隔，
   // 所以「前一次还在飞、后一次已经到」是常态而不是例外），
   // 是全部出口里最高频的一条。默认 50 的问题不是吵，而是**看不见量**：本次故障一个
   // 观测窗口里总共才 30 次消费，阈值 50 意味着除了第一条之后整个窗口不再有任何一条，
   // 「被抢先发生了多少次」又变回不可知。取 10：一次 30 消费的窗口最多 3 行（#1/#10/#20），
   // 而真正的打字风暴（数百次）也只按 1/10 收敛，且每行都带累计计数。
-  'superseded': { kind: 'completion-preempted', every: 10 },
+  'superseded': { kind: 'completion-preempted', every: 10, level: 'debug' },
   // 出口 5：与出口 4 同源（`existing.abort()` 与卸载清理），同样每 keystroke 级频率，
   // 同样取 10。历史上这一支**一个字都不打**，是本次故障最难查的那条。
-  'aborted': { kind: 'completion-aborted', every: 10 },
+  'aborted': { kind: 'completion-aborted', every: 10, level: 'debug' },
   // 超时：**逐次必报（every 1）**。这不是风格选择，是沙箱实测逼出来的。上一版取 5，
   // 现场是：第一次停顿打出 `[completion-timeout #1]`，第二次停顿 20 秒内一行都没有——
   // 而判死调用确实发生了两次，第二次被同一个桶吞掉（`faultSignature` 把会话 id 折成
@@ -135,11 +141,11 @@ const TRACES = {
   // 先例就在同一条通道上：
   // `traceFault('push-nested', …, carriesCompletion ? 1 : 50)`——丢了用户正在等的那份
   // 续写就不节流。
-  'timeout': { kind: 'completion-timeout', every: 1 },
+  'timeout': { kind: 'completion-timeout', every: 1, level: 'warn' },
   // 真实失败：**沿用既有 kind 与既有阈值（traceFault 默认 50）**，既有报文措辞也逐字
   // 保持不变——fault-signature-smoke 与现场 grep 都依赖 `completion failed for session`
   // 这条旧串。
-  'failed': { kind: 'completion-failed', every: 50 },
+  'failed': { kind: 'completion-failed', every: 50, level: 'warn' },
 } satisfies Record<CompletionExitReason, CompletionTrace>;
 
 /** 全部出口类别的枚举（冒烟按它做穷尽断言，新增类别不出表就红）。 */
@@ -167,7 +173,14 @@ export function completionExitTrace(reason: CompletionExitReason): CompletionTra
 /** 判定结果：继续生成 / 停下并留痕（每条出口都带 kind）。 */
 export type CompletionGateDecision =
   | { readonly action: 'proceed'; readonly reason: 'generate' | 'deliver' }
-  | { readonly action: 'trace'; readonly reason: CompletionExitReason; readonly kind: string; readonly every: number }
+  | {
+      readonly action: 'trace';
+      readonly reason: CompletionExitReason;
+      readonly kind: string;
+      readonly every: number;
+      /** 投递级别：`warn` = 真故障；`debug` = 正常出口，默认静默。 */
+      readonly level: 'warn' | 'debug';
+    }
   | { readonly action: 'skip'; readonly reason: 'already-reported'; readonly reportedAs: CompletionExitReason };
 
 /**
@@ -180,6 +193,7 @@ const traceOf = (reason: CompletionExitReason): Extract<CompletionGateDecision, 
   reason,
   kind: TRACES[reason].kind,
   every: TRACES[reason].every,
+  level: TRACES[reason].level ?? 'warn',
 });
 
 /** 入口段（还没发起生成）的判定输入。**只接受字符数**，不接受草稿正文。 */

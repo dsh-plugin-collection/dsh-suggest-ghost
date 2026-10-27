@@ -34,6 +34,10 @@ import assert from 'node:assert/strict';
 import { Context, Service } from '@deepseek-ai/cordis';
 import { SessionStore } from '@deepseek-ai/dsh-session';
 import { apply as applyHost, inject as hostInject, name as hostName } from '../lib/index.js';
+// 留痕自 2026-10-26 起分级：默认只有 warn/error 到达用户侧（心跳类走 console.debug 静默）。
+// 本脚本靠抓 `[ops-trace]` 文本断言行为，故在加载插件前把门槛放到 debug。
+// 这是**测试自己开档**，不改生产默认。
+process.env.DSH_SUGGEST_GHOST_TRACE ??= 'debug';
 
 /** 插件的 settings 命名空间：0.1.7 起 = Loader 条目 id（内核把插件 Config 投影成表单）。 */
 const NS = 'suggest-ghost';

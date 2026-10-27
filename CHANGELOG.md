@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### 日志
+
+- **留痕默认静默：健康进程从 9294 行降到 0 行，只有告警/错误到达用户侧。**
+  此前所有常态留痕（`push landed` / `hot push landed` / `ops consumed` / `fiber=N …` /
+  已被补救的 `HMR nested` 拒绝等）都走 `console.log`，用户开着终端或看
+  `~/.dsh/dsh-web.log` 时，这些行把真正需要看的东西埋掉了。实测一次健康长跑：
+  **9294 行 / 单一实例**，其中 59% 是「一切正常」的确认心跳与「已成功补救」的中间态。
+
+  新增 `src/trace.ts` 做分级投递（**不是**删日志）：
+
+  | 级别 | 默认 | 内容 |
+  |---|---|---|
+  | `warn` / `error` | **永远打印** | 真故障、补救失败、丢数据；不受任何开关影响 |
+  | `info` | 静默 | 状态迁移（apply、fiber 就位、域开关/恢复） |
+  | `debug` | 静默 | 心跳与中间态 |
+
+  开关：`DSH_SUGGEST_GHOST_TRACE=debug`（全量）/ `info` / `warn`（=默认）/ `off`。
+  未设或无法识别一律等于 `warn`。**默认静默用 `console.debug` 实现、不 `return`**，
+  所以信息没被删掉，开 `debug` 能原样拿回全部留痕（实测启动 0 行 ↔ debug 档 5 行）。
+
+  几处判据（都是实测定的，不是偏好）：
+
+  - `HMR nested` 拒绝 / `ops-clear-nested` / `hot-write-refused` / `deferred-wait` ——
+    **已入补写队列、会被补写**的中间态，降 `debug`。实测 953 次 nested 拒绝对应
+    960 次 deferred 落地、**0 次耗尽**，它全部被补回来了。真补救失败走
+    `dropped reason=attempts-exhausted`，那条仍是 `warn`。
+  - `ops-clear-landed`（成功清空）、`completion-inflight-extends`（草稿变长）、
+    `completion-aborted`（用户中断）——正常出口，降 `debug`。
+  - 完成链 7 个出口逐个标了 `level`，不再靠「默认 warn」兜底：
+    `timeout` / `failed` 是 `warn`（真挂住 / 真失败），其余五个是 `debug`。
+  - `traceFault` 改成 level-aware（默认 `warn`）——否则分级会**连故障一起静默**。
+
+  配套：12 个靠抓 `[ops-trace]` 文本断言的脚本补了 `console.debug/info/warn` 捕获
+  （只挂 `console.log` 会把「打到别的流」误判成「留痕没出现」），并在加载插件前
+  显式开档——**测试自己开档，不改生产默认**。
+
 ### 度量
 
 - **`pull-ack-split` 的归类名把「宿主写了凭证」说成「客户端确认了」**（#91 落地后 16:20
