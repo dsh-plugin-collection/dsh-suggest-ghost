@@ -367,3 +367,79 @@ checkout 基线是 **7** 条，多出的 `src/client/index.ts(30,21)` TS2307
   `react:`；`injects` 是完整 specifier 却被拼到已以 `@deepseek-ai` 结尾的目录上
   （拼成 `@deepseek-ai/@deepseek-ai/...`）；把 `dsh.client.inject` 当 seed 词判
   （它们是**启动图行**，正确判据是"树里有没有这个包"）。
+
+## 8. UI 面 + 功能面：三代次真 GUI 重验（2026-10-27，构建 `938048b` = 0.7.0）
+
+矩阵脚本（`verify-across-kernels.mjs`）只覆盖装配/门禁/类型/投影，注释里自己承认
+**没有覆盖 client 侧、不截图**。本节补的就是那两面：**用户到底看不看见浅灰幽灵文字**。
+判据是"真正被用户感知的入口"（真 GUI 发真问题 → 真模型回合 → 建议 → `_push` →
+composer 里的 overlay），**没有调任何内部 handler**。
+
+### 8.1 结论
+
+| 判据 | 0.1.7-rc.2 | 0.2.0-rc.2 | 0.2.1-rc.2 |
+|---|---|---|---|
+| ① composer 出现浅灰幽灵（截图） | ✅ 「如何创建额外工作目录」10 字 | ✅ 「保留改动那条命令就行」10 字 | ✅ 「怎么用 git worktree 签出新分支」22 字 |
+| ② 同次 `_push`：rev 递增 + suggestion 非空 + `final=true` | ✅ rev=3 final=true frame=1 | ✅ rev=7 final=true frame=1 | ✅ rev=9 final=true frame=1 |
+| ③ 健康启动无三条新 warn | ✅ 三条各 0 命中 | ✅ 同 | ✅ 同 |
+| ④ 设置卡可打开（client 面两个 inject 真的可用） | ✅ 插件页出现本插件卡与描述原文 | ✅ 同 | ✅ 同 |
+| ⑤ 重启一次后热表不回零 | ✅ `hotness restored n=1 tableSize=1`，`_hot total=1` | ✅ `n=3 tableSize=3`，`total=3` | ✅ `n=1 tableSize=1`，`total=1` |
+
+**三代全绿。** 每代次都是**该代次自己的 `dsh` bin** 起的实例（`/proc/<pid>/cmdline` 逐次
+核过，例如 `node /home/wujue/dsh-versions/0.1.7-rc.2/node_modules/.bin/dsh --profile web --port 0 --no-open`），
+插件是**实体副本**（`apply called; artifact mtime` 三代同一份 `938048b` 构建），
+`@deepseek-ai` 走**整目录**软链，冷启动、无 HMR。
+
+### 8.2 `supersedes`（旧证据为什么不算了）
+
+`docs/cross-kernel-shots/` 里 `<代次>-PASS.png` 三张产出于 `4b72fae`（#95）。
+`src/client/**` 与 `lib/client.js` 自那以后**一字未动** ⇒ 显示路径的旧证据本身仍成立；
+但截图之后宿主侧动了 4 次，其中 **`802ef61`（0.7.0 发布，"清掉包内的本机绝对路径"）
+改的就是产物字节** ⇒ "跑的是哪份产物"这个问题在旧截图上已经答不了。
+故本轮重拍为 `<代次>-PASS-0.7.0.png`，**旧三张保留**（它们是"为什么曾经要修"的历史证据，
+尤其 `0.1.1-rc.2-FAIL.png` 与 `-namespace.png` 那组对照）。
+
+### 8.3 四条方法学坑（每条都曾在我手上造成**假红**，写下来给后来人）
+
+1. **默认阈值静音 info ⇒ "日志里没有 `apply called`" 不等于插件没挂载。**
+   该留痕是 `traceNote` = **info** 级（`src/trace.ts:104`、`src/index.js:322`），
+   默认阈值 `warn` 直接丢弃。设 `DSH_SUGGEST_GHOST_TRACE=debug` 后同一进程立刻出全痕。
+   这正是 #97 那条纪律的又一次命中：**判"没发生"之前，先证明"发生了就一定被打印"。**
+2. **工作区选择器的入口与就绪判据都按代次不同**：
+   - 0.1.7-rc.2 上点 composer 的 `aria-label="选择工作区"` **不会**开选择器（点完 dialog 仍为空），
+     真入口是侧栏 `aria-label="添加工作区"`；
+   - 选择器的**目录列表是异步加载**的，打开后立刻查行 ⇒ "列表里没有那一行"假红；
+   - 「选择工作区」字样在侧栏工作区行上**长期存在** ⇒ 就绪与否要看
+     `composer().dataset.phase !== 'inert'`，不能看那个字样消没消失。
+3. **模型会返回空 ⇒ `suggestion dropped (empty or filtered)` 不是插件/代次缺陷。**
+   0.2.0-rc.2 那轮前两次尝试都是 dropped、第三次才出建议；按技能要求换问题重试，
+   **不要**把这种情况记成红。判据上区分得很清楚：`generated` 与 `dropped` 是两条不同留痕。
+4. **`grep -c 'push landed'` 会把 `hot push landed` 一起算进去**（子串匹配）。
+   本轮 0.2.1 那个 17 是含热度帧的总数；要数"建议格落地"得按前缀分开数。
+
+### 8.4 复现
+
+```bash
+# 每一代次：建沙箱（实体副本 + 该代次自己的 bin + 冷启动）→ 跑一轮 → 重启核热表
+DSH_SUGGEST_GHOST_TRACE=debug node scripts/dev-sandbox.mjs \
+  --home ~/dsh-sbx-xk-<简写> --rewrite 'port: 3983=port: <各自端口>' \
+  --bin ~/dsh-versions/<代次>/node_modules/.bin/dsh
+node scripts/cross-kernel/gui-round.mjs --home ~/dsh-sbx-xk-<简写> --gen <代次> \
+  --ws ~/xk-probe-ws --shot docs/cross-kernel-shots/<代次>-PASS-0.7.0.png
+node scripts/dev-sandbox.mjs --home ~/dsh-sbx-xk-<简写> --deploy . --bin …（同上）
+grep -a 'hotness restored' ~/dsh-sbx-xk-<简写>/logs/sbx.log | tail -1
+```
+
+驱动 `scripts/cross-kernel/gui-round.mjs` 的页内选择器与操作顺序抄自
+`scripts/hot-yield-ratio.mjs`（同机多代次实测跑通的那条路）。token 全程只从
+`<home>/logs/sbx.log` 取、所有输出过 `redact()`，每轮自证明文进 stdout 次数 = 0。
+
+### 8.5 未判定（本轮**没有**覆盖的，别当成绿）
+
+- **0.1.5-rc.1**：本机无该代次树（只有 `0.1.5-rc.3`）⇒ UI 面**未判定**。
+- **0.2.1-rc.3 / rc.4**：树在（`~/dsh-versions/`），但不在本片分片内 ⇒ 未跑。
+- **GUI 面的并发/多标签页语义**：本轮未测（task-31 在 0.2.1 上测过 typert 流的多标签页，
+  与本轮的 settings 通道不是同一条路，不能互相顶替）。
+- **对照实验缺失**：没有做"故意去掉 `remote.settings` 声明 ⇒ 该代次应当 failed"的反证，
+  所以 ④ 只证明了三代**能**用，不证明"这一代必须有它才行"。0.1.1 那条硬约束的对照
+  实验仍在 `docs/cross-kernel-shots/README.md` 里记着，未受本轮影响。
