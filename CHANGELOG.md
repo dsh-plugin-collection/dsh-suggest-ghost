@@ -3,6 +3,32 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### 修复
+
+- **修回"插件在三个代次上整个不装载"**（#110 / PR #112，回归由 #109 引入）：`@deepseek-ai/dsh-typert-protocol`
+  被写进 `peerDependencies`（并在 `peerDependenciesMeta` 标了 `optional: true`），而 **≤0.2.0 的准入门禁是
+  peers-only 语义 —— 只读 `peerDependencies` 的范围、不看 `optional` 元数据** ⇒ 一个"可选"声明被当**硬要求**执行
+  ⇒ **0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 上幽灵、补全、热度一起没**
+  - 修法是把协议包**移出 peer 声明面**（不用通配放宽），运行侧维持 #109 的「动态 import + 拿不到即降级」
+    ⇒ **零兼容面变化、实现逻辑一字未动**（`src/stream-service.ts` 只多了一段"别再犯第二次"的注释）
+  - ⚠️ **0.1.2-rc.1 / 0.1.5-rc.3 能装载不算设计正确** —— 那两代**不定义准入门禁**，所以既不会红也不会绿，
+    诚实结论是 **UNDETERMINED**（`verify:kernels` 因此必然 EXIT 2；判据是「**红 0 且 EXIT ≤ 2**」，不是"EXIT 必须 0"）
+  - **根因比"lead 没跑门禁"更深**：`verify:kernels` 当时的 verdict 只量**装配 + 投影**，**不调**
+    `evaluatePluginCompatibility` ⇒ **就算跑了也不会红**。⇒ 真正修的是把**准入分面接进那条合并入口**
+    （现在它作为子进程被调用），并钉住退出码优先级：**红(1) 压过 未判定(2) 压过 全绿(0)** —— 之前"红 3"会被
+    合成出 EXIT 2，把"有红"读成"只是没测到"
+  - 可证伪的闸：`gate-matrix --self-test` 六条，含两条新的 —— ① 真实 manifest 里**没有**该 peer 声明；
+    ② **把它原样加回去必须被 0.1.7-rc.1 拒绝**（② 才要紧：谁把 ① 改成"数条目数"，② 立刻 FAIL）
+  - 运行时复核（不是只停在声明面）：**0.1.7-rc.2 零豁免** ⇒ `skipping=0`、`apply called`、`stream channel registered`、
+    真回合出幽灵 18 字；**0.1.2-rc.1** ⇒ 仍装载且出**整块**幽灵 16 字（没把不支持流式的老路径带坏）；
+    **0.2.1-rc.2** ⇒ 开关开、`subs=1`、4/4 流帧序通过、提前量 29–145ms（中位 104ms）
+  - 纪律进文档：`docs/gitea-workflow.md` 新 §9 —— **改 `peerDependencies` / `peerDependenciesMeta` / `dependencies`
+    任一项的 PR，合并前必须跑 `npm run verify:kernels` 并把逐代次结果原样贴进 PR**
+    （**入口存在 ≠ 入口覆盖了这个面**）
+  - 两处被撤回的错判（写进台账 §14.10，防复用）：**`row-missing` 是驱动缺陷不是装载回归**（新工作区不在
+    picker 的"最近用过"里，又漏了"关掉重开再判"）；**"无终帧"是合法行为不是帧序违规**（改草稿即撤流 ⇒
+    一条流可以提前收尾，权威态仍来自那一次 `_push`），现在只判"收过终帧的流"，无终帧记 `earlyClose`
+
 ### 新增
 
 - **流式投递（幽灵文字逐帧增长）**（#108 / PR #109）：新增设置项 `streamingDelivery`（**默认 `false`**，volatile）。
