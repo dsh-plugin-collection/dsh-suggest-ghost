@@ -1,0 +1,87 @@
+{
+  "label": "off-B",
+  "home": "/home/wujue/xk-gif-0212",
+  "clipRect": {
+    "x": 394.5,
+    "y": 301,
+    "width": 760,
+    "height": 248
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "ok": true,
+      "question": "怎么查看某个端口被哪个进程占用？",
+      "spanMs": 11138,
+      "frames": [
+        {
+          "tPage": 0,
+          "chars": 0,
+          "text": "",
+          "png": "r1-f01-t0c-0.png",
+          "shotLagMs": 28224
+        },
+        {
+          "tPage": 11137.9,
+          "chars": 8,
+          "text": "怎么杀掉这个进程",
+          "png": "r1-f02-t11138c-8.png",
+          "shotLagMs": 17134
+        }
+      ],
+      "streamConsoleLines": []
+    },
+    {
+      "round": 2,
+      "ok": true,
+      "question": "git worktree 和普通",
+      "spanMs": 6073,
+      "frames": [
+        {
+          "tPage": 0,
+          "chars": 0,
+          "text": "",
+          "png": "r2-f01-t0c-0.png",
+          "shotLagMs": 28206
+        },
+        {
+          "tPage": 6073.1,
+          "chars": 18,
+          "text": "怎么添加和删除一个 worktree",
+          "png": "r2-f02-t6073c-18.png",
+          "shotLagMs": 22181
+        }
+      ],
+      "streamConsoleLines": []
+    },
+    {
+      "round": 3,
+      "ok": true,
+      "question": "把当前目录最近一次提交撤销，命令",
+      "spanMs": 25557,
+      "frames": [
+        {
+          "tPage": 0,
+          "chars": 0,
+          "text": "",
+          "png": "r3-f01-t0c-0.png",
+          "shotLagMs": 28224
+        },
+        {
+          "tPage": 25557.2,
+          "chars": 35,
+          "text": "在 /home/wujue/xk-gif-ws 执行 git init",
+          "png": "r3-f02-t25557c-35.png",
+          "shotLagMs": 2714
+        }
+      ],
+      "streamConsoleLines": []
+    }
+  ],
+  "consoleLines": [
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream namespace bound"
+    }
+  ]
+}

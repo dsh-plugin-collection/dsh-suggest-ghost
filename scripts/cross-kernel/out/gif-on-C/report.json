@@ -1,0 +1,91 @@
+{
+  "gen": "0.2.1-rc.2",
+  "nominalLead": 1500,
+  "leadsMs": [
+    36,
+    90
+  ],
+  "med": 90,
+  "report": [
+    {
+      "round": 1,
+      "usable": true,
+      "kind": "streamed",
+      "frames": [
+        {
+          "t": 0,
+          "chars": 6,
+          "final": false
+        },
+        {
+          "t": 90,
+          "chars": 13,
+          "final": true
+        }
+      ],
+      "visibleSteps": [
+        {
+          "t": 0,
+          "chars": 6
+        },
+        {
+          "t": 90,
+          "chars": 13
+        }
+      ],
+      "leadMs": 90,
+      "wholeBlockAppearMs": null,
+      "authoritativePush": {
+        "rev": 2,
+        "bytes": 194,
+        "writeMs": 139
+      }
+    },
+    {
+      "round": 2,
+      "usable": true,
+      "kind": "streamed",
+      "frames": [
+        {
+          "t": 0,
+          "chars": 12,
+          "final": false
+        },
+        {
+          "t": 36,
+          "chars": 21,
+          "final": true
+        }
+      ],
+      "visibleSteps": [
+        {
+          "t": 0,
+          "chars": 12
+        },
+        {
+          "t": 36,
+          "chars": 21
+        }
+      ],
+      "leadMs": 36,
+      "wholeBlockAppearMs": null,
+      "authoritativePush": {
+        "rev": 4,
+        "bytes": 195,
+        "writeMs": 145
+      }
+    },
+    {
+      "round": 3,
+      "usable": false,
+      "why": "本轮没有可见增长步（终帧未带来新字符）",
+      "frames": [
+        {
+          "t": 0,
+          "chars": 0,
+          "final": true
+        }
+      ]
+    }
+  ]
+}

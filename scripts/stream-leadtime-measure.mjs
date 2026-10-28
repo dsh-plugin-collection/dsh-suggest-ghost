@@ -146,7 +146,12 @@ window.__m = {
     return { shown: visible && el.getAttribute('data-shown') === '1', text: (el.textContent ?? '') };
   },
   dismiss: async () => {
-    const labels = ['保留当前显示', '暂不开启', '以后再说', '知道了', '不用了', '保留原样', 'Continue', 'Got it', '暂不启用'];
+    // 「继续」是首启**「预览版说明」模态**的确认按钮（0.1.2 / 0.1.7 / 0.2.1 实测文案都是它）。
+    // 缺它 ⇒ 模态一直挡着 ⇒ composer 永远 inert ⇒ 整轮测到 0 帧，而失败长得像"插件没出建议"。
+    // task-42 就是靠补上它把录制跑通的（gui-round 一直有这个标签，我自己新写的两支脚本没有）。
+    // ⚠️ 这里点到的「继续」只在**首屏模态**里；**工作区选择器里的「继续」绝不能点**
+    //    （那条会选中别的工作区，§11 写过）—— picker 那条路在 setupWs 里单独处理，不经过本函数。
+    const labels = ['继续', '同意', '我已阅读', '保留当前显示', '暂不开启', '以后再说', '知道了', '不用了', '保留原样', 'Continue', 'Got it', '暂不启用'];
     for (let k = 0; k < 8; k += 1) {
       let hit = false;
       for (const d of [...window.__m.qa('[role=dialog]'), ...window.__m.qa('dialog[open]')]) {

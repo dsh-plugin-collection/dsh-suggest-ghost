@@ -1,0 +1,92 @@
+{
+  "label": "g0121b",
+  "home": "/home/wujue/xk-gif-0121",
+  "clipRect": {
+    "x": 394,
+    "y": 282,
+    "width": 760,
+    "height": 248
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "ok": true,
+      "question": "怎么查看某个端口被哪个进程占用？",
+      "spanMs": 6852,
+      "frames": [
+        {
+          "tPage": 0,
+          "chars": 0,
+          "text": "",
+          "png": "r1-f01-t0c-0.png",
+          "shotAfterReadMs": 20500
+        },
+        {
+          "tPage": 6852.2,
+          "chars": 10,
+          "text": "结束该端口占用的进程",
+          "png": "r1-f02-t6852c-10.png",
+          "shotAfterReadMs": 13648
+        }
+      ],
+      "streamConsoleLines": []
+    },
+    {
+      "round": 2,
+      "ok": true,
+      "question": "git worktree 和普通",
+      "spanMs": 5413,
+      "frames": [
+        {
+          "tPage": 0,
+          "chars": 0,
+          "text": "",
+          "png": "r2-f01-t0c-0.png",
+          "shotAfterReadMs": 20500
+        },
+        {
+          "tPage": 5412.8,
+          "chars": 17,
+          "text": "如何使用 git worktree",
+          "png": "r2-f02-t5413c-17.png",
+          "shotAfterReadMs": 15087
+        }
+      ],
+      "streamConsoleLines": []
+    },
+    {
+      "round": 3,
+      "ok": true,
+      "question": "把当前目录最近一次提交撤销，命令",
+      "spanMs": 0,
+      "frames": [
+        {
+          "tPage": 0,
+          "chars": 0,
+          "text": "",
+          "png": "r3-f01-t0c-0.png",
+          "shotAfterReadMs": 20500
+        }
+      ],
+      "streamConsoleLines": []
+    }
+  ],
+  "consoleLines": [
+    {
+      "level": "warning",
+      "text": "[dsh-suggest-ghost][ops-trace] stream unavailable, falling back to whole-block push: Cannot read properties of undefined (reading 'parse')"
+    },
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream unavailable session=session-fc38 note=namespace-missing"
+    },
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream unavailable session=session-0b68 note=namespace-missing"
+    },
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream unavailable session=session-7e8c note=namespace-missing"
+    }
+  ]
+}

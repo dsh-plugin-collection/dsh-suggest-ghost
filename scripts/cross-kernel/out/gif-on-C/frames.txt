@@ -1,0 +1,8 @@
+file '/home/wujue/workspace/dsh-plugins/wt/gif/scripts/cross-kernel/out/gif-on-C/stack-r1-1.png'
+duration 0.420
+file '/home/wujue/workspace/dsh-plugins/wt/gif/scripts/cross-kernel/out/gif-on-C/stack-r1-2.png'
+duration 0.750
+file '/home/wujue/workspace/dsh-plugins/wt/gif/scripts/cross-kernel/out/gif-on-C/stack-r2-1.png'
+duration 0.420
+file '/home/wujue/workspace/dsh-plugins/wt/gif/scripts/cross-kernel/out/gif-on-C/stack-r2-2.png'
+duration 0.750

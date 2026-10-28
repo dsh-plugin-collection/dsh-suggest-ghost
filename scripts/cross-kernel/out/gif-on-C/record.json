@@ -1,0 +1,114 @@
+{
+  "label": "on-C",
+  "home": "/home/wujue/xk-gif-0212",
+  "clipRect": {
+    "x": 394.5,
+    "y": 301,
+    "width": 760,
+    "height": 248
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "ok": true,
+      "question": "怎么查看某个端口被哪个进程占用？",
+      "spanMs": 9379,
+      "frames": [
+        {
+          "tPage": 0,
+          "chars": 0,
+          "text": "",
+          "png": "r1-f01-t0c-0.png",
+          "shotAfterReadMs": 18500
+        },
+        {
+          "tPage": 9378.6,
+          "chars": 13,
+          "text": "怎么杀掉这个占用端口的进程",
+          "png": "r1-f02-t9379c-13.png",
+          "shotAfterReadMs": 9121
+        }
+      ],
+      "streamConsoleLines": [
+        "[dsh-suggest-ghost][ops-trace] stream frame=1 final=0 chars=6 turn=1 t=19787",
+        "[dsh-suggest-ghost][ops-trace] stream frame=2 final=1 chars=13 turn=1 t=19877"
+      ]
+    },
+    {
+      "round": 2,
+      "ok": true,
+      "question": "git worktree 和普通",
+      "spanMs": 8041,
+      "frames": [
+        {
+          "tPage": 0,
+          "chars": 0,
+          "text": "",
+          "png": "r2-f01-t0c-0.png",
+          "shotAfterReadMs": 18500
+        },
+        {
+          "tPage": 8040.7,
+          "chars": 21,
+          "text": "给一个 git worktree 示例命令",
+          "png": "r2-f02-t8041c-21.png",
+          "shotAfterReadMs": 10459
+        }
+      ],
+      "streamConsoleLines": [
+        "[dsh-suggest-ghost][ops-trace] stream frame=1 final=0 chars=12 turn=1 t=38860",
+        "[dsh-suggest-ghost][ops-trace] stream frame=2 final=1 chars=21 turn=1 t=38896"
+      ]
+    },
+    {
+      "round": 3,
+      "ok": true,
+      "question": "把当前目录最近一次提交撤销，命令",
+      "spanMs": 0,
+      "frames": [
+        {
+          "tPage": 0,
+          "chars": 0,
+          "text": "",
+          "png": "r3-f01-t0c-0.png",
+          "shotAfterReadMs": 18500
+        }
+      ],
+      "streamConsoleLines": []
+    }
+  ],
+  "consoleLines": [
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream namespace bound"
+    },
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream open session=session-654e"
+    },
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream frame=1 final=0 chars=6 turn=1 t=19787"
+    },
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream frame=2 final=1 chars=13 turn=1 t=19877"
+    },
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream open session=session-54ca"
+    },
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream frame=1 final=0 chars=12 turn=1 t=38860"
+    },
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream frame=2 final=1 chars=21 turn=1 t=38896"
+    },
+    {
+      "level": "debug",
+      "text": "[dsh-suggest-ghost][ops-trace] stream open session=session-0665"
+    }
+  ]
+}
