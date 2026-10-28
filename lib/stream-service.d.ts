@@ -10,6 +10,14 @@
  * 所以这里只在函数内部动态 import，失败即返回 false ⇒ 调用方按"未启用"处理，
  * 生成路径与今天逐字一致。
  *
+ * ⚠️ **这个"可选"绝不能写进 `peerDependencies`**（#110 的成因，别再犯第二次）：
+ * ≤0.2.0 的准入门禁是 **peers-only 语义**，它只读 `peerDependencies` 的范围、
+ * **不看 `peerDependenciesMeta.optional`** ⇒ 一个"可选"声明被当**硬要求**执行，
+ * 直接把插件从 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 上抹掉（幽灵、补全、热度一起没）。
+ * 运行时"拿到就用、拿不到就降级"这件事**已经是完整实现**，声明面不需要它出现；
+ * `scripts/cross-kernel/gate-matrix.mjs --self-test` 现在把这条钉住
+ * （断言真实 manifest 内没有 `dsh-typert-protocol` 的 peer 声明）。
+ *
  * ## 为什么不需要 typert manifest / codegen
  *
  * 网关解析 endpoint 时有 **SRC 兜底**：严格注册表查不到就扫 `ctx.reflect.props`，凡实例带

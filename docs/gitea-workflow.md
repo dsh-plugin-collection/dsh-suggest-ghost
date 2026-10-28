@@ -242,3 +242,39 @@ grep -n -A3 '^- id: suggest-ghost$' ~/.dsh/profiles/web/cordis.patch.yml
 2. **命令没有输出 ≠ 成功**。实测：`git merge-base --is-ancestor A B` 没打印**就是没通过**，
    而它被转述成"是祖先 ⇒ 无冲突" —— 同一次 tea 报的冲突才是对的。
    ⇒ 与 §8 第 3 条同源：**决定性判据是退出码**，不是有没有打印东西。
+
+
+## 9. 依赖与 peer 面：合并前必须跑的那道闸（#110 的代价）
+
+**硬要求**：改动 `package.json` 的 `dependencies` / `peerDependencies` / `peerDependenciesMeta`
+中**任一项**的 PR，合并前必须跑 `npm run verify:kernels`，并把**逐代次结果**原样贴进 PR 描述。
+
+这条为什么值得单列一节：#109 把 `@deepseek-ai/dsh-typert-protocol` 写成
+`peerDependencies` + `peerDependenciesMeta.optional = true`，本意是"可选，拿不到就降级"。
+但 **≤0.2.0 的准入门禁是 peers-only 语义，只看 `peerDependencies` 的范围、不看 `optional` 标记**
+⇒ 一个"可选"声明被当**硬要求**执行，插件在 **0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2** 上
+**整个不装载**（不是流式没了，是幽灵、补全、热度一起没）。三道 RED 静默进了 main。
+
+⚠️ **一句必须写清的事实纠正**（lead 的自我归因只对了一半）：
+`verify:kernels` 当时的 verdict 量的是**装配 + 投影**，它**不调** `evaluatePluginCompatibility`
+⇒ **就算当时跑了也不会红**。真正看得见这件事的是 `scripts/cross-kernel/gate-matrix.mjs`。
+所以修的不只是"没跑"，而是**把门禁分面接进那条合并入口**：现在 `verify:kernels` 会跑 gate-matrix，
+并把它的 RED/UNDETERMINED 并进总退出码。⇒ **入口存在 ≠ 入口覆盖了这个面**，这两件事要分别核。
+
+两条判据：
+
+1. **0.1.2-rc.1 / 0.1.5-rc.3 这两代"能装载"不是设计正确** —— 它们的 `dsh-app-boot` 不定义
+   `evaluatePluginCompatibility`（矩阵里显式 `UNDETERMINED`）。拿"最老那代还能跑"去论证兼容性是错的：
+   **那两代根本没有闸**。
+2. **闸必须可证伪**。`node scripts/cross-kernel/gate-matrix.mjs --self-test` 现在断言两件事：
+   ① 真实 manifest 的 `peerDependencies` 里**没有** `dsh-typert-protocol`；
+   ② **把同一条声明原样加回去 ⇒ 0.1.7-rc.1 的门禁必须拒绝**。
+   ② 才是要紧的那条：哪天有人把 ① 改成"数 peer 条目数"这种空闸，② 会立刻 FAIL。
+   实测（2026-10-28，task-41）：加回去 ⇒ `[RED] ×3`；移出 ⇒ `0.1.7-rc.1 / 0.1.7-rc.2 /
+   0.2.0-rc.2 / 0.2.1-rc.2 = GREEN`、`0.1.2-rc.1 / 0.1.5-rc.3 = UNDETERMINED`（EXIT 2，
+   口径 0 全绿 / 1 有红 / 2 有未判定见技能 §2）。
+
+**不许用的修法**：把 `^0.2.1-rc.2` 放宽成 `*`。那等于把"不支持"说成"支持" ——
+正是 #96 删 0.1.1 时明确反对的那类含糊话。要么让它**不出现在被门禁读取的字段里**
+（运行时本来就是动态 import + 失败降级，声明面不需要它出现），要么按逐代**如实枚举**范围。
+

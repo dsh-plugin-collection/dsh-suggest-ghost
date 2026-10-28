@@ -518,6 +518,25 @@ async function selfTest() {
   // 0 = GREEN reachable: the real manifest passes.
   results.push(['real manifest passes on 0.1.7-rc.1', peersOnly(realManifest, {}, '0.1.7-rc.1') === undefined]);
 
+  // #110 的教训钉成断言：**"可选"依赖绝不写进 peers-only 门禁读取的字段**。
+  // ≤0.2.0 的门禁不看 peerDependenciesMeta.optional，只读 peerDependencies 的范围 ⇒
+  // 一个 optional 声明被当硬要求执行，插件从 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 上整个消失
+  // （幽灵、补全、热度一起没）。运行时"拿到就用、拿不到降级"已经是完整实现，声明面不需要它。
+  results.push([
+    'protocol package is NOT declared as a peer (optional:true is ignored by peers-only gates, #110)',
+    !Object.keys(realManifest.peerDependencies ?? {}).some((k) => k.includes('dsh-typert-protocol')),
+  ]);
+  // **反向可证伪**（比上面那条更要紧：它证明闸会咬，而不是"数条目"的假绿）。
+  // 把同一条声明原样加回去、其它一字不动 ⇒ 0.1.7-rc.1 的门禁必须拒绝。
+  // 若这条变 FAIL，说明该代门禁其实不读 peer ⇒ 那时要修的是闸，不是声明。
+  const backAsPeer = mutate(realManifest, (m) => {
+    m.peerDependencies['@deepseek-ai/dsh-typert-protocol'] = '^0.2.1-rc.2';
+  });
+  results.push([
+    'restoring it as a peer DOES get rejected by the peers-only gate (falsifiability proof)',
+    peersOnly(backAsPeer, {}, '0.1.7-rc.1') !== undefined,
+  ]);
+
   // Anti-vacuity must be able to FAIL: a generation whose >=9.0.0 mutant is accepted by BOTH
   // the engines probe and the peers probe is vacuous.
   const fakeVacuity = assess({

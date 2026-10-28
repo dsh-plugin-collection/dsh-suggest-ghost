@@ -376,22 +376,29 @@ try {
   say(`帧间提前量（同轮 首帧→终帧 页内时刻差）多帧轮数=${frameLeads.length}/${turns.length} `
     + `中位=${spreadMed ?? '—'}ms p90=${spreadP90 ?? '—'}ms 分布=${JSON.stringify(frameLeads)}`);
   say(`单帧轮数=${turns.filter((a) => a.length === 1).length}（这些轮流式无增益：模型只吐了一次正文增量）`);
-  // **帧序正确性**（不是"看起来有字"）：每轮 frame 必须从 1 起严格 +1、终帧唯一且是最后一帧。
-  // 这条判据是 #109 的 (c) 设计的全部风险面 —— 单调性来自宿主限频前的 seq，一旦跨轮串号，
-  // 客户端的归属校验会静默丢帧，界面表现为"偶尔不出字"，很难从 GUI 反推。
+  // **帧序正确性**（不是"看起来有字"）：**收过终帧**的那一条流，frame 必须从 1 起连续、
+  // 终帧唯一且落在最后一帧、前缀不回退。
+  // ⚠️ 判据边界（本轮实测纠正）：**一条流可以合法地没有终帧** —— 用户改草稿即撤流
+  //（`stream closed ... note=draft-changed`），那是 #109 硬约束 4「中途显示的内容允许被丢弃」
+  // 推到极致的样子：不是"被终帧修正"，而是"整条流提前收尾"。权威态仍来自随后那一次 `_push`。
+  // 我上一版把这种桶算成"终帧数≠1"的违规（exit 4），那是**断言写错**，不是产品缺陷。
   const orderViolations = [];
+  let earlyClose = 0;
   for (const arr of turns) {
     for (let k = 0; k < arr.length; k += 1) {
       if (arr[k].frame !== k + 1) orderViolations.push(`帧号不连续: ${JSON.stringify(arr.map((x) => x.frame))}`);
       if (arr[k].final && k !== arr.length - 1) orderViolations.push(`终帧不在最后一帧: ${JSON.stringify(arr.map((x) => x.final))}`);
     }
-    if (arr.filter((x) => x.final).length !== 1) orderViolations.push(`终帧数≠1(${arr.filter((x) => x.final).length})`);
+    const finals = arr.filter((x) => x.final).length;
+    if (finals > 1) orderViolations.push(`终帧不唯一(${finals})`);
+    if (finals === 0) earlyClose += 1;
     const chars = arr.map((x) => x.chars);
     if (chars.some((c, i) => i > 0 && c < chars[i - 1])) orderViolations.push(`前缀回退(净化前缀应单调不缩): ${JSON.stringify(chars)}`);
   }
   say(orderViolations.length === 0
-    ? `帧序判定：${turns.length} 轮全部通过（帧号连续 / 终帧唯一且末帧 / 前缀不缩）✓`
+    ? `帧序判定：${turns.length - earlyClose} 条收过终帧的流全部通过（帧号连续 / 终帧唯一且末帧 / 前缀不缩）✓`
     : `❌ 帧序违规 ${orderViolations.length} 处：${orderViolations.slice(0, 5).join(' | ')}`);
+  say(`提前撤流的桶=${earlyClose}/${turns.length}（改草稿即撤流，无终帧属预期，不计违规）`);
   if (orderViolations.length > 0) process.exitCode = 4;
   say(`页内留痕：帧行=${frameLines.length} 状态/帧行合计=${stateLines.length}`);
   say('  状态行=' + JSON.stringify(stateLines.slice(0, 8)));

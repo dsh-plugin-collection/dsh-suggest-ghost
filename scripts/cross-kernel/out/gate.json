@@ -1,8 +1,8 @@
 {
   "task": "task-1 (T-GATE)",
-  "generatedAt": "2026-10-28T06:35:41.739Z",
-  "nonce": "gate-44617ab8",
-  "pluginRoot": "/home/wujue/workspace/dsh-plugins/wt/xk-stream",
+  "generatedAt": "2026-10-28T07:53:35.304Z",
+  "nonce": "gate-db5ff246",
+  "pluginRoot": "/home/wujue/workspace/dsh-plugins/wt/peer-fix",
   "plugin": {
     "name": "dsh-suggest-ghost",
     "version": "0.7.0",
@@ -20,8 +20,8 @@
   "referencePlugin": null,
   "kernelRoot": "/home/wujue/dsh-versions",
   "dshHomeRedirected": {
-    "DSH_HOME": "/tmp/gate-44617ab8-qUsMPB",
-    "tempHome": "/tmp/gate-44617ab8-qUsMPB"
+    "DSH_HOME": "/tmp/gate-db5ff246-atVD89",
+    "tempHome": "/tmp/gate-db5ff246-atVD89"
   },
   "outOfBoundsCheck": {
     "scanned": "/home/wujue/.dsh",

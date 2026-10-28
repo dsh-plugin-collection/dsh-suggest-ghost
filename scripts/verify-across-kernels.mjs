@@ -501,7 +501,40 @@ mkdirSync(OUT_DIR, { recursive: true });
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const file = join(OUT_DIR, `across-kernels-${stamp}.json`);
 writeFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), versions: VERSIONS, sandboxDecision: 'no-unshare-no-container (justified in script header)', results }, null, 2)}\n`);
+// ---- 准入门禁（admission gate）必须在这一条合并入口里跑 ----
+// 上面那段 verdict 量的是**装配 + 投影**（插件起不起来、投影有没有落），它**不调
+// evaluatePluginCompatibility** ⇒ 在 peers-only 的代次（≤0.2.0）上，一个会被内核**直接拒绝装载**
+// 的 manifest 照样能跑到 GREEN。**#110 就是这么静默进 main 的**：三条 RED 只有 gate-matrix 看得见。
+// ⇒ 从这条起，改依赖/peer 面一定会被这道子进程闸拦住；`gate-matrix.mjs --self-test` 里另有
+//   「把那条 peer 声明原样加回去 ⇒ 门禁必须拒绝」的**可证伪**断言，所以这不是数条目数的假绿闸。
+const gateRun = (() => {
+  const r = spawnSync(
+    process.execPath,
+    [join(ROOT, 'scripts', 'cross-kernel', 'gate-matrix.mjs')],
+    { cwd: ROOT, encoding: 'utf8', timeout: 420_000, env: { ...process.env, DSH_TELEMETRY_DISABLED: '1' } },
+  );
+  const text = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+  const exitMatch = text.match(/EXIT (\d+)/);
+  return {
+    exit: exitMatch ? Number(exitMatch[1]) : 2,
+    red: (text.match(/^\s*\[RED\]/gm) ?? []).length,
+    und: (text.match(/^\s*\[UNDETERMINED\]/gm) ?? []).length,
+    lines: text.split('\n').filter((l) => /^\[(GREEN|RED|UNDETERMINED)\]/.test(l.trim()) || /^EXIT/.test(l.trim())),
+  };
+})();
+console.log('');
+console.log('准入分面（gate-matrix.mjs，用各代自己的 evaluatePluginCompatibility）：');
+for (const l of gateRun.lines) console.log(`  ${l.trim()}`);
+if (gateRun.exit !== 0) console.log(`  ⇒ 门禁分面 EXIT=${gateRun.exit}：RED = 声明支持但内核拒绝装载 ⇒ 整条命令判红`);
+
 const red = results.filter((r) => r.verdict === 'RED').length;
 const und = results.filter((r) => r.verdict === 'UNDETERMINED').length;
-console.log(`\n汇总：绿 ${results.length - red - und} / 红 ${red} / 未判定 ${und}；明细 ${file}`);
-process.exit(red > 0 ? 1 : und > 0 ? 2 : 0);
+console.log(`\n汇总：绿 ${results.length - red - und} / 红 ${red} / 未判定 ${und}；明细 ${file}；`
+  + `门禁分面 红 ${gateRun.red} / 未判定 ${gateRun.und}（EXIT=${gateRun.exit}）`);
+// 退出码口径（技能 §2：0 全绿 / 1 有红 / 2 有未判定）——**红必须压过未判定**：
+// 反证实测（task-41）：把那条 peer 声明加回去之后，本条命令报"红 3"却退出 2，
+// 因为原来按 max() 合成，2 把 1 盖住了 ⇒ "有红"被读成"只是没测到"。
+// 那是闸的口径缺陷，不是小事：合并门禁只看非零的话还能过，但 CI 里"1 要修 / 2 要等"会分错。
+const anyRed = red > 0 || gateRun.red > 0;
+const anyUnd = und > 0 || gateRun.und > 0 || gateRun.exit >= 2;
+process.exit(anyRed ? 1 : anyUnd ? 2 : 0);
