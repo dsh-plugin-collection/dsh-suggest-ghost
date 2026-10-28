@@ -24,13 +24,83 @@
  * 用法：node scripts/stream-leadtime-measure.mjs --home ~/xk-021-stream --rounds 10 [--label on]
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(`--${k}`); return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : d; };
 const HOME_ = opt('home', '').replace(/^~/, homedir());
+if (HOME_ === '') throw new Error('必须给 --home');
+
+/**
+ * ⚠️ **硬前置：确认要连的实例确实是这个沙箱起的。**
+ *
+ * 来历（2026-10-28 实测事故）：为了绕开"dev-sandbox 每次把插件挂回软链"，有人手工
+ * spawn 了一个实例却**忘了设 DSH_HOME** ⇒ 实例以用户真实 ~/.dsh 启动，那一轮的
+ * 测量数据全部来自 live（作废），还在真实家目录里留下 16 个会话目录。
+ * 技能第 1 条说的就是这个坑，而"我记得设"不是防线 ⇒ 这里直接判死：
+ * pid 的 DSH_HOME 不等于 --home 就拒绝测量。
+ */
+const assertSandboxOwnsInstance = () => {
+  const pidFile = join(HOME_, 'sbx.pid');
+  if (!existsSync(pidFile)) throw new Error(`没有 ${pidFile}：实例不是 dev-sandbox 起的，拒绝测量（防误连 live）`);
+  const pids = readFileSync(pidFile, 'utf8').split(/\s+/).filter(Boolean);
+  const matched = pids.filter((p) => {
+    try {
+      return readFileSync(`/proc/${p}/environ`, 'latin1').split('\0').includes(`DSH_HOME=${HOME_}`);
+    } catch { return false; }
+  });
+  if (matched.length === 0) {
+    throw new Error(`pidfile 里没有进程以 DSH_HOME=${HOME_} 运行 ⇒ 实例已退出或不属于本沙箱，拒绝测量`);
+  }
+  return matched;
+};
+const sandboxPids = assertSandboxOwnsInstance();
+
+/**
+ * **越界自检**：真实 `~/.dsh` 里不许留下本次工作区的痕迹。
+ *
+ * 分两档，因为"内容里出现过我的路径"与"我在那里建了东西"是两件事：
+ *  - `hard`：会话目录 / 工作区记录 —— 只有我才会造出来，出现即判失败（退出码 3）。
+ *  - `soft`：**内容级**提及（例如用户活跃会话的投影缓存里存着一份工作区清单快照）——
+ *    只报告不失败。实测两处就是这种，且几秒前刚被 live 改写过；去改用户的活跃缓存
+ *    比留着一条陈旧路径字符串危险得多。
+ *
+ * @returns {{ hard: string[], soft: string[] }} 两档命中清单（路径，不含任何正文）。
+ */
+const assertNoBleedIntoRealHome = () => {
+  const real = join(homedir(), '.dsh');
+  const slug = `--${WS.replace(/^\//, '').replaceAll('/', '-') }--`;
+  const hard = [];
+  const soft = [];
+  const sessionsRoot = join(real, 'sessions');
+  if (existsSync(sessionsRoot) && existsSync(join(sessionsRoot, slug))) hard.push(`sessions/${slug}`);
+  const projRoot = join(real, 'storages', 'session_projcache', 'sessions');
+  if (existsSync(projRoot)) {
+    for (const name of readdirSync(projRoot)) {
+      const file = join(projRoot, name);
+      let body = '';
+      try { body = readFileSync(file, 'utf8'); } catch { continue; }
+      if (!body.includes(WS)) continue;
+      const id = name.replace(/^session-/, '').replace(/\.json$/, '');
+      const stillExists = existsSync(join(sessionsRoot, slug))
+        || readdirSync(sessionsRoot).some((ws) => existsSync(join(sessionsRoot, ws, `session-${id}`)) || existsSync(join(sessionsRoot, ws, id)));
+      if (!stillExists) hard.push(`session_projcache/${name}（悬挂：会话目录已不存在）`);
+      else soft.push(`session_projcache/${name}（用户活跃会话的缓存快照，未改动）`);
+    }
+  }
+  const wsFile = join(real, 'storages', 'workspace.json');
+  if (existsSync(wsFile)) {
+    try {
+      const doc = JSON.parse(readFileSync(wsFile, 'utf8'));
+      const mine = Object.entries(doc?.tables?.workspaces ?? {}).filter(([, w]) => w?.path === WS);
+      for (const [id] of mine) hard.push(`workspace.json 记录 ${id.slice(0, 8)}（path 指向本次工作区）`);
+    } catch { /* 读不到就算不了，交给 hard 目录检查兜底 */ }
+  }
+  return { hard, soft };
+};
+
 const ROUNDS = Number(opt('rounds', 10));
 const LABEL = opt('label', 'run');
 const WS = opt('ws', join(homedir(), 'xk-probe-ws')).replace(/^~/, homedir());
@@ -82,7 +152,10 @@ window.__m = {
       for (const d of [...window.__m.qa('[role=dialog]'), ...window.__m.qa('dialog[open]')]) {
         const b = [...d.querySelectorAll('button')].find((x) => labels.some((L) => window.__m.name(x).includes(L)))
           ?? d.querySelector('button[aria-label="Close"], button[aria-label="关闭"]');
-        if (b !== undefined) { b.click(); hit = true; await window.__m.wait(200); }
+        // ⚠️ 右侧是 querySelector ⇒ 找不到时是 **null** 而不是 undefined；写 "!== undefined"
+        // 会放行 null，然后 null.click() 抛 TypeError（本轮实测踩过）。
+        // （这段在模板字符串内部：注释里出现反引号会把模板提前结束 —— 我已经踩了四次。）
+        if (b != null) { b.click(); hit = true; await window.__m.wait(200); }
       }
       if (!hit) break;
     }
@@ -106,6 +179,12 @@ let mid = 0;
 const pending = new Map();
 ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
+  // 收集页内与本判据有关的留痕（帧到达、状态变化）：宿主侧看不到这些，
+  // 而"帧没到"与"帧到了没显示"在 GUI 上同形。
+  if (m.method === 'Runtime.consoleAPICalled') {
+    const text = (m.params.args ?? []).map((a) => (a.value !== undefined ? String(a.value) : String(a.description ?? ''))).join(' ');
+    if (/suggest-ghost/.test(text)) pageLines.push(text.slice(0, 160));
+  }
   if (m.id !== undefined && pending.has(m.id)) {
     const { res, rej } = pending.get(m.id);
     pending.delete(m.id);
@@ -132,6 +211,8 @@ const QUESTIONS = [
 ];
 
 const rows = [];
+/** 页内 console 里与本判据有关的行（帧到达、状态变化、归属被藏）。 */
+const pageLines = [];
 try {
   await send('Runtime.enable');
   await send('Page.enable');
@@ -205,6 +286,22 @@ try {
     say(`· 轮 ${round}: first=${sample.firstMs >= 0 ? Math.round(sample.firstMs) : '—'}ms settled=${sample.lastChangeMs >= 0 ? Math.round(sample.lastChangeMs) : '—'}ms 批次数=${sample.distinct} 终态字符=${sample.finalChars}`);
   }
 } finally {
+  // ⚠️ **越界自检（跑完立刻做，不等人事后查）**：真实 `~/.dsh` 里不许出现本次工作区的
+  // 会话目录 / 工作区记录。2026-10-28 的事故就是"手工 spawn 忘了设 DSH_HOME"，
+  // 当时靠事后 grep 才发现，所以这条断言必须在**同一支脚本里**当场响。
+  const bleed = assertNoBleedIntoRealHome();
+  if (bleed.hard.length > 0) {
+    say(`❌ 越界：真实 ~/.dsh 里出现本次工作区的硬痕迹 ${bleed.hard.length} 处：\n  - ${bleed.hard.join('\n  - ')}`);
+    process.exitCode = 3;
+  } else {
+    say('· 越界自检：真实 ~/.dsh 内本次工作区的会话目录 / 工作区记录 = 0 ✓');
+  }
+  if (bleed.soft.length > 0) {
+    // 内容级提及**不判失败**：用户的活跃会话投影缓存里可能留着一份工作区清单快照
+    // （实测两处就是这种，且几秒前刚被 live 改写过）。改它比留着更危险。
+    say(`· 提示（不判失败）：真实 ~/.dsh 内有 ${bleed.soft.length} 处**内容级**提及本次工作区，`
+      + '均属于仍存在的用户会话缓存，未改动：' + bleed.soft.slice(0, 3).join(', '));
+  }
   const ok = rows.filter((r) => r.ok);
   const firsts = ok.map((r) => r.firstMs).sort((a, b) => a - b);
   const settles = ok.map((r) => r.lastChangeMs).sort((a, b) => a - b);
@@ -217,6 +314,37 @@ try {
   const leads = ok.map((r) => r.lastChangeMs - r.firstMs).sort((a, b) => a - b);
   say(`提前量(settle-first) 中位=${med(leads) === null ? '—' : Math.round(med(leads))}ms p90=${pct(leads, 0.9) === null ? '—' : Math.round(pct(leads, 0.9))}ms`);
   say(`每轮文本批次数 分布=${JSON.stringify(ok.map((r) => r.distinct))}`);
+  const frameLines = pageLines.filter((l) => /stream frame=/.test(l));
+  // 分桶要按**顺序**走，所以取全部流相关行（含 open/closed 边界），不是只取帧行。
+  const frameLines0 = pageLines.filter((l) => /stream (open|closed|unavailable|frame=)/.test(l));
+  const stateLines = pageLines.filter((l) => /stream (open|closed|unavailable|namespace|frame)/.test(l));
+  // **真正的提前量 = 同一轮内"最后一帧"与"第一帧"的页内时刻差**（t= 由客户端逐帧打）。
+  // 页外 15ms 轮询量不到它：实测两帧常挤在同一个采样间隔里。
+  // 分桶只能按**页内留痕的顺序**做：帧行本身不带会话号（只有 `stream open` 带），
+  // 用 `session=` 去分组会把所有轮次并进一个桶（上一版实测 22 帧挤成一桶、"提前量 289 秒"）。
+  const turns = [];
+  let currentTurn = null;
+  for (const line of frameLines0) {
+    const open = /stream open session=/.test(line);
+    const fm = line.match(/stream frame=(\d+) final=(\d) chars=(\d+) turn=(\d+) t=(\d+)/);
+    const closed = /stream (closed|unavailable)/.test(line);
+    if (open) { if (currentTurn !== null && currentTurn.length > 0) turns.push(currentTurn); currentTurn = []; continue; }
+    if (closed) { if (currentTurn !== null && currentTurn.length > 0) turns.push(currentTurn); currentTurn = null; continue; }
+    if (fm !== null && currentTurn !== null) {
+      currentTurn.push({ frame: Number(fm[1]), final: Number(fm[2]), chars: Number(fm[3]), t: Number(fm[5]) });
+    }
+  }
+  if (currentTurn !== null && currentTurn.length > 0) turns.push(currentTurn);
+  const multi = turns.filter((arr) => arr.length >= 2);
+  const frameLeads = multi.map((arr) => arr.at(-1).t - arr[0].t).sort((a, b) => a - b);
+  const spreadMed = frameLeads.length === 0 ? null : frameLeads[Math.floor(frameLeads.length / 2)];
+  const spreadP90 = frameLeads.length === 0 ? null : frameLeads[Math.min(frameLeads.length - 1, Math.floor(frameLeads.length * 0.9))];
+  say(`每轮帧数分布=${JSON.stringify(turns.map((a) => a.length))}`);
+  say(`帧间提前量（同轮 首帧→终帧 页内时刻差）多帧轮数=${frameLeads.length}/${turns.length} `
+    + `中位=${spreadMed ?? '—'}ms p90=${spreadP90 ?? '—'}ms 分布=${JSON.stringify(frameLeads)}`);
+  say(`单帧轮数=${turns.filter((a) => a.length === 1).length}（这些轮流式无增益：模型只吐了一次正文增量）`);
+  say(`页内留痕：帧行=${frameLines.length} 状态/帧行合计=${stateLines.length}`);
+  say('  状态行=' + JSON.stringify(stateLines.slice(0, 8)));
   say('明细=' + JSON.stringify(rows.map((r) => ({ round: r.round, ok: r.ok, first: r.firstMs, settle: r.lastChangeMs, distinct: r.distinct, chars: r.finalChars }))));
   try { ws.close(); } catch { /* noop */ }
   try { proc.kill('SIGKILL'); } catch { /* noop */ }

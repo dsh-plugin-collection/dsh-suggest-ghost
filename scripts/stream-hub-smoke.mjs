@@ -23,6 +23,7 @@ import {
   STREAM_FRAME_MIN_INTERVAL_MS,
   STREAM_BUFFER_MAX_FRAMES,
   STREAM_SUBSCRIPTION_TTL_MS,
+  STREAM_LATE_JOIN_GRACE_MS,
 } from '../lib/stream.js';
 
 let cases = 0;
@@ -71,6 +72,11 @@ run('限频窗口是常量 60ms（宿主没有合帧原语，这个数就是插�
 run('缓冲上限与 TTL 都是正数常量（改它们要同时改这里的断言）', () => {
   assert.equal(STREAM_BUFFER_MAX_FRAMES, 24);
   assert.ok(STREAM_SUBSCRIPTION_TTL_MS > STREAM_FRAME_MIN_INTERVAL_MS);
+  // 晚到宽限期必须**大于限频窗口**且远小于 TTL：否则"补发"要么还没人接就过期，
+  // 要么宽限期短到客户端一趟网络往返都来不及。
+  assert.equal(STREAM_LATE_JOIN_GRACE_MS, 2000);
+  assert.ok(STREAM_LATE_JOIN_GRACE_MS > STREAM_FRAME_MIN_INTERVAL_MS);
+  assert.ok(STREAM_LATE_JOIN_GRACE_MS < STREAM_SUBSCRIPTION_TTL_MS);
 });
 
 run('增量帧零落盘：stream.ts 不认识 settings / configEditor / 写面', () => {

@@ -2043,6 +2043,10 @@ function applyBody(ctx: Context): void {
       return ghostStreamNamespace as never;
     },
     onFrame: (frame, sessionId) => {
+      // 每帧一行（带页内时刻 t=）：这是"帧到没到、彼此隔多久"的唯一直接证据。宿主侧只能
+      // 看到 subs>0；而 15ms 的页外轮询会把挤在一起的两帧读成"一次变化"，所以提前量必须
+      // 由这些 t= 值算，不能靠采样。
+      streamTrace(`stream frame=${frame.frame} final=${frame.final ? 1 : 0} chars=${frame.text.length} turn=${frame.turn} t=${Math.round(performance.now())}`);
       if (streamedFrame !== null && streamedFrame.sessionId !== sessionId) return;
       // 帧号单调：乱序或重放的旧帧直接丢（宿主限频窗口已保证单调，这里是防御）。
       if (streamedFrame !== null && streamedFrame.turn === frame.turn && frame.frame < streamedFrame.frame) return;

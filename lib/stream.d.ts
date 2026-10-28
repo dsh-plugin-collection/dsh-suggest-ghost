@@ -36,6 +36,14 @@ export declare const STREAM_FRAME_MIN_INTERVAL_MS = 60;
 export declare const STREAM_SUBSCRIPTION_TTL_MS = 45000;
 /** 单条订阅的缓冲上限（帧数）：溢出丢最旧的非终帧，并计数留痕。 */
 export declare const STREAM_BUFFER_MAX_FRAMES = 24;
+/**
+ * 晚到宽限期（毫秒）：beginTurn 之后多久之内，即使还没有订阅也要继续算前缀。
+ *
+ * 存在的理由就是那条竞态：客户端的开流一定晚于宿主的 turn/end（见
+ * {@link GhostStreamHub.beginTurn}）。宽限期让"最近一帧"能被记下来补发；
+ * 过了它还没人听，就真的不再白算（净化是有成本的）。
+ */
+export declare const STREAM_LATE_JOIN_GRACE_MS = 2000;
 /** 一帧：`text` 是**已净化前缀**（`prefixSafeClean` 之后），`final` 才可采纳。 */
 export interface GhostStreamFrame {
     /** 本次生成对应的已完成回合号（归属校验用）。 */
@@ -64,6 +72,8 @@ export declare class GhostStreamHub {
     private readonly seqOf;
     /** 会话 id → 本次生成内**最近一帧**（晚到的订阅靠它立刻补上当前前缀）。 */
     private readonly inFlight;
+    /** 会话 id → 本轮盖章时刻（{@link STREAM_LATE_JOIN_GRACE_MS} 的起点）。 */
+    private readonly turnStartedAt;
     /** 累计被丢弃的帧数（溢出），只用于留痕与断言。 */
     private droppedTotal;
     /**
@@ -101,12 +111,23 @@ export declare class GhostStreamHub {
      */
     hasSubscribers(sessionId: string): boolean;
     /**
+     * 生成侧现在值不值得算一帧净化前缀？
+     *
+     * **有订阅就算**；没订阅时只在晚到宽限期（{@link STREAM_LATE_JOIN_GRACE_MS}）内算，
+     * 好让稍后接上的订阅有东西可补发。过了宽限期还没人听 ⇒ 不再算，回到与开关关时
+     * 同等的成本。
+     *
+     * @param sessionId - 会话。
+     * @returns 是否应该继续产生帧。
+     */
+    shouldCompute(sessionId: string): boolean;
+    /**
      * 发一帧增量。**限频在这里**：距上一帧不足 {@link STREAM_FRAME_MIN_INTERVAL_MS}
      * 就跳过（终帧不受限，见 `publishFinal`）。
      *
      * @param sessionId - 会话。
      * @param text - 净化后的前缀文本。
-     * @returns 是否真的发出去了（false = 被限频窗口吃掉，或没人听着）。
+     * @returns 是否有订阅者收到了这一帧（false = 被限频吃掉，或此刻没人听着）。
      */
     publish(sessionId: string, text: string): boolean;
     /**
