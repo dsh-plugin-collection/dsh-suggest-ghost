@@ -1,31 +1,27 @@
 {
   "task": "task-1 (T-GATE)",
-  "generatedAt": "2026-10-23T09:38:01.717Z",
-  "nonce": "gate-c00d9f6e",
-  "pluginRoot": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost",
+  "generatedAt": "2026-10-28T06:35:41.739Z",
+  "nonce": "gate-44617ab8",
+  "pluginRoot": "/home/wujue/workspace/dsh-plugins/wt/xk-stream",
   "plugin": {
     "name": "dsh-suggest-ghost",
     "version": "0.7.0",
-    "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+    "enginesDsh": ">=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
     "dshPeers": {
-      "@deepseek-ai/dsh-llm": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-      "@deepseek-ai/dsh-session": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-      "@deepseek-ai/dsh-session-projection": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-      "@deepseek-ai/dsh-settings": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-      "@deepseek-ai/dsh-storage-domain": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-      "@deepseek-ai/dsh-timeout": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2"
+      "@deepseek-ai/dsh-llm": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-session": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-session-projection": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-settings": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-storage-domain": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-timeout": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+      "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
     }
   },
-  "referencePlugin": {
-    "path": "/home/wujue/workspace/dsh-plugins/dsh-later/package.json",
-    "name": "dsh-later",
-    "version": "1.7.0",
-    "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0"
-  },
+  "referencePlugin": null,
   "kernelRoot": "/home/wujue/dsh-versions",
   "dshHomeRedirected": {
-    "DSH_HOME": "/tmp/gate-c00d9f6e-UZtQMC",
-    "tempHome": "/tmp/gate-c00d9f6e-UZtQMC"
+    "DSH_HOME": "/tmp/gate-44617ab8-qUsMPB",
+    "tempHome": "/tmp/gate-44617ab8-qUsMPB"
   },
   "outOfBoundsCheck": {
     "scanned": "/home/wujue/.dsh",
@@ -34,81 +30,6 @@
     "hits": []
   },
   "generations": [
-    {
-      "generation": "0.1.1-rc.2",
-      "kernelRoot": "/home/wujue/dsh-versions/0.1.1-rc.2",
-      "evaluatorPresent": false,
-      "semantics": "absent",
-      "indexFile": "/home/wujue/dsh-versions/0.1.1-rc.2/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
-      "appBootPresent": true,
-      "appBootVersion": "0.1.1-rc.2",
-      "reason": "dsh-app-boot@0.1.1-rc.2 present but does not define evaluatePluginCompatibility; this generation runs no plugin admission gate",
-      "probes": {},
-      "errors": [],
-      "verdict": "UNDETERMINED",
-      "verdictReason": "dsh-app-boot@0.1.1-rc.2 present but does not define evaluatePluginCompatibility; this generation runs no plugin admission gate",
-      "declaredSupported": {
-        "viaEnginesDsh": true,
-        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
-        "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
-        "viaPeers": true
-      },
-      "declaredPeers": {
-        "@deepseek-ai/dsh-llm": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-          "matches": true
-        },
-        "@deepseek-ai/dsh-session": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-          "matches": true
-        },
-        "@deepseek-ai/dsh-session-projection": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-          "matches": true
-        },
-        "@deepseek-ai/dsh-settings": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-          "matches": true
-        },
-        "@deepseek-ai/dsh-storage-domain": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-          "matches": true
-        },
-        "@deepseek-ai/dsh-timeout": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-          "matches": true
-        }
-      },
-      "declarationCrossCheck": {
-        "enginesDshCovers": true,
-        "peersMatchSemantically": true,
-        "peerEnumerationListsThisGenerationLiteral": true,
-        "agree": true
-      },
-      "peerPackageAvailability": {
-        "@deepseek-ai/dsh-llm": {
-          "presentInKernelTree": true
-        },
-        "@deepseek-ai/dsh-session": {
-          "presentInKernelTree": true
-        },
-        "@deepseek-ai/dsh-session-projection": {
-          "presentInKernelTree": true
-        },
-        "@deepseek-ai/dsh-settings": {
-          "presentInKernelTree": true
-        },
-        "@deepseek-ai/dsh-storage-domain": {
-          "presentInKernelTree": true
-        },
-        "@deepseek-ai/dsh-timeout": {
-          "presentInKernelTree": true
-        }
-      },
-      "peerPackagesMissing": [],
-      "declaredSupportedAny": true,
-      "gateExecuted": false
-    },
     {
       "generation": "0.1.2-rc.1",
       "kernelRoot": "/home/wujue/dsh-versions/0.1.2-rc.1",
@@ -124,41 +45,45 @@
       "verdictReason": "dsh-app-boot@0.1.2-rc.1 present but does not define evaluatePluginCompatibility; this generation runs no plugin admission gate",
       "declaredSupported": {
         "viaEnginesDsh": true,
-        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "enginesDshRange": ">=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
         "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
-        "viaPeers": true
+        "viaPeers": false
       },
       "declaredPeers": {
         "@deepseek-ai/dsh-llm": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session-projection": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-settings": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-storage-domain": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-timeout": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
+          "range": "^0.2.1-rc.2",
+          "matches": false
         }
       },
       "declarationCrossCheck": {
         "enginesDshCovers": true,
-        "peersMatchSemantically": true,
+        "peersMatchSemantically": false,
         "peerEnumerationListsThisGenerationLiteral": true,
-        "agree": true
+        "agree": false
       },
       "peerPackageAvailability": {
         "@deepseek-ai/dsh-llm": {
@@ -178,6 +103,9 @@
         },
         "@deepseek-ai/dsh-timeout": {
           "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
+          "presentInKernelTree": true
         }
       },
       "peerPackagesMissing": [],
@@ -185,11 +113,11 @@
       "gateExecuted": false
     },
     {
-      "generation": "0.1.5-rc.1",
-      "kernelRoot": "/home/wujue/dsh-versions/0.1.5-rc.1",
+      "generation": "0.1.5-rc.3",
+      "kernelRoot": "/home/wujue/dsh-versions/0.1.5-rc.3",
       "evaluatorPresent": false,
       "semantics": "absent",
-      "indexFile": "/home/wujue/dsh-versions/0.1.5-rc.1/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
+      "indexFile": "/home/wujue/dsh-versions/0.1.5-rc.3/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
       "appBootPresent": true,
       "appBootVersion": "0.1.5-rc.3",
       "reason": "dsh-app-boot@0.1.5-rc.3 present but does not define evaluatePluginCompatibility; this generation runs no plugin admission gate",
@@ -199,41 +127,45 @@
       "verdictReason": "dsh-app-boot@0.1.5-rc.3 present but does not define evaluatePluginCompatibility; this generation runs no plugin admission gate",
       "declaredSupported": {
         "viaEnginesDsh": true,
-        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "enginesDshRange": ">=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
         "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
-        "viaPeers": true
+        "viaPeers": false
       },
       "declaredPeers": {
         "@deepseek-ai/dsh-llm": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session-projection": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-settings": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-storage-domain": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-timeout": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
+          "range": "^0.2.1-rc.2",
+          "matches": false
         }
       },
       "declarationCrossCheck": {
         "enginesDshCovers": true,
-        "peersMatchSemantically": true,
-        "peerEnumerationListsThisGenerationLiteral": true,
-        "agree": true
+        "peersMatchSemantically": false,
+        "peerEnumerationListsThisGenerationLiteral": false,
+        "agree": false
       },
       "peerPackageAvailability": {
         "@deepseek-ai/dsh-llm": {
@@ -252,6 +184,9 @@
           "presentInKernelTree": true
         },
         "@deepseek-ai/dsh-timeout": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
           "presentInKernelTree": true
         }
       },
@@ -270,12 +205,28 @@
       "readsEnginesDsh": false,
       "probes": {
         "real": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.1",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": false
+          }
         },
         "mutantEnginesUnmet": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.1",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": false
+          }
         },
         "mutantPeerUnmetWithEngines": {
           "ok": "unmet",
@@ -284,14 +235,23 @@
             "version": "0.7.0",
             "runtimeVersion": "0.1.7-rc.1",
             "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2",
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
             },
             "exempted": false
           }
         },
         "mutantEnginesRemoved": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.1",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": false
+          }
         },
         "mutantEnginesRemovedPeerUnmet": {
           "ok": "unmet",
@@ -300,64 +260,69 @@
             "version": "0.7.0",
             "runtimeVersion": "0.1.7-rc.1",
             "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2",
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
             },
             "exempted": false
           }
         },
         "mutantEnginesUnmetExempted": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.1",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": true
+          }
         }
       },
       "errors": [],
-      "verdict": "GREEN",
-      "verdictReason": null,
-      "reference": {
-        "name": "dsh-later",
-        "version": "1.7.0",
-        "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
-        "real": "met",
-        "realRaw": null,
-        "enginesRemoved": "met"
-      },
+      "verdict": "RED",
+      "verdictReason": "declared supported but unmet under BOTH engines.dsh and peer semantics",
       "declaredSupported": {
         "viaEnginesDsh": true,
-        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "enginesDshRange": ">=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
         "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
-        "viaPeers": true
+        "viaPeers": false
       },
       "declaredPeers": {
         "@deepseek-ai/dsh-llm": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session-projection": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-settings": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-storage-domain": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-timeout": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
+          "range": "^0.2.1-rc.2",
+          "matches": false
         }
       },
       "declarationCrossCheck": {
         "enginesDshCovers": true,
-        "peersMatchSemantically": true,
+        "peersMatchSemantically": false,
         "peerEnumerationListsThisGenerationLiteral": false,
-        "agree": true
+        "agree": false
       },
       "peerPackageAvailability": {
         "@deepseek-ai/dsh-llm": {
@@ -377,6 +342,9 @@
         },
         "@deepseek-ai/dsh-timeout": {
           "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
+          "presentInKernelTree": true
         }
       },
       "peerPackagesMissing": [],
@@ -384,7 +352,7 @@
       "gateExecuted": true,
       "metUnder": {
         "engines.dsh": null,
-        "peers": true
+        "peers": false
       },
       "semanticsApplicability": {
         "executed": "peers",
@@ -405,12 +373,28 @@
       "readsEnginesDsh": false,
       "probes": {
         "real": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": false
+          }
         },
         "mutantEnginesUnmet": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": false
+          }
         },
         "mutantPeerUnmetWithEngines": {
           "ok": "unmet",
@@ -419,14 +403,23 @@
             "version": "0.7.0",
             "runtimeVersion": "0.1.7-rc.2",
             "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2",
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
             },
             "exempted": false
           }
         },
         "mutantEnginesRemoved": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": false
+          }
         },
         "mutantEnginesRemovedPeerUnmet": {
           "ok": "unmet",
@@ -435,64 +428,69 @@
             "version": "0.7.0",
             "runtimeVersion": "0.1.7-rc.2",
             "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2",
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
             },
             "exempted": false
           }
         },
         "mutantEnginesUnmetExempted": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.1.7-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": true
+          }
         }
       },
       "errors": [],
-      "verdict": "GREEN",
-      "verdictReason": null,
-      "reference": {
-        "name": "dsh-later",
-        "version": "1.7.0",
-        "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
-        "real": "met",
-        "realRaw": null,
-        "enginesRemoved": "met"
-      },
+      "verdict": "RED",
+      "verdictReason": "declared supported but unmet under BOTH engines.dsh and peer semantics",
       "declaredSupported": {
         "viaEnginesDsh": true,
-        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "enginesDshRange": ">=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
         "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
-        "viaPeers": true
+        "viaPeers": false
       },
       "declaredPeers": {
         "@deepseek-ai/dsh-llm": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session-projection": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-settings": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-storage-domain": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-timeout": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
+          "range": "^0.2.1-rc.2",
+          "matches": false
         }
       },
       "declarationCrossCheck": {
         "enginesDshCovers": true,
-        "peersMatchSemantically": true,
+        "peersMatchSemantically": false,
         "peerEnumerationListsThisGenerationLiteral": true,
-        "agree": true
+        "agree": false
       },
       "peerPackageAvailability": {
         "@deepseek-ai/dsh-llm": {
@@ -512,6 +510,9 @@
         },
         "@deepseek-ai/dsh-timeout": {
           "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
+          "presentInKernelTree": true
         }
       },
       "peerPackagesMissing": [],
@@ -519,7 +520,7 @@
       "gateExecuted": true,
       "metUnder": {
         "engines.dsh": null,
-        "peers": true
+        "peers": false
       },
       "semanticsApplicability": {
         "executed": "peers",
@@ -540,12 +541,28 @@
       "readsEnginesDsh": false,
       "probes": {
         "real": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.2.0-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": false
+          }
         },
         "mutantEnginesUnmet": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.2.0-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": false
+          }
         },
         "mutantPeerUnmetWithEngines": {
           "ok": "unmet",
@@ -554,14 +571,23 @@
             "version": "0.7.0",
             "runtimeVersion": "0.2.0-rc.2",
             "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2",
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
             },
             "exempted": false
           }
         },
         "mutantEnginesRemoved": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.2.0-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": false
+          }
         },
         "mutantEnginesRemovedPeerUnmet": {
           "ok": "unmet",
@@ -570,64 +596,69 @@
             "version": "0.7.0",
             "runtimeVersion": "0.2.0-rc.2",
             "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2",
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
             },
             "exempted": false
           }
         },
         "mutantEnginesUnmetExempted": {
-          "ok": "met",
-          "raw": null
+          "ok": "unmet",
+          "raw": {
+            "name": "dsh-suggest-ghost",
+            "version": "0.7.0",
+            "runtimeVersion": "0.2.0-rc.2",
+            "peers": {
+              "@deepseek-ai/dsh-typert-protocol": "^0.2.1-rc.2"
+            },
+            "exempted": true
+          }
         }
       },
       "errors": [],
-      "verdict": "GREEN",
-      "verdictReason": null,
-      "reference": {
-        "name": "dsh-later",
-        "version": "1.7.0",
-        "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
-        "real": "met",
-        "realRaw": null,
-        "enginesRemoved": "met"
-      },
+      "verdict": "RED",
+      "verdictReason": "declared supported but unmet under BOTH engines.dsh and peer semantics",
       "declaredSupported": {
         "viaEnginesDsh": true,
-        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "enginesDshRange": ">=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
         "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
-        "viaPeers": true
+        "viaPeers": false
       },
       "declaredPeers": {
         "@deepseek-ai/dsh-llm": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session-projection": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-settings": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-storage-domain": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-timeout": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
+          "range": "^0.2.1-rc.2",
+          "matches": false
         }
       },
       "declarationCrossCheck": {
         "enginesDshCovers": true,
-        "peersMatchSemantically": true,
+        "peersMatchSemantically": false,
         "peerEnumerationListsThisGenerationLiteral": true,
-        "agree": true
+        "agree": false
       },
       "peerPackageAvailability": {
         "@deepseek-ai/dsh-llm": {
@@ -647,6 +678,9 @@
         },
         "@deepseek-ai/dsh-timeout": {
           "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
+          "presentInKernelTree": true
         }
       },
       "peerPackagesMissing": [],
@@ -654,7 +688,7 @@
       "gateExecuted": true,
       "metUnder": {
         "engines.dsh": null,
-        "peers": true
+        "peers": false
       },
       "semanticsApplicability": {
         "executed": "peers",
@@ -726,50 +760,46 @@
       "errors": [],
       "verdict": "GREEN",
       "verdictReason": null,
-      "reference": {
-        "name": "dsh-later",
-        "version": "1.7.0",
-        "enginesDsh": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
-        "real": "met",
-        "realRaw": null,
-        "enginesRemoved": "met"
-      },
       "declaredSupported": {
         "viaEnginesDsh": true,
-        "enginesDshRange": ">=0.1.1-rc.2 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
+        "enginesDshRange": ">=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
         "semanticsNote": "declared support is computed from the real manifest engines.dsh range; the peer ranges are recorded separately below",
         "viaPeers": true
       },
       "declaredPeers": {
         "@deepseek-ai/dsh-llm": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-session-projection": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-settings": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-storage-domain": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
           "matches": true
         },
         "@deepseek-ai/dsh-timeout": {
-          "range": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "range": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
+          "matches": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
+          "range": "^0.2.1-rc.2",
           "matches": true
         }
       },
       "declarationCrossCheck": {
         "enginesDshCovers": true,
         "peersMatchSemantically": true,
-        "peerEnumerationListsThisGenerationLiteral": false,
+        "peerEnumerationListsThisGenerationLiteral": true,
         "agree": true
       },
       "peerPackageAvailability": {
@@ -789,6 +819,9 @@
           "presentInKernelTree": true
         },
         "@deepseek-ai/dsh-timeout": {
+          "presentInKernelTree": true
+        },
+        "@deepseek-ai/dsh-typert-protocol": {
           "presentInKernelTree": true
         }
       },

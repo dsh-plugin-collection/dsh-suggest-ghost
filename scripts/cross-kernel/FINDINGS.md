@@ -798,3 +798,167 @@ HMR 那条前置（技能 §1b）**有效**：0.1.2 / 0.1.5 两棵树里的
   ⇒ 让"点错页"这件事自己说话。
 - **没改的一条，留给后来人**：Settings → Plugins 是**两级**导航，驱动只会找顶层一项
   （§13.4 那个未判定就卡在这里）。
+
+## 14. 流式投递（#109）跨代次实测：通道三代都能注册，但 **`running` 边沿在 0.1.2 拿不到**；另立一条**门禁回归**（2026-10-28，task-40，构建 `ad3ccd2`）
+
+Gitea #108 / #41 / PR #109。测的是**已进 main 的那份产物**（`ad3ccd2`），不是 feature 分支。
+三棵代表树各起一个**全新冷沙箱**、依赖一律来自**被测那代**（`--live-nm`），
+每代交任务书要求的五项。
+
+### 14.1 结论（先给判词，证据在下面各节）
+
+| 判据 | 0.2.1-rc.2 | 0.1.7-rc.2 | 0.1.2-rc.1 |
+|---|---|---|---|
+| ① 通道真注册（四因子留痕，非"看起来有字"） | ✅ `streaming=1 ready=1 on=1 subs=1` | ✅ 同（**须先豁免**，见 §14.5） | ⚠️ 注册 ✅ 但 `subs=0`（见下） |
+| ② 硬判据：增量帧不落盘 | ✅ 源码断言 + 每生成写次数与 OFF 同量级 | ✅ OFF 2.43 vs ON 3.17 次/生成（帧 2.3/生成 ⇒ 若落盘应≈5.5） | ✅ 无帧可落；`_push` 正常写 9 次 |
+| ③ 提前量（同轮首帧→终帧） | **中位 112ms / p90 169ms**，8 轮全多帧 | **中位 174ms / p90 266ms**，5/6 多帧 | ❌ **未测出（没有帧）** |
+| ④ 帧序正确性 | ✅ 8/8：帧号从 1 连续、终帧唯一且末帧、前缀不缩 | ✅ 5/5（同判据） | ⚪ 无帧可判 |
+| ⑤ `running: true→false` 边沿是否可得 | ✅ 可得（客户端开流并收到帧） | ✅ **可得** —— 老代次同样有这枚边沿 | ❌ **拿不到**：宿主 7 次收口全 `subs=0`，页内 0 条 `stream open` |
+| 非流式功能面（对照） | ✅ 幽灵正常 | ✅ 幽灵正常 | ✅ 幽灵正常（`gui-round` 拿到 21 字） |
+
+⇒ **两条硬结论**：
+1. **通道本身不是代次问题**：三代的宿主侧都注册成功（`@deepseek-ai/dsh-typert-protocol` 与
+   网关 SRC 兜底在各代都是**自己的号**，lead 的静态推断在此被实测证实）。
+2. **(c) 设计的命门在 0.1.2 上不成立**：整个方案押在客户端 `running: true→false` 那枚边沿上，
+   0.1.2 上**边沿没触发过** ⇒ 流式在最老下界上退化成"什么都不发生"（不是报错、不是崩，
+   是**静默无帧**）。0.1.7-rc.2 实测可得 ⇒ 分界线在 **0.1.7**。
+
+### 14.2 提前量怎么量的（以及为什么不能靠页外轮询）
+
+`scripts/stream-leadtime-measure.mjs`：CDP 驱动真 GUI，逐轮"新会话→真问题→回车"，
+提前量 = **同一轮内首帧与终帧的页内 `performance.now()` 差**，由客户端逐帧打的 `t=` 算出。
+
+- ⚠️ **页外 15ms 轮询量不到它**：实测两帧常挤在同一个采样间隔里，0.2.1 上一度把
+  "批次数=1、提前量 0ms" 当成结论 —— 那是**量具分辨率**，不是产品事实。
+- ⚠️ **分桶键只能是留痕顺序**：帧行不带会话号（只有 `stream open` 带），按 `session=` 分组
+  会把 22 帧挤成一桶，算出"提前量 289 秒"这种荒唐数（本轮真实踩过并修）。
+
+| 代次 | 每轮帧数 | 多帧轮 | 提前量分布（ms） | 中位 | p90 |
+|---|---|---|---|---|---|
+| 0.2.1-rc.2 | `[2,2,2,3,2,2,2,3]` | 8/8 | 34,57,78,78,112,114,130,169 | **112** | 169 |
+| 0.1.7-rc.2 | `[4,1,3,2,2,2]` | 5/6 | 1,155,174,193,266 | **174** | 266 |
+| 0.1.2-rc.1 | `[]` | 0/0 | — | — | — |
+
+⇒ **两代同形**（都是 2–4 帧、百毫秒级、偶发单帧轮），与 task-30 预测的 91ms 同量级；
+0.1.7 那轮里出现过一个 `1ms` 的多帧轮（两帧贴在一起）⇒ **提前量可以低到接近零**，
+这比"中位 152ms"更该写进决策。
+
+### 14.3 硬判据②在老代次上怎么复核（前缀边界不是可选项）
+
+同一窗口内：
+
+- 0.1.7-rc.2 ON：`(?<!hot )push landed` = **19**，裸 grep `push landed` = **38**，`hot push landed` = 19。
+  ⇒ **裸 grep 会把数字放大一倍**（§9 那条坑在这里再次成立，本轮是定量版）。
+- 判"增量帧不落盘"用的是**每生成的写次数**：OFF 2.43（7 生成/17 写）vs ON 3.17（6 生成/19 写），
+  而 ON 那轮实际发了 **14 帧** ⇒ 若帧落盘应约 5.5 次/生成。实测远低于该值 ⇒ 判**成立**。
+- 另有与代次无关的两条：**构造性**（`src/stream.ts` 不认识写面）+ **冒烟源码断言**
+  （`stream-hub-smoke` 剥注释后查代码），所以这条不依赖单次日志计数。
+
+### 14.4 老代次 volatile 的落点差异会直接决定开关读不读得到
+
+`scripts/cross-kernel/volatile-evidence.mjs` 实测 `source`：
+
+| 代次 | volatile 落在 | `streamingDelivery` 怎么设才生效 |
+|---|---|---|
+| 0.1.7-rc.2 | `profiles/web/cordis.patch.yml` | 写进本插件条目 `config:` 下 ✅（实测 `on=1`） |
+| 0.1.2-rc.1 | **`<home>/settings.yaml`** | 同一条 patch 配置也被读到了（`on=1`），但 `_push`/`_hot` 取证必须去 `settings.yaml` 找 —— **别只读 patch** |
+
+⇒ 任务书那条提醒是对的、且**方向要补一句**：0.1.2 上"配置读到了"与"载荷落在哪"是两处，
+`live settings refreshed` 那行在 0.1.2 **根本没出现**（该代次没有这条痕），
+所以判"配置有没有生效"只能靠四因子行里的 `on=`。
+
+### 14.5 立案：**#109 把插件从三个代次上抹掉了**（peer 语义被内核门禁当真执行）
+
+`scripts/cross-kernel/gate-matrix.mjs`（用**各代自己的** `evaluatePluginCompatibility`）实测：
+
+```
+[RED]  0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2
+       declared supported but unmet under BOTH engines.dsh and peer semantics
+       met under engines.dsh=null  peers=false  (semantics: peers-only)
+[GREEN] 0.2.1-rc.2
+[UNDETERMINED] 0.1.2-rc.1 / 0.1.5-rc.3 —— 这两代不跑插件准入门禁（无 evaluatePluginCompatibility）
+EXIT 2
+```
+
+真 GUI 侧的同一条证据（0.1.7-rc.2，豁免前）：
+
+```
+dsh: skipping profile bundle "dsh-suggest-ghost": Error: Plugin dsh-suggest-ghost@0.7.0 is
+incompatible with dsh 0.1.7-rc.2: peerDependencies {"@deepseek-ai/dsh-typert-protocol":"^0.2.1-rc.2"}.
+… To accept this risk explicitly, grant the exact-version exemption … `dsh plugin allow-version` …
+Exact-version exemption: not active.
+```
+
+**成因**：#109 把协议包声明成 `peerDependencies` + `peerDependenciesMeta.optional: true`，
+想的是"可选依赖拿不到就降级"。但 **0.1.7–0.2.0 的准入门禁只看 peer 范围、不看 optional 标记**
+（≤0.2.0 是 peers-only 语义，`engines.dsh` 不参与）⇒ 一个"可选"声明被当成**硬要求**执行，
+插件在 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 上**直接不装载**。0.1.2 / 0.1.5 侥幸没受影响，
+纯粹因为那两代**没有门禁**——不是设计如此。
+
+**影响面**：`engines.dsh` 声明下界到 `0.1.2-rc.1`，而 #109 之后**三个代次失去整个插件**
+（不只是失去流式：幽灵、补全、热度全没）。这是一次**功能性回归**。
+
+**修法（都要走 PR，本任务书不许我动产品代码）**：
+- 首选：把协议包从 `peerDependencies` **移出去**（改成本地 ambient 面 + 动态 import 的
+  "拿到就用、拿不到降级"，或放 `optionalDependencies` 的非 peer 位置）——只要它**不出现在
+  peers-only 门禁读的字段里**，回归就消失；
+- 或：按逐代枚举写范围（`^0.1.7-rc.2 || ^0.2.0-rc.2 || ^0.2.1-rc.2`），代价是这本来就是个
+  实现细节而非兼容边界；
+- **别用 `dsh plugin allow-version` 当解**——那是用户手工承担风险的豁免，不是插件的兼容声明。
+
+### 14.6 三条**工具面**缺陷（都是我这两轮踩的，已修进脚本；不改产品代码）
+
+1. **locale 盲**：0.1.2-rc.1 的界面是**英文**（`Add workspace` / `New session`），驱动只搜中文
+   ⇒ 报 `no-opener`，被误判成"这代不支持"。同代 `gui-round`（有英文兜底）拿到了 21 字幽灵
+   ⇒ **是工具的语言面缺陷**。（§13 早写过中英都要试，我的新脚本没抄。）
+2. **首屏时机**：固定 `sleep(9s)` 在冷沙箱不够（0.2.1 实测 9s 时 `composers: []`，20s+ 才
+   `phase=plain`）⇒ picker 拿不到行、整轮空跑。改成**轮询 composer 的 `phase`**，
+   仍不拿 `[role=dialog]` 计数当门。
+3. **行匹配没有兜底**：老代次 picker 的列表里拿不到目标行（`row-missing`）时应当走
+   **路径框 + 打开**那条第二路（`gui-round` 早就实现了）；我的脚本补上后 0.1.7 立刻跑通。
+
+### 14.7 复跑命令（当前可复跑）
+
+```bash
+# 0.2.1-rc.2（门禁自然通过）
+node scripts/dev-sandbox.mjs --home ~/xk-str-0212 --rewrite 'port: 3983=port: 4181' \
+  --bin ~/dsh-versions/0.2.1-rc.2/node_modules/.bin/dsh --live-nm ~/dsh-versions/0.2.1-rc.2/node_modules
+node scripts/cross-kernel/prune-bundles.mjs --home ~/xk-str-0212 --tree ~/dsh-versions/0.2.1-rc.2
+node scripts/dev-sandbox.mjs --home ~/xk-str-0212 --deploy . --bin … --live-nm …    # deploy 不碰 profile 条目
+rm -f ~/xk-str-0212/profiles/web/node_modules/dsh-suggest-ghost                     # 把软链换成实体副本
+cp -r ~/xk-str-0212/plugin ~/xk-str-0212/profiles/web/node_modules/dsh-suggest-ghost
+# 本插件条目 config: 下加 streamingDelivery: true，再起一次，然后：
+node scripts/stream-leadtime-measure.mjs --home ~/xk-str-0212 --rounds 8 --label xk-0212 --ws ~/xk-str-ws
+
+# 0.1.7-rc.2：上面全部换成 0.1.7-rc.2 路径，并**额外**加豁免（否则插件不装载，见 §14.5）
+DSH_HOME=~/xk-str-0172 node ~/dsh-versions/0.1.7-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js \
+  plugin --profile web allow-version dsh-suggest-ghost@0.7.0 --dsh-version 0.1.7-rc.2 --accept-risk
+```
+
+⚠️ 两处沙箱专属：① **实体副本**（软链会让宿主侧动态 import 失败，#109 §1 已写）；
+② **豁免只加在沙箱里**，它不是兼容声明（§14.5）。
+依赖归属自证：`readlink <home>/node_modules/@deepseek-ai/cordis` 必须指向被测树。
+
+### 14.8 未判定（没测的写在这里，不混进上面）
+
+- **0.1.2 上 `running` 为什么拿不到**：观测是"宿主 7 次收口全 `subs=0` + 页内 0 条 `stream open`"，
+  但**机制未证**。三条候选都没排除：(a) 该代会话快照根本没有 `running` 字段；(b) 字段有但
+  语义不同（回合结束时不经过 `true`）；(c) 客户端 `session.subscribe` 在这代不在边沿上触发。
+  下一步该做的是**把 `bound.session.getSnapshot()` 的键名打在页内**，一代一条，别再靠 grep 内核
+  产物猜（我这次 grep `dsh-session/lib` 三代都是 0 命中 —— 那个字段不在那儿，grep 到的"没有"
+  不是"不存在"）。
+- **0.1.5-rc.3 / 0.1.7-rc.1 / 0.2.0-rc.2 的运行时**：门禁面有结论（§14.5），
+  但**没起过 GUI**；`0.1.5-rc.3` 还额外受 `.bin/dsh` 是 sh 包装（§13.2 第 2 步）影响。
+- **写放大归因**（#109 遗留）：本轮 OFF/ON 各一轮，n=6–7，仍不足以归因 ⇒ 继续挂未判定。
+- **双标签页并发帧序**：冒烟覆盖了"两条订阅各自收帧"，真 GUI 双页仍未测。
+- **`content_deltas=1` 那 ~9% 轮次要不要退回整块**：0.1.7 实测确实出现过单帧轮，
+  策略问题留给 #108 决策。
+
+### 14.9 物证
+
+- `scripts/cross-kernel/out/gate.json`（门禁矩阵机器输出，EXIT 2 = 有未判定）
+- `docs/cross-kernel-shots/0.2.1-rc.2-streaming-PASS.png`
+- `docs/cross-kernel-shots/0.1.7-rc.2-streaming-PASS-exempt.png`（**豁免后才装载**，名字里写明了）
+- `docs/cross-kernel-shots/0.1.2-rc.1-streaming-NOSTREAM-ghost-only.png`（**未判定/失败侧也要出图**：
+  幽灵走 `_push` 出来了，但流式一帧没有）
+- 各沙箱 `logs/sbx.log`（四因子行、`stream turn closed subs=`、`(?<!hot )push landed` 计数）

@@ -221,6 +221,12 @@ try {
   await send('Page.navigate', { url: urlOf() });
   await sleep(9000);
   await evaluate(`(async () => { ${HELPERS} await window.__m.dismiss(); return true; })()`);
+  // ⚠️ 冷沙箱首屏水合**比 9s 慢**（0.2.1-rc.2 实测：9s 时 `composers: []`，等到 20s+ 才
+  // `phase=plain`）。固定 sleep 会让我在"页面还没起来"时去做 picker，得到 row-missing，
+  // 然后整轮测量空跑 —— 那是**工具的时机缺陷**，不是插件问题（§11 同源）。
+  // 就绪判据用 composer 的 phase，不拿 [role=dialog] 计数当门。
+  const hydrated = await evaluate(`window.__m.until(() => (window.__m.composer()?.dataset.phase ?? 'inert') !== 'inert', 45000)`);
+  say(`· 首屏水合等到 composer 就绪 = ${JSON.stringify(hydrated)}`);
   // 工作区（首轮设一次；已设过就是 no-op）
   const wsReady = await evaluate(`(async () => {
     const c = window.__m.composer();
@@ -246,13 +252,40 @@ try {
     return { ready: await window.__m.until(() => (window.__m.composer()?.dataset.phase ?? 'inert') !== 'inert', 15000) };
   })()`);
   say(`· 工作区就绪 = ${JSON.stringify(wsReady)}`);
+  // 行匹配在老代次的 picker 里拿不到行（0.1.7-rc.2 实测 row-missing，而 gui-round 的
+  // **路径框兜底**能成）⇒ 照它的第二条路走：聚焦路径框 → 写真路径 → 点「打开」。
+  // 就绪判据仍然是 composer 的 phase，不拿 [role=dialog] 计数当门（技能 §1b：这步最易误判）。
+  if (wsReady?.ready !== true && (wsReady?.why === 'row-missing' || wsReady?.why === 'picker-not-open')) {
+    const focused = await evaluate(`(() => {
+      const box = [...document.querySelectorAll('[role=dialog] input, [role=dialog] textarea, [role=dialog] [contenteditable="true"]')]
+        .find((n) => !n.disabled && (n.getAttribute('aria-label') ?? '').match(/路径|path|目录/i))
+        ?? document.querySelector('[role=dialog] input:not([type=checkbox]):not([type=radio])');
+      if (box == null) return { ok: false, why: 'no-path-box' };
+      box.focus();
+      return { ok: true, tag: box.tagName };
+    })()`);
+    if (focused?.ok === true) {
+      await send('Input.insertText', { text: WS });
+      await sleep(400);
+    }
+    const opened = await evaluate(`(async () => {
+      const cands = [...document.querySelectorAll('[role=dialog] button, [role=dialog] [role=button]')]
+        .filter((b) => window.__m.name(b).includes('打开') || window.__m.name(b).toLowerCase().includes('open'));
+      const ok = cands.find((b) => !b.disabled) ?? cands[0] ?? null;
+      if (ok == null) return { clicked: false, names: cands.map((b) => window.__m.name(b)) };
+      ok.click();
+      const ready = await window.__m.until(() => (window.__m.composer()?.dataset.phase ?? 'inert') !== 'inert', 20000);
+      return { clicked: true, ready, phase: window.__m.composer()?.dataset.phase ?? '' };
+    })()`);
+    say('· 工作区兜底（路径框）= ' + JSON.stringify({ focused, opened }));
+  }
 
   for (let round = 1; round <= ROUNDS; round += 1) {
     const q = QUESTIONS[(round - 1) % QUESTIONS.length];
     // 每轮开一条新会话（建议归属会话；看错会话必然"没有建议"）
     await evaluate(`(async () => {
       await window.__m.dismiss();
-      const b = window.__m.byText('新会话') ?? window.__m.byText('新建会话')
+      const b = window.__m.byText('新会话') ?? window.__m.byText('新建会话') ?? window.__m.byText('New session')
         ?? [...document.querySelectorAll('[aria-label]')].find((n) => /New session|新建会话|在.*中新建会/.test(n.getAttribute('aria-label') ?? ''));
       if (b != null) { b.click(); await window.__m.wait(1300); }
       return b != null;
@@ -343,6 +376,23 @@ try {
   say(`帧间提前量（同轮 首帧→终帧 页内时刻差）多帧轮数=${frameLeads.length}/${turns.length} `
     + `中位=${spreadMed ?? '—'}ms p90=${spreadP90 ?? '—'}ms 分布=${JSON.stringify(frameLeads)}`);
   say(`单帧轮数=${turns.filter((a) => a.length === 1).length}（这些轮流式无增益：模型只吐了一次正文增量）`);
+  // **帧序正确性**（不是"看起来有字"）：每轮 frame 必须从 1 起严格 +1、终帧唯一且是最后一帧。
+  // 这条判据是 #109 的 (c) 设计的全部风险面 —— 单调性来自宿主限频前的 seq，一旦跨轮串号，
+  // 客户端的归属校验会静默丢帧，界面表现为"偶尔不出字"，很难从 GUI 反推。
+  const orderViolations = [];
+  for (const arr of turns) {
+    for (let k = 0; k < arr.length; k += 1) {
+      if (arr[k].frame !== k + 1) orderViolations.push(`帧号不连续: ${JSON.stringify(arr.map((x) => x.frame))}`);
+      if (arr[k].final && k !== arr.length - 1) orderViolations.push(`终帧不在最后一帧: ${JSON.stringify(arr.map((x) => x.final))}`);
+    }
+    if (arr.filter((x) => x.final).length !== 1) orderViolations.push(`终帧数≠1(${arr.filter((x) => x.final).length})`);
+    const chars = arr.map((x) => x.chars);
+    if (chars.some((c, i) => i > 0 && c < chars[i - 1])) orderViolations.push(`前缀回退(净化前缀应单调不缩): ${JSON.stringify(chars)}`);
+  }
+  say(orderViolations.length === 0
+    ? `帧序判定：${turns.length} 轮全部通过（帧号连续 / 终帧唯一且末帧 / 前缀不缩）✓`
+    : `❌ 帧序违规 ${orderViolations.length} 处：${orderViolations.slice(0, 5).join(' | ')}`);
+  if (orderViolations.length > 0) process.exitCode = 4;
   say(`页内留痕：帧行=${frameLines.length} 状态/帧行合计=${stateLines.length}`);
   say('  状态行=' + JSON.stringify(stateLines.slice(0, 8)));
   say('明细=' + JSON.stringify(rows.map((r) => ({ round: r.round, ok: r.ok, first: r.firstMs, settle: r.lastChangeMs, distinct: r.distinct, chars: r.finalChars }))));
