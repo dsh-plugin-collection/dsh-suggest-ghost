@@ -1,0 +1,203 @@
+{
+  "task": "task-41 / PR #112",
+  "note": "verify:kernels 的原样证据：修好的 manifest 一份、把那条 peer 声明加回去的反证一份。退出码口径同时改成\"红压过未判定\"（原来 max() 会把 1 盖成 2，\"有红\"被读成\"只是没测到\"）。",
+  "supersedes": null,
+  "runs": [
+    {
+      "file": "across-kernels-2026-10-28T07-52-32-134Z.json",
+      "at": "2026-10-28T07:52:32.135Z",
+      "counts": {
+        "green": 6,
+        "red": 0,
+        "undetermined": 0
+      },
+      "versions": [
+        {
+          "version": "0.1.2-rc.1",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.1.5-rc.3",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.1.7-rc.1",
+          "verdict": "GREEN",
+          "notes": [
+            "0.1.7-rc.1：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）"
+          ]
+        },
+        {
+          "version": "0.1.7-rc.2",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.2.0-rc.2",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.2.1-rc.2",
+          "verdict": "GREEN",
+          "notes": [
+            "0.2.1-rc.2：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "across-kernels-2026-10-28T07-52-50-697Z.json",
+      "at": "2026-10-28T07:52:50.697Z",
+      "counts": {
+        "green": 3,
+        "red": 3,
+        "undetermined": 0
+      },
+      "versions": [
+        {
+          "version": "0.1.2-rc.1",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.1.5-rc.3",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.1.7-rc.1",
+          "verdict": "RED",
+          "notes": [
+            "0.1.7-rc.1：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）",
+            "apply() 没有落痕（插件可能没被装配）",
+            "投影单元 suggestGhost 未在 sessionProjections 上注册（registrations 里没有该 key）"
+          ]
+        },
+        {
+          "version": "0.1.7-rc.2",
+          "verdict": "RED",
+          "notes": [
+            "apply() 没有落痕（插件可能没被装配）",
+            "投影单元 suggestGhost 未在 sessionProjections 上注册（registrations 里没有该 key）"
+          ]
+        },
+        {
+          "version": "0.2.0-rc.2",
+          "verdict": "RED",
+          "notes": [
+            "apply() 没有落痕（插件可能没被装配）",
+            "投影单元 suggestGhost 未在 sessionProjections 上注册（registrations 里没有该 key）"
+          ]
+        },
+        {
+          "version": "0.2.1-rc.2",
+          "verdict": "GREEN",
+          "notes": [
+            "0.2.1-rc.2：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "across-kernels-2026-10-28T07-53-30-386Z.json",
+      "at": "2026-10-28T07:53:30.386Z",
+      "counts": {
+        "green": 6,
+        "red": 0,
+        "undetermined": 0
+      },
+      "versions": [
+        {
+          "version": "0.1.2-rc.1",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.1.5-rc.3",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.1.7-rc.1",
+          "verdict": "GREEN",
+          "notes": [
+            "0.1.7-rc.1：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）"
+          ]
+        },
+        {
+          "version": "0.1.7-rc.2",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.2.0-rc.2",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.2.1-rc.2",
+          "verdict": "GREEN",
+          "notes": [
+            "0.2.1-rc.2：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "across-kernels-2026-10-28T07-53-35-143Z.json",
+      "at": "2026-10-28T07:53:35.144Z",
+      "counts": {
+        "green": 3,
+        "red": 3,
+        "undetermined": 0
+      },
+      "versions": [
+        {
+          "version": "0.1.2-rc.1",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.1.5-rc.3",
+          "verdict": "GREEN",
+          "notes": []
+        },
+        {
+          "version": "0.1.7-rc.1",
+          "verdict": "RED",
+          "notes": [
+            "0.1.7-rc.1：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）",
+            "apply() 没有落痕（插件可能没被装配）",
+            "投影单元 suggestGhost 未在 sessionProjections 上注册（registrations 里没有该 key）"
+          ]
+        },
+        {
+          "version": "0.1.7-rc.2",
+          "verdict": "RED",
+          "notes": [
+            "apply() 没有落痕（插件可能没被装配）",
+            "投影单元 suggestGhost 未在 sessionProjections 上注册（registrations 里没有该 key）"
+          ]
+        },
+        {
+          "version": "0.2.0-rc.2",
+          "verdict": "RED",
+          "notes": [
+            "apply() 没有落痕（插件可能没被装配）",
+            "投影单元 suggestGhost 未在 sessionProjections 上注册（registrations 里没有该 key）"
+          ]
+        },
+        {
+          "version": "0.2.1-rc.2",
+          "verdict": "GREEN",
+          "notes": [
+            "0.2.1-rc.2：peer 未**逐字**枚举，但由 ^0.1.1-rc.2 / ^0.2.0-rc.2 的范围在 includePrerelease 下匹配（两份声明一致，非缺口）"
+          ]
+        }
+      ]
+    }
+  ]
+}
