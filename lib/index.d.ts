@@ -44,6 +44,7 @@ export interface PluginConfigValues {
     model: Volatile<string>;
     llmEnabled: Volatile<boolean>;
     suggestionReasoningEffort: Volatile<string>;
+    streamingDelivery: Volatile<boolean>;
     historyEnabled: Volatile<boolean>;
     historyCrossSession: Volatile<boolean>;
     historyMaxEntries: Volatile<number>;
@@ -111,6 +112,17 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      * low/medium/xhigh），只有显式声明了 off 的路由才接受。
      */
     suggestionReasoningEffort: z<string, string, "volatile-defined">;
+    /**
+     * 流式投递（#108 决策 ①：明知当前路由收益中位 1.8% / 91ms 仍做，取的是观感）。
+     *
+     * **默认 false**，直到实测数字交出去、用户点头才开。开=走 typert stream 逐帧推净化
+     * 前缀；关=与今天逐字一致（宿主侧不传 delta 回调、客户端不开流）。
+     *
+     * ⚠️ 这是**配置项**，不是 volatile 载体格 ⇒ 不需要登记 `live-settings.ts` 的
+     * `TRANSPORT_KEYS`（那四个 `_ops`/`_push`/`_hot`/`_residual` 是载体白名单，
+     * 把配置键写进去会被加载期不变量直接抛）。增量帧**不落盘**，所以也不新增任何格。
+     */
+    streamingDelivery: z<boolean, boolean, "volatile-defined">;
     /** 是否启用历史前缀补全。 */
     historyEnabled: z<boolean, boolean, "volatile-defined">;
     /** 是否跨会话搜索历史（false = 仅当前会话）。 */
@@ -233,6 +245,17 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      * low/medium/xhigh），只有显式声明了 off 的路由才接受。
      */
     suggestionReasoningEffort: z<string, string, "volatile-defined">;
+    /**
+     * 流式投递（#108 决策 ①：明知当前路由收益中位 1.8% / 91ms 仍做，取的是观感）。
+     *
+     * **默认 false**，直到实测数字交出去、用户点头才开。开=走 typert stream 逐帧推净化
+     * 前缀；关=与今天逐字一致（宿主侧不传 delta 回调、客户端不开流）。
+     *
+     * ⚠️ 这是**配置项**，不是 volatile 载体格 ⇒ 不需要登记 `live-settings.ts` 的
+     * `TRANSPORT_KEYS`（那四个 `_ops`/`_push`/`_hot`/`_residual` 是载体白名单，
+     * 把配置键写进去会被加载期不变量直接抛）。增量帧**不落盘**，所以也不新增任何格。
+     */
+    streamingDelivery: z<boolean, boolean, "volatile-defined">;
     /** 是否启用历史前缀补全。 */
     historyEnabled: z<boolean, boolean, "volatile-defined">;
     /** 是否跨会话搜索历史（false = 仅当前会话）。 */

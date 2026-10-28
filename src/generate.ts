@@ -93,6 +93,8 @@ export interface Config {
   acceptKey?: string;
   /** LLM 下一条建议开关（默认开）；关闭后每回合不再调用建议模型。 */
   llmEnabled?: boolean;
+  /** 流式投递（#108，默认关）：开=建议逐帧走 typert stream，关=与今天逐字一致。 */
+  streamingDelivery?: boolean;
   /** 停顿续写开关（默认开）；草稿非空且历史未命中时，停顿后由 LLM 续写。 */
   inlineEnabled?: boolean;
   /** 续写可见字符上限。 */
@@ -120,6 +122,7 @@ export interface Config {
  */
 export interface EditableConfig {
   llmEnabled?: Volatile<boolean> | boolean;
+  streamingDelivery?: Volatile<boolean> | boolean;
   historyEnabled?: Volatile<boolean> | boolean;
   historyCrossSession?: Volatile<boolean> | boolean;
   historyMaxEntries?: Volatile<number> | number;
@@ -159,6 +162,7 @@ function readVolatile<T>(value: unknown, fallback: T): T {
 /** 拍平后的配置：策略字段 + 可调字段，全部是裸值。 */
 export type FlatConfig = Config & {
   llmEnabled: boolean;
+  streamingDelivery: boolean;
   historyEnabled: boolean;
   historyCrossSession: boolean;
   historyMaxEntries: number;
@@ -185,6 +189,7 @@ export function flattenConfig(config: ResolvedPluginConfig): FlatConfig {
   return {
     ...config,
     llmEnabled: readVolatile(config.llmEnabled, true),
+    streamingDelivery: readVolatile(config.streamingDelivery, false),
     acceptKey: readVolatile(config.acceptKey, 'Tab'),
     historyEnabled: readVolatile(config.historyEnabled, true),
     historyCrossSession: readVolatile(config.historyCrossSession, false),
@@ -223,6 +228,7 @@ export function resolveConfig(config: Config): Config {
     model: readVolatile(raw.model, ''),
     acceptKey: readVolatile(raw.acceptKey, 'Tab'),
     llmEnabled: readVolatile(raw.llmEnabled, true),
+    streamingDelivery: readVolatile(raw.streamingDelivery, false),
     inlineEnabled: readVolatile(raw.inlineEnabled, true),
     inlineDelayMs: readVolatile(raw.inlineDelayMs, 100),
     inlineMinChars: readVolatile(raw.inlineMinChars, 4),
@@ -283,6 +289,9 @@ export function resolveConfig(config: Config): Config {
   }
   if (value.llmEnabled !== undefined && typeof value.llmEnabled !== 'boolean') {
     throw new Error('dsh-suggest-ghost: llmEnabled must be a boolean');
+  }
+  if (value.streamingDelivery !== undefined && typeof value.streamingDelivery !== 'boolean') {
+    throw new Error('dsh-suggest-ghost: streamingDelivery must be a boolean');
   }
   if (value.inlineEnabled !== undefined && typeof value.inlineEnabled !== 'boolean') {
     throw new Error('dsh-suggest-ghost: inlineEnabled must be a boolean');
@@ -708,6 +717,14 @@ export async function generateSuggestion(
   languageMode?: string,
   uiLocaleWeight?: number,
   lastLanguage?: string,
+  /**
+   * 每个正文增量回调一次，参数是**本次尝试内已收到的原始文本**（未净化）。
+   *
+   * 只有流式投递开启且该会话有活订阅时才传（`GhostStreamHub.beginTurn` 返回 false 时
+   * 调用方**不传**）⇒ 开关关着时这条路径一个字节都不多走。净化由调用方做
+   * （`prefixSafeClean`）："哪一帧可以显示"是投递侧的判断，不是模型的。
+   */
+  onTextDelta?: (rawCumulative: string) => void,
 ): Promise<{
   suggestion: SuggestGhostSuggested | undefined;
   language: string;
@@ -794,9 +811,16 @@ export async function generateSuggestion(
     try {
       callDeadline.signal.throwIfAborted();
       const assembler = new BlockAssembler();
+      // 本次尝试内的原始正文累计（**每次尝试重置**：退一档重发不能把上一次的半截文本
+      // 混进这一次的帧里，否则帧序列就不再是终态结果的前缀了）。
+      let rawText = '';
       for await (const chunk of ctx.llm.stream(options)) {
         callDeadline.signal.throwIfAborted();
         observeChunk(metrics, chunk, attemptStartedAt, Date.now());
+        if (onTextDelta !== undefined && chunk.type === 'text-delta') {
+          rawText += chunk.text;
+          onTextDelta(rawText);
+        }
         assembler.push(chunk);
       }
       callDeadline.signal.throwIfAborted();

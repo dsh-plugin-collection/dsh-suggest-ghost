@@ -323,7 +323,7 @@ run('上界按真宿主实测分布取值，不是按快样本的算术', () => 
   );
 });
 
-run('设置页字段集合与基线一致（#35 之后共 27 项，含两个推理档位）', () => {
+run('设置页字段集合与基线一致（#108 之后共 28 项，含两个推理档位与流式投递开关）', () => {
   const hostSource = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta.url)), 'utf8');
   // 只截 `const EditableFields = {` 这个对象字面量本身：从起始 brace 找到它自己的
   // `};`。上一版在这里用 indexOf('/** 配置 schema') 取右边界，而源码里那句写在
@@ -353,10 +353,14 @@ run('设置页字段集合与基线一致（#35 之后共 27 项，含两个推�
   // 客户端不读它、设置页也不该出现一个 JSON 输入框。漏登记的后果是加载期不变量直接抛
   // （`live-settings.ts` 那段 `transport field must not be a setting key` 的反向检查），
   // 所以这条基线断言与那条不变量是同一件事的两道闸。
+  //
+  // `streamingDelivery`（#108，2026-10-28 加入）与上面那四个载体**不是一类**：它是真设置项
+  // —— 客户端要读它来决定"回合结束边沿上要不要开流"，设置页也要有开关能改它。所以它进基线，
+  // 而**不进** TRANSPORT_KEYS（那条白名单只收 volatile 载体格）。
   const BASELINE_FIELDS = [
     'maxInputBytes', 'maxOutputTokens', 'timeoutMs', 'maxRecentTurns', 'maxTranscriptChars',
     'contextSummaryEnabled', 'contextSummaryChars', 'maxSuggestionChars', 'provider', 'model',
-    'llmEnabled', 'suggestionReasoningEffort', 'historyEnabled', 'historyCrossSession',
+    'llmEnabled', 'suggestionReasoningEffort', 'streamingDelivery', 'historyEnabled', 'historyCrossSession',
     'historyMaxEntries', 'historyMinChars',
     'inlineEnabled', 'inlineDelayMs', 'inlineMinChars', 'inlineMaxChars', 'completionReasoningEffort',
     'wordAccept', 'acceptKey', 'languageMode', 'uiLocaleWeight', '_ops', '_push', '_hot', '_residual',

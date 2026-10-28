@@ -88,6 +88,11 @@ import {
   verdictFromView,
   type WriteVerdict,
 } from './settings-result.js';
+import {
+  createGhostStreamChannel,
+  ghostStreamContribution,
+  GHOST_STREAM_NAMESPACE,
+} from './stream-ghost.js';
 import { OpsWriteQueue, type OpsWriteKind } from './ops-write-queue.js';
 import { SuggestGhostCard } from './settings-card.js';
 import type { PluginSettingsScope } from './settings-scope.js';
@@ -262,6 +267,14 @@ interface RemoteLike {
      */
     mutate(ns: string, ops: readonly SettingsPathOpLike[], expectedRevision: number): Promise<unknown>;
   };
+  /**
+   * 挂载一份手写的 Remote 贡献（#108 流式投递），返回 disposer。
+   *
+   * ⚠️ **必须可选**：老代次的宿主没有这个成员 ⇒ 取不到就是"这代没有流式通道"，
+   * 功能退化成整块到达，不是失败。形状与出处：
+   * `dsh-typert-protocol/lib/types/types.d.ts:525`（`$mount(contribution): Promise<TypertDisposer>`）。
+   */
+  $mount?(contribution: unknown): Promise<() => void>;
 }
 
 /** `remote.settings.mutate` 的路径操作（与内核 `SettingsPathOp` 同构）。 */
@@ -1225,6 +1238,8 @@ function applyBody(ctx: Context): void {
     historyMinChars: number;
     /** 停顿续写开关。 */
     inlineEnabled: boolean;
+    /** 流式投递开关（#108，默认关）：开=在回合结束边沿上开一条短流收增量帧。 */
+    streamingDelivery: boolean;
     /** 停顿多久后触发续写（毫秒）。 */
     inlineDelayMs: number;
     /** 草稿至少输入多少字符才触发续写。 */
@@ -1265,6 +1280,7 @@ function applyBody(ctx: Context): void {
     historyMaxEntries: 50,
     historyMinChars: 1,
     inlineEnabled: true,
+    streamingDelivery: false,
     inlineDelayMs: 100,
     inlineMinChars: 4,
     wordAccept: true,
@@ -1515,6 +1531,20 @@ function applyBody(ctx: Context): void {
     // agent 运行中隐藏；建议属于其他会话时隐藏（host 推送按会话标记；运行中
     // 的会话由 running 隐藏，回合结束的推送要么更新建议要么清空，无需再比
     // 对会话快照里已移除的 turnEnds）。
+    // 流式增量帧优先（#108，默认关）：帧比 `_push` 早到，这就是这条任务的全部意义。
+    // **只用于视觉增长**：帧自带的 frame/final 原样交给采纳链，provisional 帧在
+    // accept-guard 里本来就被拒（硬约束 3），所以这里不加任何额外闸门。
+    // 终帧之后 `_push` 落地会把它清掉——权威态仍然来自 settings 面。
+    const streamed = streamFrameFor(currentId);
+    if (streamed !== null) {
+      pushCellStats.llmGhostOffered += 1;
+      return {
+        kind: 'llm',
+        text: streamed.text,
+        acceptKey: settings.suggestion?.acceptKey ?? 'Tab',
+        frame: { frame: streamed.frame, final: streamed.final },
+      };
+    }
     const suggestion = settings.suggestion;
     if (suggestion === null || suggestion === undefined) return null;
     const ownerMismatch = settings.suggestionSessionId !== null
@@ -1993,6 +2023,45 @@ function applyBody(ctx: Context): void {
    * 载荷结构与 0.1.5 时代完全一致（`_push` / `_ops` 仍是 JSON 字符串），故下面
    * 的解析与 `*SessionId` 归属守卫逐字保留。
    */
+  // ── 流式投递（#108 决策 ①，默认关）───────────────────────────────────────
+  // 增量帧**只在内存里走这条通道**：不写 settings、不落盘（验收硬判据：增量帧的
+  // `push landed` 计数恒为 0）。终帧之后那次 `_push` 照旧发生，那才是权威态。
+  const GHOST_STREAM_INJECT_KEY = `remote.${GHOST_STREAM_NAMESPACE}`;
+  /** 当前在显示的增量帧（null = 没有；换会话/改草稿/终帧落地都会清）。 */
+  let streamedFrame: { sessionId: string; text: string; frame: number; final: boolean; turn: number } | null = null;
+  /** 上一次看到的会话 running 值（抓 true→false 那个边沿用）。 */
+  let lastRunning = false;
+  /** 懒注入完成后回填的命名服务对象；未回填前一切按"通道不可用"处理。 */
+  let ghostStreamNamespace: { suggest?: (id: string, signal: AbortSignal) => AsyncIterable<never> & { dispose?: () => void } } | undefined;
+  /** 低频诊断行（每回合几条）：走 console.debug，默认阈值下不刷屏，TRACE=debug 可见。 */
+  const streamTrace = (msg: string): void => {
+    console.debug(`[dsh-suggest-ghost][ops-trace] ${msg}`);
+  };
+  const ghostStream = createGhostStreamChannel({
+    // **必须是 getter**：命名空间要等懒注入完成后才回填，静态取值会永远拿到 undefined。
+    get namespace() {
+      return ghostStreamNamespace as never;
+    },
+    onFrame: (frame, sessionId) => {
+      if (streamedFrame !== null && streamedFrame.sessionId !== sessionId) return;
+      // 帧号单调：乱序或重放的旧帧直接丢（宿主限频窗口已保证单调，这里是防御）。
+      if (streamedFrame !== null && streamedFrame.turn === frame.turn && frame.frame < streamedFrame.frame) return;
+      streamedFrame = { sessionId, text: frame.text, frame: frame.frame, final: frame.final, turn: frame.turn };
+      render();
+    },
+    onState: (state, sessionId, note) => {
+      streamTrace(`stream ${state} session=${sessionId.slice(0, 12)}${note === '' ? '' : ' note=' + note}`);
+      if ((state === 'closed' || state === 'unavailable') && streamedFrame?.sessionId === sessionId) {
+        streamedFrame = null;
+      }
+    },
+  });
+  /** 取当前会话可显示的增量帧（开关关 / 归属不符 / 没有 = null）。 */
+  const streamFrameFor = (currentId: string | undefined) => (
+    settings.streamingDelivery && streamedFrame !== null && streamedFrame.sessionId === currentId
+      ? streamedFrame
+      : null
+  );
   const remote = remoteOf(ctx);
   if (remote?.settings !== undefined) {
     let lastRevision = -1;
@@ -2103,6 +2172,7 @@ function applyBody(ctx: Context): void {
             historyMaxEntries: typeof v.historyMaxEntries === 'number' ? v.historyMaxEntries : 50,
             historyMinChars: typeof v.historyMinChars === 'number' ? v.historyMinChars : 1,
             inlineEnabled: typeof v.inlineEnabled === 'boolean' ? v.inlineEnabled : true,
+            streamingDelivery: typeof v.streamingDelivery === 'boolean' ? v.streamingDelivery : false,
             inlineDelayMs: typeof v.inlineDelayMs === 'number' ? v.inlineDelayMs : 100,
             inlineMinChars: typeof v.inlineMinChars === 'number' ? v.inlineMinChars : 4,
             wordAccept: typeof v.wordAccept === 'boolean' ? v.wordAccept : true,
@@ -2188,6 +2258,32 @@ function applyBody(ctx: Context): void {
       applySettings();
     };
     const offUpdated = remote.$on?.('settings/document-updated', onDocumentUpdated);
+    // 流式通道挂载。**先 $mount 再懒 ctx.inject**：`remote.<ns>` 是子服务键，直接
+    // 属性访问会抛 cannot get property "remote.ghostStream" without inject（与本文件
+    // 上方 remote.settings 那条是同一条 cordis reflect 规则）；而把它写进模块级 inject
+    // 又会在挂载之前就把整条 fiber park 死 —— 两种错法都要避开。
+    // 形状照官方先例 dsh-experimental-client-ui-cot-translation/lib/client.js:1027-1029。
+    if (typeof remote.$mount === 'function') {
+      void Promise.resolve()
+        .then(async () => {
+          const unmount = await remote.$mount!(ghostStreamContribution());
+          void ctx.inject([GHOST_STREAM_INJECT_KEY], (child: Context) => {
+            // 注入回来的 child 是宿主 Context；本插件保持零内核导入，所以这里一次性
+            // 走 unknown 收口，形状由 stream-ghost.ts 的本地最小面负责。
+            const childRemote = (child as unknown as { remote?: Record<string, unknown> }).remote;
+            ghostStreamNamespace = childRemote?.[GHOST_STREAM_NAMESPACE] as typeof ghostStreamNamespace;
+            streamTrace('stream namespace bound');
+            return () => undefined;
+          });
+          return unmount;
+        })
+        .then((unmount) => { ctx.effect(() => unmount, 'suggest-ghost: stream mount'); })
+        .catch((error: unknown) => {
+          // 挂不上 = 这代次没有这条通道：留一行 warn（用户来报障时先看的那行），
+          // 功能自动退化成"整块到达"，不影响任何既有判据。
+          console.warn(`[dsh-suggest-ghost][ops-trace] stream unavailable, falling back to whole-block push: ${String(error instanceof Error ? error.message : error).slice(0, 160)}`);
+        });
+    }
     const offReset = ctx.on('connection/reset', () => applySettings());
     ctx.effect(() => () => {
       offUpdated?.();
@@ -2358,9 +2454,30 @@ function applyBody(ctx: Context): void {
       for (const un of unsubs) un();
       unsubs = [];
       if (bound === null) return;
+      // 回调里不能直接读 bound：它是可重新赋值的闭包变量，TS 无法把
+      // 「if (bound === null) return」的收窄带到异步回调里 ⇒ 先抓一份局部常量。
+      const b = bound;
       unsubs.push(
-        bound.session.subscribe(() => renderTraced('session')),
-        bound.input.state.subscribe(() => renderTraced('input')),
+        b.session.subscribe(() => {
+          // 回合结束边沿（running: true → false）就是"该开流了"的信号。
+          // 生成是宿主在 turn/end 触发的，客户端拿不到回合号，但拿得到这个边沿
+          // ⇒ 零往返、零落盘。（不选"常驻一条流"：要为每个会话养一条跨回合存活的
+          //  sink，还得处理僵尸流与在途旧帧；不选"宿主发开始信号"：settings 面发一个
+          //  信号 = 一次整档重写，实测 writeMs 361–2260ms，反而把首帧推后。）
+          const running = (b.session.getSnapshot() as { running?: boolean }).running === true;
+          if (lastRunning && !running && settings.streamingDelivery) {
+            const id = currentSessionIdOf(sessions.list.getSnapshot());
+            if (id !== undefined) ghostStream.open(id);
+          }
+          lastRunning = running;
+          renderTraced('session');
+        }),
+        b.input.state.subscribe(() => {
+          // 用户改草稿 = 这一帧之后都不该再显示 ⇒ 撤帧。**用 dispose 不用 abort**
+          // （实测 abort 会在迭代里抛一次异常再被吞，留下一条看起来像失败的痕迹）。
+          if (readDraftSnapshot(b.input.state.getSnapshot()).draft.trim() !== '') ghostStream.close('draft-changed');
+          renderTraced('input');
+        }),
         bound.projectionFace.subscribe(() => renderTraced('face')),
       );
     };

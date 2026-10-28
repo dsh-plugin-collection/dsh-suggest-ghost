@@ -27,6 +27,8 @@ export interface Config {
     acceptKey?: string;
     /** LLM 下一条建议开关（默认开）；关闭后每回合不再调用建议模型。 */
     llmEnabled?: boolean;
+    /** 流式投递（#108，默认关）：开=建议逐帧走 typert stream，关=与今天逐字一致。 */
+    streamingDelivery?: boolean;
     /** 停顿续写开关（默认开）；草稿非空且历史未命中时，停顿后由 LLM 续写。 */
     inlineEnabled?: boolean;
     /** 续写可见字符上限。 */
@@ -53,6 +55,7 @@ export interface Config {
  */
 export interface EditableConfig {
     llmEnabled?: Volatile<boolean> | boolean;
+    streamingDelivery?: Volatile<boolean> | boolean;
     historyEnabled?: Volatile<boolean> | boolean;
     historyCrossSession?: Volatile<boolean> | boolean;
     historyMaxEntries?: Volatile<number> | number;
@@ -75,6 +78,7 @@ export type ResolvedPluginConfig = Config & EditableConfig;
 /** 拍平后的配置：策略字段 + 可调字段，全部是裸值。 */
 export type FlatConfig = Config & {
     llmEnabled: boolean;
+    streamingDelivery: boolean;
     historyEnabled: boolean;
     historyCrossSession: boolean;
     historyMaxEntries: number;
@@ -238,7 +242,15 @@ export declare function buildTranscript(session: Session, maxRecentTurns: number
  * 返回的 `metrics` 只用于留痕（#39），不参与任何判据：调用方拿到它就打一行
  * `suggestion generated/dropped …`。
  */
-export declare function generateSuggestion(ctx: Context, config: Config, session: Session, turn: number, signal: AbortSignal, uiLocale?: string, languageMode?: string, uiLocaleWeight?: number, lastLanguage?: string): Promise<{
+export declare function generateSuggestion(ctx: Context, config: Config, session: Session, turn: number, signal: AbortSignal, uiLocale?: string, languageMode?: string, uiLocaleWeight?: number, lastLanguage?: string, 
+/**
+ * 每个正文增量回调一次，参数是**本次尝试内已收到的原始文本**（未净化）。
+ *
+ * 只有流式投递开启且该会话有活订阅时才传（`GhostStreamHub.beginTurn` 返回 false 时
+ * 调用方**不传**）⇒ 开关关着时这条路径一个字节都不多走。净化由调用方做
+ * （`prefixSafeClean`）："哪一帧可以显示"是投递侧的判断，不是模型的。
+ */
+onTextDelta?: (rawCumulative: string) => void): Promise<{
     suggestion: SuggestGhostSuggested | undefined;
     language: string;
     metrics: StreamMetrics;

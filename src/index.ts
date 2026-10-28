@@ -71,6 +71,9 @@ import { parseHotnessOps, setupHotnessPersistence } from './hotness-store.js';
 import type { ParsedOpsResult } from './hotness-store.js';
 import { applySuggestGhostProjection, initSuggestGhostProjection, suggestGhostSchema } from './projection.js';
 import { EMPTY_PUSH, mergeLiveConfig, SUGGEST_GHOST_NAMESPACE } from './settings.js';
+import { prefixSafeClean } from './sanitize.js';
+import { GhostStreamHub } from './stream.js';
+import { GHOST_STREAM_SERVICE_KEY, registerGhostStreamService } from './stream-service.js';
 import {
   hotAckFields,
   initialRepeatTraceGate,
@@ -144,6 +147,17 @@ const EditableFields = {
    * low/medium/xhigh），只有显式声明了 off 的路由才接受。
    */
   suggestionReasoningEffort: z.string().default('').volatile(),
+  /**
+   * 流式投递（#108 决策 ①：明知当前路由收益中位 1.8% / 91ms 仍做，取的是观感）。
+   *
+   * **默认 false**，直到实测数字交出去、用户点头才开。开=走 typert stream 逐帧推净化
+   * 前缀；关=与今天逐字一致（宿主侧不传 delta 回调、客户端不开流）。
+   *
+   * ⚠️ 这是**配置项**，不是 volatile 载体格 ⇒ 不需要登记 `live-settings.ts` 的
+   * `TRANSPORT_KEYS`（那四个 `_ops`/`_push`/`_hot`/`_residual` 是载体白名单，
+   * 把配置键写进去会被加载期不变量直接抛）。增量帧**不落盘**，所以也不新增任何格。
+   */
+  streamingDelivery: z.boolean().default(false).volatile(),
   /** 是否启用历史前缀补全。 */
   historyEnabled: z.boolean().default(true).volatile(),
   /** 是否跨会话搜索历史（false = 仅当前会话）。 */
@@ -254,6 +268,7 @@ export interface PluginConfigValues {
   model: Volatile<string>;
   llmEnabled: Volatile<boolean>;
   suggestionReasoningEffort: Volatile<string>;
+  streamingDelivery: Volatile<boolean>;
   historyEnabled: Volatile<boolean>;
   historyCrossSession: Volatile<boolean>;
   historyMaxEntries: Volatile<number>;
@@ -451,6 +466,25 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   // 全局跨会话热度表（增量，随 user/message 事件累积），并经 storageDomain
   // 持久化频次（宿主未挂 storageDomain 时自动降级为纯内存）。
   const { hotness, persistence } = setupHotnessPersistence(ctx);
+
+  // ── 流式投递的宿主侧通道（#108 决策 ①，默认关）────────────────────────────
+  // 帧只活在这个内存对象上：**不写 settings、不落盘、不碰 configEditor.edit**
+  // （验收硬判据：增量帧的 `push landed` 计数恒为 0）。终帧之后照旧写一次 `_push`，
+  // 那才是权威态（#56/#88/#93 的冷启动/重连/重启语义全挂在那次写上，不许"顺手优化"掉）。
+  const streamHub = new GhostStreamHub();
+  /** 通道是否真的挂上了（拿不到协议包的老代次 = false ⇒ 全程走现状路径）。 */
+  let streamChannelReady = false;
+  void registerGhostStreamService(ctx, streamHub, () => effective().streamingDelivery === true)
+    .then((registered) => {
+      streamChannelReady = registered;
+      // 只有开了流式才值得留这一行；关着时不新增任何启动噪声（默认阈值下 debug 也不刷屏）。
+      if (registered) traceOps(`stream channel registered service=${GHOST_STREAM_SERVICE_KEY}`);
+      else traceOps('stream channel unavailable: protocol package not resolvable');
+    })
+    .catch((error: unknown) => {
+      streamChannelReady = false;
+      traceFault('stream-register-failed', String(error instanceof Error ? error.message : error).slice(0, 200));
+    });
 
   // 读取生成配置的 live 值：状态经 `_push` volatile 字段推给 client
   // （0.1.7 移除了 settings.yaml：字段载体从 SettingsScope 换成 volatile 配置
@@ -2810,6 +2844,16 @@ export function apply(ctx: Context, config: GenerateConfig): void {
      * 与「这轮为什么没建议」在 tee 日志里都是零证据，只能靠猜。
      */
     const genStartedAt = Date.now();
+    /**
+     * 本次生成是否走流式。**三个条件缺一不可**：开关开、通道挂上了、该会话此刻确实有
+     * 活订阅。任一不满足 ⇒ 下面传给 `generateSuggestion` 的 delta 回调是 `undefined`
+     * ⇒ 生成路径与开关关时逐字一致（回归判据「开关关 = 现状一字不变」就靠这一处）。
+     */
+    // 闸门只看"配置开 + 通道挂上"。**不看此刻有没有订阅**：客户端的开流一定晚于
+    // 宿主这一行（回合结束事件要先过一趟网络才变成客户端的 running 边沿），
+    // 拿"此刻没人听"当放弃条件会让整条路径永不生效 —— 实测 7 轮全 0 提前量。
+    const streaming = effective().streamingDelivery === true && streamChannelReady;
+    if (streaming) streamHub.beginTurn(session.id, turn);
     void Promise.resolve()
       .then(() => {
         const cfg = effective();
@@ -2817,6 +2861,17 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           ctx, cfg, session, turn, controller.signal,
           clientUiLocale, cfg.languageMode, cfg.uiLocaleWeight,
           state.lastLanguage,
+          streaming
+            ? (raw) => {
+              // 没人听着就一个字节都不多做（净化有成本，别白付）。
+              if (!streamHub.hasSubscribers(session.id)) return;
+              // 帧带的是**净化前缀**（`prefixSafeClean` 保证是终态结果的前缀），
+              // 不是原始增量：中途显示的内容允许被终帧丢弃，但不允许是终态里
+              // 永远不会出现的形状（半截转义、未闭合围栏的尾行等）。
+              const prefix = prefixSafeClean(raw, '', cfg.maxSuggestionChars ?? Infinity);
+              if (prefix.length > 0) streamHub.publish(session.id, prefix);
+            }
+            : undefined,
         );
       })
       .then(
@@ -2848,6 +2903,14 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           } else {
             traceOps(`suggestion generated session=${session.id} turn=${turn} chars=${result.suggestion.text.length} frame=${String(result.suggestion.frame ?? 1)} in ${Date.now() - genStartedAt}ms ${stream} at=${Date.now()}`);
           }
+          // 流式收口：**终帧之后上面那次 `_push` 照旧发生**（权威态不因开流而省掉）。
+          // 空建议/被过滤时只关订阅、不发空终帧 ⇒ 客户端等 `_push` 的 null 去清幽灵。
+          if (streaming) {
+            const closed = result.suggestion === undefined
+              ? streamHub.cancelTurn(session.id)
+              : streamHub.publishFinal(session.id, result.suggestion.text);
+            traceOps(`stream turn closed session=${session.id} turn=${turn} subs=${closed} dropped=${streamHub.droppedFrames} at=${Date.now()}`);
+          }
         },
         (error: unknown) => {
           if (state?.pending?.controller === controller) state.pending = undefined;
@@ -2858,6 +2921,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           // （唯一的 exporter 只收 warn/error，且 startupLogs 只在启动失败时写盘，
           // 见 `traceOps` 上方那段）。失败也留一行，带已知的增量画像与耗时。
           traceOps(`suggestion failed session=${session.id} turn=${turn} in ${Date.now() - genStartedAt}ms ${message.slice(0, 200)} at=${Date.now()}`);
+          // 流式侧同样只关订阅：错误由下面那次 `_push`（带 error 摘要）权威送达。
+          if (streaming) streamHub.cancelTurn(session.id);
           // 失败也推送：清掉残留幽灵 + 把错误摘要带给 client/设置页（可诊断）。
           trackSuggestion(session.id, null);
           const hot = hotness.snapshot(historySnapshotCap());
@@ -2903,6 +2968,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     }
     if (deferredPump !== null) clearInterval(deferredPump);
     deferredPump = null;
+    // 流式通道：关掉所有订阅，让客户端的迭代立刻结束而不是吊死在一条没人喂的流上。
+    streamHub.closeAll();
     for (const state of tracked) state.pending?.controller.abort();
     for (const controller of completionPending.values()) controller.abort();
   });

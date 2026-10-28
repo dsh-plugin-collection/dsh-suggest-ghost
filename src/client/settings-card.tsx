@@ -170,6 +170,26 @@ export const GHOST_FIELDS: ReadonlyArray<{
     writable: true,
   },
   {
+    key: 'streamingDelivery',
+    label: { zh: '流式投递建议', en: 'Stream suggestion frames' },
+    hint: {
+      // 不粉饰：这条开关买的是观感，不是性能。数字就写在提示里，用户开之前看得见。
+      zh: '开启后，回合结束时客户端开一条 typert 流，建议按净化前缀逐帧推送（字一个个出来）。'
+        + '**默认关闭**：当前路由实测流式收益中位 1.8% / 91ms，且正文增量 p50 只有 2 个 —— '
+        + '也就是说这条买的是观感，不是速度。增量帧不落盘（不写 settings），终帧仍走一次权威推送；'
+        + '中途显示的内容允许被终帧修正或丢弃，采纳只认终帧。老代次拿不到该通道时自动退回整块到达。',
+      en: 'When on, the client opens a typert stream at the turn-end edge and the suggestion arrives as '
+        + 'prefix-safe frames (characters appear progressively). OFF BY DEFAULT: measured gain on the '
+        + 'current route is 1.8% median / 91ms, and content deltas p50 is 2 — this buys the look, not speed. '
+        + 'Incremental frames never persist (no settings write); the final frame still goes through one '
+        + 'authoritative push. Mid-stream text may be revised or dropped by the final frame, and only the '
+        + 'final frame is acceptable. Older kernels without the channel fall back to whole-block delivery.',
+    },
+    kind: 'boolean',
+    section: 'llm',
+    writable: true,
+  },
+  {
     key: 'suggestionReasoningEffort',
     label: { zh: '建议推理档位', en: 'Suggestion reasoning effort' },
     hint: {
