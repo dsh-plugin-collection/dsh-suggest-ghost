@@ -530,6 +530,18 @@ const overlayShapeOf = (content: GhostContent): OverlayShape => ({
  * 显示前做一次几何自检（见 {@link verify}）：幽灵若未落在编辑器内容原点上
  * （宿主 DOM 结构变化导致坐标系假设失效），宁可不显示，也不糊在正文上。
  */
+/**
+ * #113：一条帧痕迹记录。**只有四个数字，没有任何正文** —— 与 `stream frame … chars=`
+ * 那条留痕完全同一口径（隐私红线：DOM 侧也不许把用户可见文本抄进属性）。
+ * `final` 用 1/0 而不是 boolean：判据 1 要求与留痕**逐格对齐**，同一套字面量最省事。
+ */
+interface StreamFrameRecord {
+  readonly frame: number;
+  readonly final: 0 | 1;
+  readonly chars: number;
+  readonly t: number;
+}
+
 class GhostOverlay {
   private readonly el: HTMLDivElement;
   private composer: HTMLElement | null = null;
@@ -565,6 +577,27 @@ class GhostOverlay {
   private lastPaintWasGrowth = false;
   /** 绘制计数（留痕与冒烟外部可观测；只有数字，没有正文）。 */
   private paintStats = { growth: 0, remeasure: 0, rebuild: 0 };
+
+  /**
+   * #113：把本回合的逐帧痕迹写到**既有 overlay 节点**的 dataset 上，让"回合结束之后
+   * 还能不能重建这张表"有答案 —— 判据是纯读 DOM，不依赖任何 console 捕获。
+   *
+   * 为什么落在 overlay 而不是新开一个全局对象：全局对象要自己管生命周期，而本插件
+   * 一个页面里可能有多条 fiber（热重载/多实例），全局会打架；overlay 节点随 fiber 的
+   * `destroy()` 一起消失，天然对齐。
+   *
+   * ⚠️ 与取证脚本的约定：本属性**只由本方法写**。外部若只是清空 `textContent` /
+   * 改 `display` / 重新绘制，属性不受影响（已核：`scripts/cross-kernel` 那边没有
+   * 替换节点的动作）；但若谁**替换/重建 overlay 节点**，痕迹会随之消失 —— 那属于
+   * 换了载体，不是本条要保的性质，别在这里偷偷兜。
+   */
+  setStreamFrames(list: readonly StreamFrameRecord[]): void {
+    if (list.length === 0) {
+      delete this.el.dataset.streamFrames;
+      return;
+    }
+    this.el.dataset.streamFrames = JSON.stringify(list);
+  }
 
   constructor() {
     this.el = document.createElement('div');
@@ -2027,6 +2060,16 @@ function applyBody(ctx: Context): void {
   // 增量帧**只在内存里走这条通道**：不写 settings、不落盘（验收硬判据：增量帧的
   // `push landed` 计数恒为 0）。终帧之后那次 `_push` 照旧发生，那才是权威态。
   const GHOST_STREAM_INJECT_KEY = `remote.${GHOST_STREAM_NAMESPACE}`;
+  /**
+   * #113：本回合的帧痕迹（DOM 侧可读的副本）。
+   *  - 上限钉死：正常一回合的帧数由宿主限频窗口决定，远到不了 64；钉上限是为了
+   *    "无界增长"这种错法不可能发生，而不是为了省内存。
+   *  - 换**会话或换回合**都清空（键里带 sessionId：只看 turn 的话，切到一个 turn 号
+   *    相同的会话会把上一会话的痕迹当成同回合续下去）。
+   */
+  const STREAM_FRAMES_MAX = 64;
+  let streamFramesLog: StreamFrameRecord[] = [];
+  let streamFramesKey = '';
   /** 当前在显示的增量帧（null = 没有；换会话/改草稿/终帧落地都会清）。 */
   let streamedFrame: { sessionId: string; text: string; frame: number; final: boolean; turn: number } | null = null;
   /** 上一次看到的会话 running 值（抓 true→false 那个边沿用）。 */
@@ -2047,6 +2090,22 @@ function applyBody(ctx: Context): void {
       // 看到 subs>0；而 15ms 的页外轮询会把挤在一起的两帧读成"一次变化"，所以提前量必须
       // 由这些 t= 值算，不能靠采样。
       streamTrace(`stream frame=${frame.frame} final=${frame.final ? 1 : 0} chars=${frame.text.length} turn=${frame.turn} t=${Math.round(performance.now())}`);
+      // #113：DOM 侧痕迹。**必须紧跟在 streamTrace 之后、下面两道防御过滤之前** ——
+      // 判据 1 要的是"与 `stream frame … t=` 逐格对齐"，放到过滤之后就变成两套真相
+      //（被丢的乱序旧帧留痕里有、DOM 里没有，两条来源就互相校验不起来了）。
+      const framesKey = `${sessionId}|${frame.turn}`;
+      if (streamFramesKey !== framesKey) {
+        streamFramesKey = framesKey;
+        streamFramesLog = [];
+      }
+      streamFramesLog.push({
+        frame: frame.frame, final: frame.final ? 1 : 0,
+        chars: frame.text.length, t: Math.round(performance.now()),
+      });
+      if (streamFramesLog.length > STREAM_FRAMES_MAX) {
+        streamFramesLog.splice(0, streamFramesLog.length - STREAM_FRAMES_MAX);
+      }
+      overlay.setStreamFrames(streamFramesLog);
       if (streamedFrame !== null && streamedFrame.sessionId !== sessionId) return;
       // 帧号单调：乱序或重放的旧帧直接丢（宿主限频窗口已保证单调，这里是防御）。
       if (streamedFrame !== null && streamedFrame.turn === frame.turn && frame.frame < streamedFrame.frame) return;

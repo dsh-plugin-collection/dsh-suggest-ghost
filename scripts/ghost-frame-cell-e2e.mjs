@@ -133,14 +133,18 @@ function makeElement() {
   return el;
 }
 
+const created = [];
 const documentStub = {
-  createElement: () => makeElement(),
+  // #113：给替身加一张 id 登记表 —— 产品代码用 `document.getElementById(OVERLAY_ID)`
+  // 取不到东西时，"属性不存在"这种判据会**永远为真**（假绿）。有了登记表才是真判据。
+  createElement: () => { const el = makeElement(); created.push(el); return el; },
   head: makeElement(),
   body: makeElement(),
   // 输入框尚未挂载 → render() 会在这里早退。建议格的读侧计数发生在那之前，
   // 所以这不影响被验的东西（刻意保留这个「不做全」，而不是伪造一个 composer）。
   querySelector: () => null,
   querySelectorAll: () => [],
+  getElementById: (id) => created.find((el) => el.id === id) ?? null,
   getSelection: () => null,
   createTreeWalker: () => ({ nextNode: () => null }),
   createRange: () => ({ setStart() {}, setEnd() {}, getBoundingClientRect: () => ({ left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 }) }),
@@ -453,6 +457,31 @@ if (loaded === null) {
       + `\n期望：每行 reason ∈ {${allowedReasons.join(', ')}}、不含任何建议正文、字段只有四个计数、总行数 ≤2（5s 冷却）`
       + `\n实际：reasons=[${reasons.join(', ')}] 含正文=${leaked} 计数格式对=${countsOnly}`
       + `\n（行数少于场景数是**对的**：理由闸 + 槽级冷却两层；两理由性质在 trace-gate-smoke 钉）`);
+  }
+}
+
+// ── #113 判据 3 的「默认关」那一半：不开流式 ⇒ overlay 上不得出现帧痕迹 ─────────
+// 为什么放在这条链里：GUI 侧那半（stream-frames-dom-e2e.mjs）要真模型、真回合，
+// 不进链；而"默认关零变化"是**每次改动都必须成立**的性质，必须有个便宜的常驻闸。
+// ⚠️ 判据不能写成"找不到元素就算过"——元素找不到时属性当然也不存在，那是假绿；
+//    所以 overlay 没被创建时记 NOT-COVERED，而不是 PASS。
+// ⚠️ 这条闸**能**判什么、**不能**判什么（两次变异实测出来的边界）：
+//    - 能判：默认关时 DOM 上多了帧痕迹（变异=构造期盖章 ⇒ 本条转红 ✓）
+//    - 不能判：记录逻辑本身坏没坏。第一次变异我挑的是"setStreamFrames 里无条件盖章"，
+//      本条**照样绿** —— 因为默认关时那个方法压根不会被调用。⇒ 判"没被调用"的变异是空变异。
+//      记录逻辑由 GUI 侧的 stream-frames-dom-e2e.mjs（判据 1/2：DOM 与留痕逐格对齐）负责，
+//      那条要真模型、真回合，不进链。
+{
+  const overlayEl = created.find((el) => el.id === 'dsh-suggest-ghost-overlay') ?? null;
+  if (overlayEl === null) {
+    record('#113 默认关：overlay 上没有 data-stream-frames', STATUS.NC,
+      'DOM 替身里没找到 overlay 节点 ⇒ 这条断言无从判（不是"通过"）');
+  } else {
+    const raw = overlayEl.dataset.streamFrames;
+    record('#113 默认关：overlay 上没有 data-stream-frames',
+      raw === undefined || raw === '' || raw === '[]' ? STATUS.PASS : STATUS.FAIL,
+      `本 harness 全程不开流式（streamingDelivery 默认 false，帧通道只在开关开时才 open）`
+      + `\n期望：dataset.streamFrames 不存在/为空；实际=${String(raw).slice(0, 120)}`);
   }
 }
 
