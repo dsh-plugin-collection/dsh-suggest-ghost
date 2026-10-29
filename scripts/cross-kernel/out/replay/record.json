@@ -1,0 +1,464 @@
+{
+  "home": "/home/wujue/xk-replay-0212",
+  "scale": 4,
+  "pad": 24,
+  "rounds": [
+    {
+      "round": 1,
+      "ok": true,
+      "ask": "怎么用 ss 或 lsof 查看某个",
+      "clip": {
+        "x": 373,
+        "y": 960,
+        "width": 710,
+        "height": 72
+      },
+      "geo": {
+        "box": {
+          "x": 384.5,
+          "y": 984,
+          "w": 686,
+          "h": 24
+        },
+        "input": {
+          "x": 370.5,
+          "y": 980,
+          "w": 708,
+          "h": 36
+        },
+        "charsNow": 11
+      },
+      "shots": [
+        {
+          "png": "r1-00-blank.png",
+          "chars": 0,
+          "source": "blank"
+        },
+        {
+          "png": "r1-01-f1c7.png",
+          "chars": 7,
+          "frame": 1,
+          "final": false,
+          "tDom": 43880,
+          "tObserver": null,
+          "textSource": "final-prefix",
+          "rendered": 7,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 98,
+            "h": 19
+          }
+        },
+        {
+          "png": "r1-02-f2c11.png",
+          "chars": 11,
+          "frame": 2,
+          "final": true,
+          "tDom": 43951,
+          "tObserver": 44251,
+          "textSource": "observer",
+          "rendered": 11,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 154,
+            "h": 19
+          }
+        }
+      ],
+      "F": {
+        "countDom": 2,
+        "countTrace": 2,
+        "countObserver": 1,
+        "rows": [
+          {
+            "frame": 1,
+            "charsDom": 7,
+            "charsTrace": 7,
+            "tDom": 43880,
+            "tTrace": 43880,
+            "charsMatch": true,
+            "tMatch": true
+          },
+          {
+            "frame": 2,
+            "charsDom": 11,
+            "charsTrace": 11,
+            "tDom": 43951,
+            "tTrace": 43951,
+            "charsMatch": true,
+            "tMatch": true
+          }
+        ],
+        "charsAllMatch": true,
+        "tAllMatch": true
+      },
+      "textRowWin": [
+        986,
+        1005
+      ],
+      "domFrames": [
+        {
+          "frame": 1,
+          "final": 0,
+          "chars": 7,
+          "t": 43880
+        },
+        {
+          "frame": 2,
+          "final": 1,
+          "chars": 11,
+          "t": 43951
+        }
+      ],
+      "traceFrames": [
+        {
+          "frame": 1,
+          "final": false,
+          "chars": 7,
+          "t": 43880
+        },
+        {
+          "frame": 2,
+          "final": true,
+          "chars": 11,
+          "t": 43951
+        }
+      ],
+      "observerLen": 1
+    },
+    {
+      "round": 2,
+      "ok": true,
+      "ask": "git worktree 和普通 c",
+      "clip": {
+        "x": 373,
+        "y": 960,
+        "width": 710,
+        "height": 72
+      },
+      "geo": {
+        "box": {
+          "x": 384.5,
+          "y": 984,
+          "w": 686,
+          "h": 24
+        },
+        "input": {
+          "x": 370.5,
+          "y": 980,
+          "w": 708,
+          "h": 36
+        },
+        "charsNow": 9
+      },
+      "shots": [
+        {
+          "png": "r2-00-blank.png",
+          "chars": 0,
+          "source": "blank"
+        },
+        {
+          "png": "r2-01-f1c5.png",
+          "chars": 5,
+          "frame": 1,
+          "final": false,
+          "tDom": 88843,
+          "tObserver": null,
+          "textSource": "final-prefix",
+          "rendered": 5,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 70,
+            "h": 19
+          }
+        },
+        {
+          "png": "r2-02-f2c9.png",
+          "chars": 9,
+          "frame": 2,
+          "final": false,
+          "tDom": 88919,
+          "tObserver": 89203,
+          "textSource": "observer",
+          "rendered": 9,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 126,
+            "h": 19
+          }
+        },
+        {
+          "png": "r2-03-f3c9.png",
+          "chars": 9,
+          "frame": 3,
+          "final": true,
+          "tDom": 88955,
+          "tObserver": 89203,
+          "textSource": "observer",
+          "rendered": 9,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 126,
+            "h": 19
+          }
+        }
+      ],
+      "F": {
+        "countDom": 3,
+        "countTrace": 3,
+        "countObserver": 1,
+        "rows": [
+          {
+            "frame": 1,
+            "charsDom": 5,
+            "charsTrace": 5,
+            "tDom": 88843,
+            "tTrace": 88843,
+            "charsMatch": true,
+            "tMatch": true
+          },
+          {
+            "frame": 2,
+            "charsDom": 9,
+            "charsTrace": 9,
+            "tDom": 88919,
+            "tTrace": 88919,
+            "charsMatch": true,
+            "tMatch": true
+          },
+          {
+            "frame": 3,
+            "charsDom": 9,
+            "charsTrace": 9,
+            "tDom": 88955,
+            "tTrace": 88955,
+            "charsMatch": true,
+            "tMatch": true
+          }
+        ],
+        "charsAllMatch": true,
+        "tAllMatch": true
+      },
+      "textRowWin": [
+        986,
+        1005
+      ],
+      "domFrames": [
+        {
+          "frame": 1,
+          "final": 0,
+          "chars": 5,
+          "t": 88843
+        },
+        {
+          "frame": 2,
+          "final": 0,
+          "chars": 9,
+          "t": 88919
+        },
+        {
+          "frame": 3,
+          "final": 1,
+          "chars": 9,
+          "t": 88955
+        }
+      ],
+      "traceFrames": [
+        {
+          "frame": 1,
+          "final": false,
+          "chars": 5,
+          "t": 88843
+        },
+        {
+          "frame": 2,
+          "final": false,
+          "chars": 9,
+          "t": 88919
+        },
+        {
+          "frame": 3,
+          "final": true,
+          "chars": 9,
+          "t": 88955
+        }
+      ],
+      "observerLen": 1
+    },
+    {
+      "round": 3,
+      "ok": true,
+      "ask": "如何安全地撤销最近一次 git 提交",
+      "clip": {
+        "x": 373,
+        "y": 960,
+        "width": 710,
+        "height": 72
+      },
+      "geo": {
+        "box": {
+          "x": 384.5,
+          "y": 983.5,
+          "w": 686,
+          "h": 24
+        },
+        "input": {
+          "x": 370.5,
+          "y": 979.5,
+          "w": 708,
+          "h": 36
+        },
+        "charsNow": 23
+      },
+      "shots": [
+        {
+          "png": "r3-00-blank.png",
+          "chars": 0,
+          "source": "blank"
+        },
+        {
+          "png": "r3-01-f1c11.png",
+          "chars": 11,
+          "frame": 1,
+          "final": false,
+          "tDom": 127562,
+          "tObserver": null,
+          "textSource": "final-prefix",
+          "rendered": 11,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 77,
+            "h": 19
+          }
+        },
+        {
+          "png": "r3-02-f2c23.png",
+          "chars": 23,
+          "frame": 2,
+          "final": false,
+          "tDom": 127628,
+          "tObserver": 127895,
+          "textSource": "observer",
+          "rendered": 23,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 207,
+            "h": 19
+          }
+        },
+        {
+          "png": "r3-03-f3c23.png",
+          "chars": 23,
+          "frame": 3,
+          "final": true,
+          "tDom": 127657,
+          "tObserver": 127895,
+          "textSource": "observer",
+          "rendered": 23,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 207,
+            "h": 19
+          }
+        }
+      ],
+      "F": {
+        "countDom": 3,
+        "countTrace": 3,
+        "countObserver": 1,
+        "rows": [
+          {
+            "frame": 1,
+            "charsDom": 11,
+            "charsTrace": 11,
+            "tDom": 127562,
+            "tTrace": 127562,
+            "charsMatch": true,
+            "tMatch": true
+          },
+          {
+            "frame": 2,
+            "charsDom": 23,
+            "charsTrace": 23,
+            "tDom": 127628,
+            "tTrace": 127628,
+            "charsMatch": true,
+            "tMatch": true
+          },
+          {
+            "frame": 3,
+            "charsDom": 23,
+            "charsTrace": 23,
+            "tDom": 127657,
+            "tTrace": 127657,
+            "charsMatch": true,
+            "tMatch": true
+          }
+        ],
+        "charsAllMatch": true,
+        "tAllMatch": true
+      },
+      "textRowWin": [
+        986,
+        1005
+      ],
+      "domFrames": [
+        {
+          "frame": 1,
+          "final": 0,
+          "chars": 11,
+          "t": 127562
+        },
+        {
+          "frame": 2,
+          "final": 0,
+          "chars": 23,
+          "t": 127628
+        },
+        {
+          "frame": 3,
+          "final": 1,
+          "chars": 23,
+          "t": 127657
+        }
+      ],
+      "traceFrames": [
+        {
+          "frame": 1,
+          "final": false,
+          "chars": 11,
+          "t": 127562
+        },
+        {
+          "frame": 2,
+          "final": false,
+          "chars": 23,
+          "t": 127628
+        },
+        {
+          "frame": 3,
+          "final": true,
+          "chars": 23,
+          "t": 127657
+        }
+      ],
+      "observerLen": 1
+    }
+  ]
+}
