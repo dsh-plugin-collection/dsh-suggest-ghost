@@ -246,8 +246,11 @@ try {
         style: { font: getComputedStyle(ov).font, color: getComputedStyle(ov).color, shadow: getComputedStyle(ov).textShadow } };
     })()`);
     if (pre == null) { rounds.push({ round, ok: false, why: 'no-overlay-after-turn' }); continue; }
+    // ⚠️ 底部要多留：实测文字盒 y=245..267 而截图只有 268 高 ⇒ 字形下沿被**截图本身**切掉，
+    //   拼版怎么改裁切都救不回来（我因此在拼版上试了三次）。留白 = 上下 PAD + 底部 48px。
     const clip = { x: Math.max(0, Math.round(pre.textRect.x - 12)), y: Math.max(0, Math.round(pre.textRect.y - PAD)),
-      width: Math.round(Math.max(pre.input.w, pre.textRect.w) + 24), height: Math.round(pre.textRect.h + PAD * 2) };
+      width: Math.round(Math.max(pre.input.w, pre.textRect.w) + 24),
+      height: Math.round(pre.textRect.h + PAD + PAD * 2 + 48) };
     const pngReal = await shot(clip, `r${round}-00-real.png`);
     // ② 置空产品 overlay（visibility:hidden 保留布局，不引起回流），再截一张
     const blanked = await ev(`(() => {
