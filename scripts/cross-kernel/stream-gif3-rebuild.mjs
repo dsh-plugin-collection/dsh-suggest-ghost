@@ -199,7 +199,8 @@ const rounds = [];
 try {
   await send('Runtime.enable');
   await send('Page.enable');
-  await send('Emulation.setDeviceMetricsOverride', { width: 1180, height: 880, deviceScaleFactor: SCALE, mobile: false });
+  // 视口加高到 1100：幽灵贴在输入框下沿，视口矮时**文档边缘**会切掉字形下沿（实测文字盒 y=245..267 / 图高 268）。
+    await send('Emulation.setDeviceMetricsOverride', { width: 1180, height: 1100, deviceScaleFactor: SCALE, mobile: false });
   if (!existsSync(WS)) mkdirSync(WS, { recursive: true });
   await send('Page.navigate', { url: urlOf() });
   await sleep(12000);
@@ -246,11 +247,15 @@ try {
         style: { font: getComputedStyle(ov).font, color: getComputedStyle(ov).color, shadow: getComputedStyle(ov).textShadow } };
     })()`);
     if (pre == null) { rounds.push({ round, ok: false, why: 'no-overlay-after-turn' }); continue; }
-    // ⚠️ 底部要多留：实测文字盒 y=245..267 而截图只有 268 高 ⇒ 字形下沿被**截图本身**切掉，
-    //   拼版怎么改裁切都救不回来（我因此在拼版上试了三次）。留白 = 上下 PAD + 底部 48px。
-    const clip = { x: Math.max(0, Math.round(pre.textRect.x - 12)), y: Math.max(0, Math.round(pre.textRect.y - PAD)),
-      width: Math.round(Math.max(pre.input.w, pre.textRect.w) + 24),
-      height: Math.round(pre.textRect.h + PAD + PAD * 2 + 48) };
+    // 裁切框 = **产品 overlay 自己的盒子 + 12px 光晕留白**。
+    // 两次踩坑都在这里：① 只留 PAD*2 时字形下沿被切（文字盒 y=245..267 / 图高 268）；
+    // ② 一气之下多留 48px，结果把**下面那行工具条**（+ 按钮、完全权限的冷灰图标）也圈进来，
+    //   断言 B 立刻从 0 变成 6165、D 的跨度变成整幅 —— 判据反过来把我纠正了。
+    // 正解是"贴着 overlay 的盒子"，多出来的高度靠**加高视口**解决（见下面 setDeviceMetrics）。
+    const ovb = pre.box;
+    const clip = { x: Math.max(0, Math.round(ovb.x - 12)), y: Math.max(0, Math.round(ovb.y - 12)),
+      width: Math.round(ovb.w + 24), height: Math.round(ovb.h + 24) };
+    const clipBottomInsideDoc = clip.y + clip.height;
     const pngReal = await shot(clip, `r${round}-00-real.png`);
     // ② 置空产品 overlay（visibility:hidden 保留布局，不引起回流），再截一张
     const blanked = await ev(`(() => {
