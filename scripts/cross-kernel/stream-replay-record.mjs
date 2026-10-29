@@ -151,18 +151,27 @@ window.__y = {
     return { installed: true };
   },
   moInstallLate: () => {
-    // overlay 是**首次绘制时才创建**的，所以开局装不上时挂一个 body 级观察者等它出现
+    // overlay 是**首次绘制时才创建**的 ⇒ 开局 el 为 null。
+    // ⚠️ 上一版这里"等它出现再装"，但**整段观察从未真正生效**（观察者记录恒为 1 = 初始空态），
+    //   于是回填循环拿不到中间文本、把中间帧回填成空串 —— 截图里只有终帧有字。
+    //   现在：body 级观察者盯到 overlay 出现后，**挂到 overlay 上并继续记录**，
+    //   同时把"终态文本"作为兜底来源（净化前缀恒为终态的前缀，这是产品语义）。
     const el = window.__y.overlay();
     if (el != null) return window.__y.moInstall();
     window.__y.mo = new MutationObserver(() => {
       const now = window.__y.overlay();
       if (now != null) {
-        window.__y.mo.disconnect();
+        try { window.__y.mo.disconnect(); } catch { /* noop */ }
+        window.__y.mo = null;
         window.__y.moInstall();
       }
     });
     window.__y.mo.observe(document.body, { childList: true, subtree: true });
     return { installed: 'waiting-for-overlay' };
+  },
+  finalText: () => {
+    const el = window.__y.overlay();
+    return el == null ? '' : (el.textContent ?? '');
   },
   moStop: () => { if (window.__y.mo != null) { try { window.__y.mo.disconnect(); } catch { /* noop */ } window.__y.mo = null; } return window.__y.moLog.length; },
   // 回填：**产品自己的 overlay 元素**的文本，不是我画的 div
@@ -252,6 +261,7 @@ try {
     const logLen = await ev('window.__y.moStop()');
     const moLog = await ev('window.__y.moLog');
     const domFrames = await ev('window.__y.domFrames()');
+    const finalText = await ev('window.__y.finalText()');
     const traceFrames = consoleLines.slice(consoleFrom).filter((l) => /stream frame=/.test(l)).map((l) => {
       const m = l.match(/stream frame=(\d+) final=(\d) chars=(\d+) turn=(\d+) t=(\d+)/);
       return m === null ? null : { frame: Number(m[1]), final: m[2] === '1', chars: Number(m[3]), t: Number(m[5]) };
@@ -280,14 +290,19 @@ try {
     shots.push({ png: `r${round}-00-blank.png`, chars: 0, source: 'blank' });
     // 逐帧回填：**内容来自测试侧 MutationObserver 记录的真实文本**，渲染者是产品 overlay 元素
     for (const [i, f] of domFrames.entries()) {
-      const mo = moLog.find((x) => x.text.length === f.chars) ?? moLog[i + 1] ?? null;
-      const st = await ev(`window.__y.backfill(${JSON.stringify(mo == null ? '' : mo.text)})`);
+      // 内容优先级：① 观察者抓到的**该长度真实文本**（最可信，逐帧实测）
+      //             ② 终态文本的前缀（产品语义：净化前缀恒为终态前缀）—— 来源在 record.json 里标出来
+      const observed = (moLog ?? []).find((x) => x.text.length === f.chars) ?? null;
+      const useText = observed != null ? observed.text : finalText.slice(0, f.chars);
+      const srcKind = observed != null ? 'observer' : 'final-prefix';
+      const st = await ev(`window.__y.backfill(${JSON.stringify(useText)})`);
       await sleep(120);
       const nm = `r${round}-${String(i + 1).padStart(2, '0')}-f${f.frame}c${f.chars}.png`;
       const sh = await send('Page.captureScreenshot', { format: 'png', clip: { ...clip, scale: 1 } });
       writeFileSync(join(OUT, nm), Buffer.from(sh.data, 'base64'));
       shots.push({ png: nm, chars: f.chars, frame: f.frame, final: !!f.final, tDom: f.t,
-        tObserver: mo == null ? null : mo.t, rendered: st?.chars ?? 0, font: st ? st.size + ' ' + st.font : null });
+        tObserver: observed == null ? null : observed.t, textSource: srcKind,
+        rendered: st?.chars ?? 0, font: st ? st.size + ' ' + st.font : null });
     }
     // 断言 F：两条独立来源逐格对齐（chars 与 t，容差 ±5ms）
     const align = domFrames.map((f, i) => ({
