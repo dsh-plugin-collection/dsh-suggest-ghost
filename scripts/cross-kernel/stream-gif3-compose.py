@@ -104,11 +104,14 @@ def main():
         out.save(os.path.join(OUT, name))
         # ---- GIF 帧（每格一张，含真实 t= 标注）----
         for i, (lab, png, chars) in enumerate(cells):
-            fr = Image.new('RGB', (x1, ch + 40), (13, 17, 23))
+            fr = Image.new('RGB', (x1, ch + 74), (13, 17, 23))
             fd = ImageDraw.Draw(fr)
-            fd.text((12, 8), lab if chars else '起点 · 置空（无幽灵）', font=mid,
+            fd.text((12, 6), lab if chars else '起点 · 置空（无幽灵）', font=mid,
                     fill=(139, 152, 165) if chars == 0 else (255, 212, 121))
-            fr.paste(crop_of(png), (0, 38))
+            # 每帧都带这行：GIF 单独被转发时，"非录像 + 停留∝真实间隔"必须跟着走
+            fd.text((12, ch + 46), '格与格之间的停留时长 ∝ 真实帧间隔 · 本图非录像（overlay 已置空、灰字按逐帧留痕重绘）',
+                    font=sm, fill=(110, 124, 138))
+            fr.paste(crop_of(png), (0, 36))
             fr.save(os.path.join(OUT, 'gif-%02d-r%d.png' % (i, r['round'])))
         summary.append({'round': r['round'], 'file': name, 'ink': inks,
                         'span': [b - a for a, b in spans], 'chars': [c['chars'] for c in frames],

@@ -11,22 +11,28 @@
         {
           "frame": 1,
           "final": false,
-          "chars": 2,
-          "pageT": 51539
+          "chars": 5,
+          "pageT": 48690
         },
         {
           "frame": 2,
+          "final": false,
+          "chars": 11,
+          "pageT": 48787
+        },
+        {
+          "frame": 3,
           "final": true,
-          "chars": 12,
-          "pageT": 51660
+          "chars": 15,
+          "pageT": 48832
         }
       ],
-      "finalChars": 12,
-      "finalTextLen": 12,
+      "finalChars": 15,
+      "finalTextLen": 15,
       "clip": {
-        "x": 373,
+        "x": 357,
         "y": 972,
-        "width": 710,
+        "width": 726,
         "height": 48
       },
       "assertionA": {
@@ -52,29 +58,43 @@
         },
         {
           "kind": "frame",
-          "png": "r1-02-f1c2.png",
-          "chars": 2,
+          "png": "r1-02-f1c5.png",
+          "chars": 5,
           "frame": 1,
           "final": false,
           "tMs": 0,
           "measuredRect": {
             "x": 385,
             "y": 986,
-            "w": 28,
+            "w": 44,
             "h": 19
           }
         },
         {
           "kind": "frame",
-          "png": "r1-03-f2c12.png",
-          "chars": 12,
+          "png": "r1-03-f2c11.png",
+          "chars": 11,
           "frame": 2,
-          "final": true,
-          "tMs": 121,
+          "final": false,
+          "tMs": 97,
           "measuredRect": {
             "x": 385,
             "y": 986,
-            "w": 142,
+            "w": 117,
+            "h": 19
+          }
+        },
+        {
+          "kind": "frame",
+          "png": "r1-04-f3c15.png",
+          "chars": 15,
+          "frame": 3,
+          "final": true,
+          "tMs": 142,
+          "measuredRect": {
+            "x": 385,
+            "y": 986,
+            "w": 173,
             "h": 19
           }
         }
@@ -94,21 +114,21 @@
           "frame": 1,
           "final": false,
           "chars": 7,
-          "pageT": 105584
+          "pageT": 89455
         },
         {
           "frame": 2,
           "final": true,
-          "chars": 11,
-          "pageT": 105936
+          "chars": 12,
+          "pageT": 89540
         }
       ],
-      "finalChars": 11,
-      "finalTextLen": 11,
+      "finalChars": 12,
+      "finalTextLen": 12,
       "clip": {
-        "x": 373,
+        "x": 357,
         "y": 972,
-        "width": 710,
+        "width": 726,
         "height": 48
       },
       "assertionA": {
@@ -148,15 +168,15 @@
         },
         {
           "kind": "frame",
-          "png": "r2-03-f2c11.png",
-          "chars": 11,
+          "png": "r2-03-f2c12.png",
+          "chars": 12,
           "frame": 2,
           "final": true,
-          "tMs": 352,
+          "tMs": 85,
           "measuredRect": {
             "x": 385,
             "y": 986,
-            "w": 154,
+            "w": 168,
             "h": 19
           }
         }
@@ -175,22 +195,22 @@
         {
           "frame": 1,
           "final": false,
-          "chars": 5,
-          "pageT": 150810
+          "chars": 3,
+          "pageT": 118027
         },
         {
           "frame": 2,
           "final": true,
-          "chars": 7,
-          "pageT": 150887
+          "chars": 3,
+          "pageT": 118061
         }
       ],
-      "finalChars": 7,
-      "finalTextLen": 7,
+      "finalChars": 3,
+      "finalTextLen": 3,
       "clip": {
-        "x": 373,
+        "x": 357,
         "y": 972,
-        "width": 710,
+        "width": 726,
         "height": 48
       },
       "assertionA": {
@@ -216,29 +236,29 @@
         },
         {
           "kind": "frame",
-          "png": "r3-02-f1c5.png",
-          "chars": 5,
+          "png": "r3-02-f1c3.png",
+          "chars": 3,
           "frame": 1,
           "final": false,
           "tMs": 0,
           "measuredRect": {
             "x": 385,
             "y": 986,
-            "w": 70,
+            "w": 42,
             "h": 19
           }
         },
         {
           "kind": "frame",
-          "png": "r3-03-f2c7.png",
-          "chars": 7,
+          "png": "r3-03-f2c3.png",
+          "chars": 3,
           "frame": 2,
           "final": true,
-          "tMs": 77,
+          "tMs": 34,
           "measuredRect": {
             "x": 385,
             "y": 986,
-            "w": 98,
+            "w": 42,
             "h": 19
           }
         }
