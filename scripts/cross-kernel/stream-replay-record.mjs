@@ -178,6 +178,12 @@ window.__y = {
   backfill: (text) => {
     const el = window.__y.overlay();
     if (el == null) return null;
+    // ⚠️ **终帧落地后产品会把 overlay 收起来**（hide() 走 display:none，源码注释写明
+    //   "用 display 而非 visibility"）⇒ 只写 textContent 是**不可见**的：
+    //   实测 B 精确=0 而 C 也全 0，就是这个形状（置空对、回填不显示）。
+    //   重放必须把它重新显形。这是**测试侧的显形**，不是产品当时的画面 ⇒ 口径照旧写"重放图"。
+    el.style.display = 'block';
+    el.setAttribute('data-shown', '1');
     el.textContent = text;
     const tr = window.__y.textRect(el);
     return { chars: (el.textContent ?? '').length, box: window.__y.box(el), textRect: tr,
