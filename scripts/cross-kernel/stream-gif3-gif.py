@@ -23,11 +23,14 @@ for r in [x for x in rec['rounds'] if x.get('ok')]:
     tmin = frames[0]['tMs']
     gaps = [0] + [frames[i]['tMs'] - frames[i - 1]['tMs'] for i in range(1, len(frames))]
     biggest = max(gaps) or 1
+    # ⚠️ **格序 = 起点置空 → 逐帧 → 终帧**。上一版把"置空起点"追加在每组**末尾**，
+    #   于是播放时用户看到"文字出现 → 变长 → **消失** → 又出现" —— 那个"消失"不是产品行为，
+    #   是我们自己的对照格放错了位置；GIF 会被单独转发，这个误读几乎必然发生。
+    plan.append(('gif-r%d-00.png' % r['round'], MIN_MS, '轮%d 起点·置空（无幽灵）' % r['round']))
     for i, c in enumerate(frames):
         dur = MIN_MS if i == 0 else max(MIN_MS, min(MAX_MS, round(gaps[i] / biggest * MAX_MS)))
         plan.append(('gif-r%d-%02d.png' % (r['round'], i + 1), dur,
                      '轮%d %s t=+%dms %d字符' % (r['round'], '终帧' if c['final'] else '步%d' % (i + 1), c['tMs'], c['chars'])))
-    plan.append(('gif-r%d-00.png' % r['round'], 320, '轮%d 置空起点' % r['round']))
 lines = []
 for png, dur, _ in plan:
     path = os.path.join(OUT, png)
@@ -55,8 +58,8 @@ for png, dur, _ in plan:
     frames.append(Image.open(path).convert('RGB').convert('P', palette=Image.ADAPTIVE, colors=128))
     durs.append(int(dur))
 # 末帧：给循环用的重复帧画一个角标，让它**与前一帧真的不同**。
-# 否则 PIL 会把"内容完全相同 + 紧跟其后"的两帧**合并成一帧**（实测 320ms 与 700ms
-# 被并成 1020ms、帧数少 1）—— 那又是一次"产物与声明不对齐"，只能靠回读发现。
+# ⚠️ 通用陷阱：**PIL 会静默合并相邻的同内容帧**（实测 320ms 与 700ms 被并成 1020ms、帧数少 1），
+#   它不报错、不提示，写入值与文件里的值就是不一样 ⇒ **帧数与时长必须回读文件核对，不能信写入值**。
 from PIL import ImageDraw, ImageFont
 last = frames[-1].convert('RGB')
 d = ImageDraw.Draw(last)
@@ -70,7 +73,15 @@ durs.append(700)     # 末帧=循环用的重复帧（断言 E1 按"格数+1"核
 json.dump({'plan': [{'png': p, 'durMs': d, 'label': l} for p, d, l in plan]},
           open(os.path.join(OUT, 'gif-plan.json'), 'w'), ensure_ascii=False, indent=1)
 os.makedirs(os.path.dirname(DEST) or '.', exist_ok=True)
-frames[0].save(DEST, save_all=True, append_images=frames[1:], duration=durs, loop=0, optimize=False)
+# ⚠️ **disposal=2（restore-to-background）是必须的**，不是优化项：
+#   GIF 默认 disposal=0/"keep" ⇒ 每一格画在**上一格的残留位图**上。
+#   于是"置空起点"格在屏幕上**根本不空**（它只是把上一轮的终帧留在原地），
+#   而逐帧读源 PNG 又一切正常 —— 只有把 GIF 合成回画面才看得见（ffmpeg 抽帧实测：
+#   第 4 格墨迹 15837 = 上一轮终帧的残留，而不是它自己的 606）。
+#   ⇒ 这正是"文字出现 → 变长 → 消失 → 又出现"那个误读的**真因**，
+#     比"格序排错"更底层：格序我也改了（起点在前），但**不改 disposal 就还是错的**。
+frames[0].save(DEST, save_all=True, append_images=frames[1:], duration=durs, loop=0,
+               optimize=False, disposal=2)
 print('GIF →', DEST, os.path.getsize(DEST), 'B  帧数 =', len(frames))
 print('目标时长(ms) =', durs)
 print('复跑命令：python3 scripts/cross-kernel/stream-gif3-gif.py %s %s' % (OUT, DEST))

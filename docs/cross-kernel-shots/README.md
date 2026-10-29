@@ -98,10 +98,16 @@ python3 scripts/cross-kernel/stream-gif3-verify-gif.py scripts/cross-kernel/out/
 ```
 （最后一步**不能省**：编码那步曾把每帧时长全抹成 50ms，而"停留 ∝ 真实帧间隔"就印在每格图上。）
 
+**格序 = 每组「起点置空 → 逐帧 → 终帧」**，且编码必须 `disposal=2`（restore-to-background）：
+GIF 默认 disposal=0/"keep" ⇒ 每格画在上一格残留位图上，"置空起点"在屏幕上**根本不空**，
+用户会看到"出现 → 变长 → 消失 → 又出现"（那个"消失"不是产品行为）。见 FINDINGS §17.8。
+
 三条硬规矩（都是实测换来的，见 FINDINGS §17）：
 1. **画之前先把产品 overlay 置空**（`visibility:hidden` 保留布局）——否则注入的灰字与真实 overlay
    同位同色同字体，被同一份真实文字盖住，永远看不出增长（§16 的真因）。
 2. **裁切贴着 overlay 自身盒子**；高度不够**加高视口**（880→1100），不要盲目放大 clip——
    多留 48px 就会把下面工具条的冷灰图标圈进来，断言立刻被污染。
-3. **断言一律 PIL 逐像素**，不解析 ImageMagick `compare` 的 stdout；且断言之间要能互相对账
+3. **断言一律 PIL 逐像素**，不解析 ImageMagick `compare` 的 stdout；**读 GIF 必须读"合成后的画面"**
+   （ffmpeg 抽变化帧），PIL 裸 seek 读到的是增量帧、手工 alpha 累加会算错 disposal；
+   且断言之间要能互相对账
    （B=0 与 C=0 同时成立 = 框里根本没有字，不是"置空成功且没有增长"）。
