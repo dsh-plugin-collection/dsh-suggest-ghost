@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 ### 新增
 
+- **设置卡的 Provider / Model 改成下拉框**（#116 / PR #119），数据来自宿主 llm 服务的
+  `listProviders()` / `listModels(provider)`；模型列表**按 provider 懒加载**（选谁才拉谁）。
+  - 宿主侧路由 `GET /api/suggest-ghost/options` → `{version,providers}`；`?models=<p>` → `{version,models}`；
+    非 GET/HEAD ⇒ **405**；`cache-control: no-store`；**不回显入参**；入参过与 id 同一套字符集约束
+    （不合法当没传 ⇒ 退化成 provider 目录，而不是 500）；源抛错 ⇒ 空数组 + 200 + 一行日志，**响应体不含错误文本**
+  - **接线单独 `ctx.inject(['webServer'])`，不加进模块级 inject** —— 模块级少一个服务会把**整个插件** park 死
+    （#116 那次整页 `Failed to load plugins` 就是 inject 失败被提升成致命），而 0.1.x 可能没有 `webServer`
+    ⇒ 拿不到就**降级成自由文本输入框**，绝不拖垮插件
+  - 卡片：空目录/拿不到 ⇒ 退回文本框；**当前值不在目录里也保留成选项**（不静默丢用户配置）
+  - **安全（这条路由不经鉴权，#40 第 6 条）**：三层断言都做了逐层变异 ——
+    ① **白名单投影**：源返回带 `draft`/`sessionId`/热表短语的行 ⇒ 响应里一个都没有（每行只放行 id/name，
+    宿主以后加字段也吐不出去）② **访问记录**：Proxy 包住源，handler 只许调 providers/models
+    （**比读取次数不比结果**）③ **接线静态闸**：产物里只接两个 llm 方法，剥掉注释后不得出现
+    hotness/`_push`/`_hot`/`snapshot(`/`draft`/`sessionId`/`sessions.`
+  - 真宿主 curl 取证（**先证明 canary 真在进程里**再测外泄，不拿"日志没出现"当证据）：
+    providers 541B / `?models=` 794B / 坏参数 541B（退化不 500）/ POST 405，**三个 canary 命中 0**；
+    变异副本（源侧投毒 + handler 多吐一个字段）⇒ **三个 canary 全部命中 1**，重建后回到 0 ⇒ 那个 0 不是空跑
+  - 回归 `scripts/model-catalog-smoke.mjs` 14 条进 `test:smoke`（链 **48 → 49**）
+  - **未覆盖（别当绿）**：下拉框在**真浏览器里的交互**（懒加载/当前值保留/退化文本框）只有代码路径与构建验证，
+    没有断言；0.1.x 上 `webServer` 是否存在未实测，"拿不到就降级"是设计推断
+
+### 新增
+
 - **流式的逐帧痕迹现在回合结束后仍可从 DOM 读到**（#113 / PR #114）：overlay 上写 `data-stream-frames` =
   `[{frame, final, chars, t}]` —— **四个数字、零正文**（隐私口径与既有留痕一致），上限 64，换会话或换回合清空
   （键是 `sessionId|turn`，只看 turn 会把"切到 turn 号相同的另一个会话"误当成同一回合续写）
