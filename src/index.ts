@@ -478,8 +478,16 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     .then((registered) => {
       streamChannelReady = registered;
       // 只有开了流式才值得留这一行；关着时不新增任何启动噪声（默认阈值下 debug 也不刷屏）。
-      if (registered) traceOps(`stream channel registered service=${GHOST_STREAM_SERVICE_KEY}`);
-      else traceOps('stream channel unavailable: protocol package not resolvable');
+      // 成功保持静默（#98「健康进程 0 行」）；只有"用户开了流式却注册不上"才升到 warn ——
+      // 那是一次**用户可见的静默降级**（幽灵退回整块到达），必须默认可见（#97/#104 同族）。
+      if (registered) {
+        traceOps(`stream channel registered service=${GHOST_STREAM_SERVICE_KEY}`);
+      } else if (effective().streamingDelivery === true) {
+        traceAt('warn', 'stream channel unavailable: protocol package not resolvable'
+          + '（streamingDelivery 已开启 ⇒ 幽灵退回整块到达；检查协议包能否从部署路径解析）');
+      } else {
+        traceOps('stream channel unavailable: protocol package not resolvable');
+      }
     })
     .catch((error: unknown) => {
       streamChannelReady = false;
