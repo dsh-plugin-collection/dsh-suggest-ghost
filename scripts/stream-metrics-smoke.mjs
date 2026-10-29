@@ -112,7 +112,11 @@ const fakeSession = () => ({
   ],
   requestHeader: () => ({ config: { provider: 'p-smoke', model: 'm-smoke' } }),
 });
+// #47：未配置就没有路由了（旧实现继承会话请求路由，正是它让补全跟着主会话漂）。
+// 本文件判据是流式指标，与路由来源无关 ⇒ 给显式路由（沿用 fakeSession 头部那对值），
+// 断言条数与内容一字未动 —— 改夹具适配契约，不是放宽断言。
 const baseConfig = (over = {}) => ({
+  provider: 'p-smoke', model: 'm-smoke',
   maxInputBytes: 4096, maxOutputTokens: 512, timeoutMs: 5000,
   maxTranscriptChars: 12000, maxSuggestionChars: 240, ...over,
 });

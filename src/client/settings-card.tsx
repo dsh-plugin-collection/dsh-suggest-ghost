@@ -203,12 +203,15 @@ export const GHOST_FIELDS: ReadonlyArray<{
     section: 'llm',
     writable: true,
   },
+  // ⚠️ 这两条 hint 原文写的是「留空继承主请求路由」—— 那正是 #47 的故障语义（主会话换到
+  // 一条 401 的路由，建议与补全全部跟着漂过去）。留空现在的含义是**跟随部署默认**
+  // （GUI 头部选的那条），要旧行为得显式打开下面那个开关。文案跟着语义走，不然界面在骗人。
   {
     key: 'provider',
     label: { zh: 'Provider', en: 'Provider' },
     hint: {
-      zh: '显式路由；留空继承主请求路由',
-      en: 'Explicit routing; leave empty to inherit the main request route',
+      zh: '显式路由；两个都留空 = 跟随部署默认模型（不跟随主会话当前路由）',
+      en: 'Explicit route; leave both empty to follow the deployment default model (not the main session\'s current route)',
     },
     kind: 'text',
     section: 'llm',
@@ -218,10 +221,25 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'model',
     label: { zh: 'Model', en: 'Model' },
     hint: {
-      zh: '显式路由；留空继承主请求路由',
-      en: 'Explicit routing; leave empty to inherit the main request route',
+      zh: '显式路由；只填一个会直接报错（两个必须一起给）',
+      en: 'Explicit route; setting only one of the pair is an error (they must come together)',
     },
     kind: 'text',
+    section: 'llm',
+    writable: true,
+  },
+  {
+    key: 'inheritSessionRoute',
+    label: { zh: '允许继承会话路由', en: 'Allow inheriting the session route' },
+    hint: {
+      zh: '默认关。关掉时未配置的辅助调用跟随部署默认模型；打开则改回「跟随本会话最近一次请求的路由」——'
+        + '这会让补全/建议跟着主会话换模型走，主会话切到一条坏路由时辅助调用会全线失败（#47 的原始故障），'
+        + '只在确实想跟着会话走时才开。失败会以 completion failed 告警出现在日志里。',
+      en: 'Off by default. When off, unconfigured helper calls follow the deployment default model; '
+        + 'when on they inherit this session\'s last request route, so switching the main session to a '
+        + 'failing route breaks every suggestion and completion (#47). Enable only if you really want to track the session.',
+    },
+    kind: 'boolean',
     section: 'llm',
     writable: true,
   },

@@ -90,6 +90,14 @@ export interface Config {
   maxSuggestionChars: number;
   provider?: string;
   model?: string;
+  /**
+   * #108/#47：**显式开关**，默认 `false`。开启时才允许继承「本会话最近一次请求的路由」。
+   *
+   * 为什么默认必须关：不关就是这次的故障形状 —— 用户把主会话切到一条 401 的路由上，
+   * 建议与停顿补全**全部跟着漂过去**，全线哑掉而界面上看不出来。会话路由属于主会话，
+   * 不该是辅助调用的默认来源。
+   */
+  inheritSessionRoute?: boolean;
   acceptKey?: string;
   /** LLM 下一条建议开关（默认开）；关闭后每回合不再调用建议模型。 */
   llmEnabled?: boolean;
@@ -643,23 +651,85 @@ export function buildTranscript(
   };
 }
 
-/** 解析路由：显式配置优先，否则继承会话最近一次请求的路由。 */
-function routeOf(
+/**
+ * 解析这次辅助调用该用哪条模型路由（#47，照 `dsh-gitea-dispatch` 的语义重做）。
+ *
+ * ## 优先级（从高到低，只有第 3 条是"跟随"）
+ *  1. **显式配置**：`provider` 与 `model` 都非空 ⇒ 用它。
+ *  2. **半配置 = 抛错**（不静默降级）：只给一个说明是有人填了一半，猜哪一半都会错。
+ *  3. `inheritSessionRoute: true` ⇒ **先**试会话路由（开关开着就得真的生效，否则它是死键），
+ *     试不到再退部署默认。
+ *  4. **部署默认**（`agentDefaultModel`）⇒ 默认关继承时，"跟随"指的就是它。
+ *     ⚠️ 任务书原话是"没配 ⇒ 不传 provider/model"，**这条在本插件不可实现**：
+ *     `GenerateOptions.provider` / `.model` 都是必填（`dsh-llm/lib/types/types.d.ts:491-492`），
+ *     而 gitea-dispatch 之所以能"不传"，是因为它走**建会话**（`request.model = route` 可选），
+ *     我们走的是直接 `llm.generate`。⇒ 同一个语义在这里必须翻译成"取部署默认"，
+ *     而不是"少传两个字段"。
+ *  4. **会话路由**：只有 `inheritSessionRoute: true` 才读 —— 这次的故障正是它默认为真。
+ *  5. 全都没有 ⇒ 抛错，且**错误里写清两条出路**（配置 provider/model，或打开继承开关）。
+ *
+ * 空串一律算"未配置"：schema 用 `.default('')` 表达可选（volatile 表单不接受必填项）。
+ *
+ * 导出给单测（`scripts/model-route-smoke.mjs`）：四条判据都是纯函数断言，
+ * 不该为了测它而起了真宿主。
+ */
+export function routeOf(
   session: Session,
   config: Config,
+  deployment?: { readonly provider: string; readonly model: string } | undefined,
 ): { readonly provider: string; readonly model: string } {
-  // 空串是「未配置」而非「显式覆盖」：schema 用 `.default('')` 表达「继承」
-  // （volatile 表单不接受必填项，留空即继承）。所以这里必须连同长度一起判断，
-  // 只看 `!== undefined` 会把 `''` 当成覆盖，解析出空路由并让插件启动失败。
-  if (config.provider !== undefined && config.provider.length > 0
-    && config.model !== undefined && config.model.length > 0) {
-    return { provider: config.provider, model: config.model };
+  const provider = (config.provider ?? '').trim();
+  const model = (config.model ?? '').trim();
+  if (provider !== '' && model !== '') return { provider, model };
+  if (provider !== '' || model !== '') {
+    throw new Error('dsh-suggest-ghost: provider and model must be configured together '
+      + `(got provider=${JSON.stringify(provider)} model=${JSON.stringify(model)}); `
+      + 'leave both empty to follow the deployment default');
   }
-  const route = session.requestHeader()?.config;
-  if (route !== undefined && route.provider.length > 0 && route.model.length > 0) {
-    return { provider: route.provider, model: route.model };
+  // 3/4. 开关决定「会话路由」与「部署默认」谁在前 —— 开关开着时**必须**先试会话路由，
+  // 否则这个开关在绝大多数部署里是个死键（部署默认几乎总是有值，会永远盖住它）。
+  if (config.inheritSessionRoute === true) {
+    const route = session.requestHeader()?.config;
+    if (route !== undefined && route.provider.length > 0 && route.model.length > 0) {
+      return { provider: route.provider, model: route.model };
+    }
+    if (deployment !== undefined && deployment.provider !== '' && deployment.model !== '') {
+      return { provider: deployment.provider, model: deployment.model };
+    }
+    throw new Error('dsh-suggest-ghost: inheritSessionRoute is on but this session has no '
+      + 'logged request route (and no deployment default either); configure provider and model '
+      + 'together, or turn the switch off');
   }
-  throw new Error('dsh-suggest-ghost: no logged request route is available; configure provider and model together');
+  if (deployment !== undefined && deployment.provider !== '' && deployment.model !== '') {
+    return { provider: deployment.provider, model: deployment.model };
+  }
+  throw new Error('dsh-suggest-ghost: no model route available — this host exposes no '
+    + 'agentDefaultModel and inheritance is off by default (#47). '
+    + 'Either configure provider and model in the plugin settings, or set inheritSessionRoute: true '
+    + 'to follow the session\'s own route (known to drift onto failing routes).');
+}
+
+/**
+ * 读宿主 `agentDefaultModel` 拿「部署默认路由」（#47 判据 ② 的来源）。
+ *
+ * 写得这么防御是因为这条服务不是各代次都有（0.1.x 的组合里可能没有），而拿不到它就是
+ * "没有部署默认" —— 不能因为探测本身抛错。形状按 `{ get(): {provider, model} }` 读，
+ * 不符就当没有，后面的报错会告诉用户该配什么。
+ */
+export function deploymentRoute(ctx: { get?: (name: string) => unknown })
+  : { readonly provider: string; readonly model: string } | undefined {
+  try {
+    const svc = ctx.get?.('agentDefaultModel') as { get?: () => unknown } | undefined;
+    const raw = svc?.get?.();
+    if (raw === undefined || raw === null || typeof raw !== 'object') return undefined;
+    const row = raw as { provider?: unknown; model?: unknown };
+    const provider = typeof row.provider === 'string' ? row.provider.trim() : '';
+    const model = typeof row.model === 'string' ? row.model.trim() : '';
+    if (provider === '' || model === '') return undefined;
+    return { provider, model };
+  } catch {
+    return undefined;
+  }
 }
 
 /** 终止原因 → 失败信息。 */
@@ -745,7 +815,7 @@ export async function generateSuggestion(
   if (transcript === undefined) {
     throw new Error('dsh-suggest-ghost: session has no model-visible transcript to suggest from');
   }
-  const route = routeOf(session, config);
+  const route = routeOf(session, config, deploymentRoute(ctx));
   // 语言判定：指定模式直接使用用户选择的语言；自动模式才走加权推断。
   // 证据取 evidencePairs（未经输入预算裁剪），不取 transcript.pairs——见其注释。
   let language: string;
@@ -902,7 +972,7 @@ export async function generateCompletion(
 ): Promise<{ text: string | undefined; language: string; metrics: StreamMetrics }> {
   signal.throwIfAborted();
   const startedAt = Date.now();
-  const route = routeOf(session, config);
+  const route = routeOf(session, config, deploymentRoute(ctx));
   // 语言判定：指定模式直接使用用户选择的语言；自动模式才走加权推断。
   // 注意：草稿目前**没有**参与语言推断（只传历史证据对）——「中文会话里打英文草稿
   // 被判成中文续写」是已知缺口，另开条目修，不在本改动里混做。
