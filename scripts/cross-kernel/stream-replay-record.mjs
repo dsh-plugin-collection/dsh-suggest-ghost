@@ -290,6 +290,11 @@ try {
     const clip = { x: Math.max(0, Math.round(geo.box.x - 12)), y: Math.max(0, Math.round(geo.box.y - PAD)),
       width: Math.round(geo.box.w + 24), height: Math.round(geo.box.h + PAD * 2) };
     const shots = [];
+    // 文字行窗口：回填第一帧后量它的**文字矩形 y 范围**，之后所有格子都只在这几行里数墨迹。
+    // 为什么必须这样：overlay 的 bbox 覆盖整个输入区，把**圆角边框**（实测每行 80–86 像素）
+    // 和光标都圈进去了 ⇒ 置空格"墨迹 953"看着像失败，其实那格完全正确（只有输入框与光标）。
+    // ⇒ 判据要量"那一行字"，不是"那个盒子"。
+    let textRowWin = null;
     // 起点格：清空**产品 overlay** 自身（断言 B 的底），用**同一块**裁切框
     await ev('(() => { const el = window.__y.overlay(); if (el != null) el.textContent = ""; return true; })()');
     await sleep(150);
@@ -303,6 +308,7 @@ try {
       const useText = observed != null ? observed.text : finalText.slice(0, f.chars);
       const srcKind = observed != null ? 'observer' : 'final-prefix';
       const st = await ev(`window.__y.backfill(${JSON.stringify(useText)})`);
+      if (textRowWin == null && st?.textRect != null) textRowWin = [st.textRect.y, st.textRect.y + st.textRect.h];
       await sleep(150);
       const nm = `r${round}-${String(i + 1).padStart(2, '0')}-f${f.frame}c${f.chars}.png`;
       const sh = await send('Page.captureScreenshot', { format: 'png', clip: { ...clip, scale: 1 } });
@@ -320,7 +326,7 @@ try {
     }));
     const F = { countDom: domFrames.length, countTrace: traceFrames.length, countObserver: moLog.length,
       rows: align, charsAllMatch: align.every((x) => x.charsMatch), tAllMatch: align.every((x) => x.tMatch) };
-    rounds.push({ round, ok: true, ask: q.slice(0, 18), clip, geo, shots, F,
+    rounds.push({ round, ok: true, ask: q.slice(0, 18), clip, geo, shots, F, textRowWin,
       domFrames, traceFrames, observerLen: moLog.length });
     say(`· 轮 ${round}: DOM帧=${domFrames.length} 留痕帧=${traceFrames.length} 观察者记录=${moLog.length}`);
     say(`  F) chars 全等=${F.charsAllMatch} t(±5ms) 全等=${F.tAllMatch} 逐格=${JSON.stringify(align.map((x) => [x.charsDom, x.charsTrace, x.tDom, x.tTrace]))}`);
