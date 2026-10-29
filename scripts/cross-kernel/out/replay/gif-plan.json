@@ -1,0 +1,64 @@
+{
+ "plan": [
+  {
+   "png": "scripts/cross-kernel/out/replay/r1-00-blank.png",
+   "durMs": 260,
+   "label": "轮1 起点 · 产品 overlay 置空"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r1-01-f1c7.png",
+   "durMs": 260,
+   "label": "轮1 增长步 1  t=+0ms  7 字符"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r1-02-f2c11.png",
+   "durMs": 1495,
+   "label": "轮1 终帧（权威）  t=+71ms  11 字符"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r2-00-blank.png",
+   "durMs": 260,
+   "label": "轮2 起点 · 产品 overlay 置空"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r2-01-f1c5.png",
+   "durMs": 260,
+   "label": "轮2 增长步 1  t=+0ms  5 字符"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r2-02-f2c9.png",
+   "durMs": 1600,
+   "label": "轮2 增长步 2  t=+76ms  9 字符"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r2-03-f3c9.png",
+   "durMs": 758,
+   "label": "轮2 终帧（权威）  t=+112ms  9 字符"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r3-00-blank.png",
+   "durMs": 260,
+   "label": "轮3 起点 · 产品 overlay 置空"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r3-01-f1c11.png",
+   "durMs": 260,
+   "label": "轮3 增长步 1  t=+0ms  11 字符"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r3-02-f2c23.png",
+   "durMs": 1389,
+   "label": "轮3 增长步 2  t=+66ms  23 字符"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r3-03-f3c23.png",
+   "durMs": 611,
+   "label": "轮3 终帧（权威）  t=+95ms  23 字符"
+  },
+  {
+   "png": "loop",
+   "durMs": 700,
+   "label": "循环帧"
+  }
+ ]
+}
