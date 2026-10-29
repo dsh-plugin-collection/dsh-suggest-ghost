@@ -72,7 +72,7 @@ node scripts/cross-kernel/stream-gif-stack.mjs --gen 0.2.1-rc.2 \
 
 ## 幽灵逐段变长：重建图与 GIF（task-44，当前有效）
 
-- `streaming-0.2.1-rc.2-stream.gif`（8 格，**每格停留按真实间隔比例**，不用统一 1500ms；
+- `streaming-0.2.1-rc.2-stream.gif`（9 格 + 1 循环帧，**每格停留按真实间隔比例**，不用统一 1500ms；
   每帧图上都写"格与格之间的停留时长 ∝ 真实帧间隔 · 本图非录像"）
 - 三轮对比图 `scripts/cross-kernel/out/gif3-rebuild/two-cells-r{1,2,3}.png`
 - 口径：**重建图，非录像** —— 底图为真实截图、产品 overlay 已置空、灰字按逐帧留痕重绘。
@@ -93,7 +93,10 @@ python3 scripts/cross-kernel/stream-gif3-measure.py scripts/cross-kernel/out/gif
 python3 scripts/cross-kernel/stream-gif3-compose.py scripts/cross-kernel/out/gif3-rebuild   # 拼版 + GIF 帧
 python3 scripts/cross-kernel/stream-gif3-gif.py scripts/cross-kernel/out/gif3-rebuild \
   docs/cross-kernel-shots/streaming-0.2.1-rc.2-stream.gif
+python3 scripts/cross-kernel/stream-gif3-verify-gif.py scripts/cross-kernel/out/gif3-rebuild \
+  docs/cross-kernel-shots/streaming-0.2.1-rc.2-stream.gif          # 断言 E：回读 GIF 本身
 ```
+（最后一步**不能省**：编码那步曾把每帧时长全抹成 50ms，而"停留 ∝ 真实帧间隔"就印在每格图上。）
 
 三条硬规矩（都是实测换来的，见 FINDINGS §17）：
 1. **画之前先把产品 overlay 置空**（`visibility:hidden` 保留布局）——否则注入的灰字与真实 overlay
