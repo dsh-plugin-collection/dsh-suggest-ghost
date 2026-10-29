@@ -55,7 +55,8 @@ def main(outdir):
             t0 = r['domFrames'][0]['t'] if r.get('domFrames') else 0
             r['cells'] = [{'kind': 'blank' if sh.get('source') == 'blank' else 'frame',
                            'png': sh['png'], 'chars': sh['chars'], 'frame': sh.get('frame', 0),
-                           'final': sh.get('final', False), 'tMs': sh.get('tDom', t0) - t0}
+                           'final': sh.get('final', False), 'tMs': sh.get('tDom', t0) - t0,
+                           'measureRect': sh.get('measureRect')}
                           for sh in r['shots']]
             r['assertionA'] = {'clipIntersectsInput': True}
             r['pngReal'] = next((sh['png'] for sh in r['shots'] if sh.get('source') != 'blank'), r['shots'][0]['png'])
@@ -67,11 +68,29 @@ def main(outdir):
         frames = [c for c in cells if c['kind'] == 'frame']
         # 起点格只量**文字区**（x≥100）：光标与输入框圆角边框本来就在画面里，
         # 把它们算进"墨迹"会让 B 变成"有没有 UI"而不是"有没有幽灵"。
-        yw = r.get('textRowWin')
+        # ⚠️ y 窗口必须**逐格取自己量到的文字矩形**：overlay 在"空白态"与"回填态"的
+        #   位置不一样（它会重新对齐），用第一帧量到的窗口去套后面的格子会整格读空 ——
+        #   实测图里明明有产品渲染的字，C 却全 0，就是这个原因。
+        # ⚠️ measureRect 是**页面 CSS 坐标**，而截图是"裁切后的 4× 位图"：
+        #   必须 `图内 y = (页面 y - clip.y) × deviceScaleFactor`，否则是在 288 高的图里
+        #   找第 986 行 ⇒ 恒为 0（我连着两轮"C 全 0"都是这个，而不是产品没画字）。
+        scale = rec.get('scale', 4)
+        clip = r.get('clip') or {}
+        cy = clip.get('y', 0)
+
+        def win(rect):
+            if rect is None:
+                return None
+            return [int((rect['y'] - cy) * scale), int((rect['y'] + rect['h'] - cy) * scale) + 1]
+
+        first_rect = next((c.get('measureRect') for c in r['cells'] if c.get('measureRect')), None)
+        yw = win(first_rect)
         b_cnt, b_span, size = ink(os.path.join(outdir, blank['png']), xlo=100, ywin=yw)
         f_meas = []
         for c in frames:
-            cnt, span, _ = ink(os.path.join(outdir, c['png']), xlo=100, ywin=yw)
+            mr = c.get('measureRect')
+            cw = win(mr) if mr else yw
+            cnt, span, _ = ink(os.path.join(outdir, c['png']), xlo=100, ywin=cw)
             f_meas.append({**c, 'ink': cnt, 'span': span})
         real_cnt, real_span, _ = ink(os.path.join(outdir, r['pngReal']))
         # C：墨迹单调不减（前缀式增长允许相等，不允许下降超过 2%）

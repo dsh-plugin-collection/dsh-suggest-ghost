@@ -26,7 +26,7 @@
           "w": 708,
           "h": 36
         },
-        "charsNow": 7
+        "charsNow": 11
       },
       "shots": [
         {
@@ -39,30 +39,56 @@
           "chars": 7,
           "frame": 1,
           "final": false,
-          "tDom": 50086,
-          "tObserver": 50532,
-          "textSource": "observer",
+          "tDom": 43880,
+          "tObserver": null,
+          "textSource": "final-prefix",
           "rendered": 7,
           "font": "14px -apple-system",
           "measureRect": {
             "x": 385,
             "y": 986,
-            "w": 57,
+            "w": 98,
+            "h": 19
+          }
+        },
+        {
+          "png": "r1-02-f2c11.png",
+          "chars": 11,
+          "frame": 2,
+          "final": true,
+          "tDom": 43951,
+          "tObserver": 44251,
+          "textSource": "observer",
+          "rendered": 11,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 154,
             "h": 19
           }
         }
       ],
       "F": {
-        "countDom": 1,
-        "countTrace": 1,
+        "countDom": 2,
+        "countTrace": 2,
         "countObserver": 1,
         "rows": [
           {
             "frame": 1,
             "charsDom": 7,
             "charsTrace": 7,
-            "tDom": 50086,
-            "tTrace": 50086,
+            "tDom": 43880,
+            "tTrace": 43880,
+            "charsMatch": true,
+            "tMatch": true
+          },
+          {
+            "frame": 2,
+            "charsDom": 11,
+            "charsTrace": 11,
+            "tDom": 43951,
+            "tTrace": 43951,
             "charsMatch": true,
             "tMatch": true
           }
@@ -70,12 +96,22 @@
         "charsAllMatch": true,
         "tAllMatch": true
       },
+      "textRowWin": [
+        986,
+        1005
+      ],
       "domFrames": [
         {
           "frame": 1,
           "final": 0,
           "chars": 7,
-          "t": 50086
+          "t": 43880
+        },
+        {
+          "frame": 2,
+          "final": 1,
+          "chars": 11,
+          "t": 43951
         }
       ],
       "traceFrames": [
@@ -83,7 +119,13 @@
           "frame": 1,
           "final": false,
           "chars": 7,
-          "t": 50086
+          "t": 43880
+        },
+        {
+          "frame": 2,
+          "final": true,
+          "chars": 11,
+          "t": 43951
         }
       ],
       "observerLen": 1
@@ -111,7 +153,7 @@
           "w": 708,
           "h": 36
         },
-        "charsNow": 22
+        "charsNow": 9
       },
       "shots": [
         {
@@ -120,53 +162,53 @@
           "source": "blank"
         },
         {
-          "png": "r2-01-f1c1.png",
-          "chars": 1,
+          "png": "r2-01-f1c5.png",
+          "chars": 5,
           "frame": 1,
           "final": false,
-          "tDom": 230818,
+          "tDom": 88843,
           "tObserver": null,
           "textSource": "final-prefix",
-          "rendered": 1,
+          "rendered": 5,
           "font": "14px -apple-system",
           "measureRect": {
             "x": 385,
             "y": 986,
-            "w": 14,
+            "w": 70,
             "h": 19
           }
         },
         {
-          "png": "r2-02-f2c22.png",
-          "chars": 22,
+          "png": "r2-02-f2c9.png",
+          "chars": 9,
           "frame": 2,
           "final": false,
-          "tDom": 230900,
-          "tObserver": 231198,
+          "tDom": 88919,
+          "tObserver": 89203,
           "textSource": "observer",
-          "rendered": 22,
+          "rendered": 9,
           "font": "14px -apple-system",
           "measureRect": {
             "x": 385,
             "y": 986,
-            "w": 230,
+            "w": 126,
             "h": 19
           }
         },
         {
-          "png": "r2-03-f3c22.png",
-          "chars": 22,
+          "png": "r2-03-f3c9.png",
+          "chars": 9,
           "frame": 3,
           "final": true,
-          "tDom": 230944,
-          "tObserver": 231198,
+          "tDom": 88955,
+          "tObserver": 89203,
           "textSource": "observer",
-          "rendered": 22,
+          "rendered": 9,
           "font": "14px -apple-system",
           "measureRect": {
             "x": 385,
             "y": 986,
-            "w": 230,
+            "w": 126,
             "h": 19
           }
         }
@@ -178,28 +220,28 @@
         "rows": [
           {
             "frame": 1,
-            "charsDom": 1,
-            "charsTrace": 1,
-            "tDom": 230818,
-            "tTrace": 230818,
+            "charsDom": 5,
+            "charsTrace": 5,
+            "tDom": 88843,
+            "tTrace": 88843,
             "charsMatch": true,
             "tMatch": true
           },
           {
             "frame": 2,
-            "charsDom": 22,
-            "charsTrace": 22,
-            "tDom": 230900,
-            "tTrace": 230900,
+            "charsDom": 9,
+            "charsTrace": 9,
+            "tDom": 88919,
+            "tTrace": 88919,
             "charsMatch": true,
             "tMatch": true
           },
           {
             "frame": 3,
-            "charsDom": 22,
-            "charsTrace": 22,
-            "tDom": 230944,
-            "tTrace": 230944,
+            "charsDom": 9,
+            "charsTrace": 9,
+            "tDom": 88955,
+            "tTrace": 88955,
             "charsMatch": true,
             "tMatch": true
           }
@@ -207,44 +249,48 @@
         "charsAllMatch": true,
         "tAllMatch": true
       },
+      "textRowWin": [
+        986,
+        1005
+      ],
       "domFrames": [
         {
           "frame": 1,
           "final": 0,
-          "chars": 1,
-          "t": 230818
+          "chars": 5,
+          "t": 88843
         },
         {
           "frame": 2,
           "final": 0,
-          "chars": 22,
-          "t": 230900
+          "chars": 9,
+          "t": 88919
         },
         {
           "frame": 3,
           "final": 1,
-          "chars": 22,
-          "t": 230944
+          "chars": 9,
+          "t": 88955
         }
       ],
       "traceFrames": [
         {
           "frame": 1,
           "final": false,
-          "chars": 1,
-          "t": 230818
+          "chars": 5,
+          "t": 88843
         },
         {
           "frame": 2,
           "final": false,
-          "chars": 22,
-          "t": 230900
+          "chars": 9,
+          "t": 88919
         },
         {
           "frame": 3,
           "final": true,
-          "chars": 22,
-          "t": 230944
+          "chars": 9,
+          "t": 88955
         }
       ],
       "observerLen": 1
@@ -272,7 +318,7 @@
           "w": 708,
           "h": 36
         },
-        "charsNow": 5
+        "charsNow": 23
       },
       "shots": [
         {
@@ -281,60 +327,86 @@
           "source": "blank"
         },
         {
-          "png": "r3-01-f1c5.png",
-          "chars": 5,
+          "png": "r3-01-f1c11.png",
+          "chars": 11,
           "frame": 1,
           "final": false,
-          "tDom": 279650,
-          "tObserver": 279942,
-          "textSource": "observer",
-          "rendered": 5,
+          "tDom": 127562,
+          "tObserver": null,
+          "textSource": "final-prefix",
+          "rendered": 11,
           "font": "14px -apple-system",
           "measureRect": {
             "x": 385,
             "y": 986,
-            "w": 70,
+            "w": 77,
             "h": 19
           }
         },
         {
-          "png": "r3-02-f2c5.png",
-          "chars": 5,
+          "png": "r3-02-f2c23.png",
+          "chars": 23,
           "frame": 2,
-          "final": true,
-          "tDom": 279690,
-          "tObserver": 279942,
+          "final": false,
+          "tDom": 127628,
+          "tObserver": 127895,
           "textSource": "observer",
-          "rendered": 5,
+          "rendered": 23,
           "font": "14px -apple-system",
           "measureRect": {
             "x": 385,
             "y": 986,
-            "w": 70,
+            "w": 207,
+            "h": 19
+          }
+        },
+        {
+          "png": "r3-03-f3c23.png",
+          "chars": 23,
+          "frame": 3,
+          "final": true,
+          "tDom": 127657,
+          "tObserver": 127895,
+          "textSource": "observer",
+          "rendered": 23,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 207,
             "h": 19
           }
         }
       ],
       "F": {
-        "countDom": 2,
-        "countTrace": 2,
+        "countDom": 3,
+        "countTrace": 3,
         "countObserver": 1,
         "rows": [
           {
             "frame": 1,
-            "charsDom": 5,
-            "charsTrace": 5,
-            "tDom": 279650,
-            "tTrace": 279650,
+            "charsDom": 11,
+            "charsTrace": 11,
+            "tDom": 127562,
+            "tTrace": 127562,
             "charsMatch": true,
             "tMatch": true
           },
           {
             "frame": 2,
-            "charsDom": 5,
-            "charsTrace": 5,
-            "tDom": 279690,
-            "tTrace": 279690,
+            "charsDom": 23,
+            "charsTrace": 23,
+            "tDom": 127628,
+            "tTrace": 127628,
+            "charsMatch": true,
+            "tMatch": true
+          },
+          {
+            "frame": 3,
+            "charsDom": 23,
+            "charsTrace": 23,
+            "tDom": 127657,
+            "tTrace": 127657,
             "charsMatch": true,
             "tMatch": true
           }
@@ -342,32 +414,48 @@
         "charsAllMatch": true,
         "tAllMatch": true
       },
+      "textRowWin": [
+        986,
+        1005
+      ],
       "domFrames": [
         {
           "frame": 1,
           "final": 0,
-          "chars": 5,
-          "t": 279650
+          "chars": 11,
+          "t": 127562
         },
         {
           "frame": 2,
+          "final": 0,
+          "chars": 23,
+          "t": 127628
+        },
+        {
+          "frame": 3,
           "final": 1,
-          "chars": 5,
-          "t": 279690
+          "chars": 23,
+          "t": 127657
         }
       ],
       "traceFrames": [
         {
           "frame": 1,
           "final": false,
-          "chars": 5,
-          "t": 279650
+          "chars": 11,
+          "t": 127562
         },
         {
           "frame": 2,
+          "final": false,
+          "chars": 23,
+          "t": 127628
+        },
+        {
+          "frame": 3,
           "final": true,
-          "chars": 5,
-          "t": 279690
+          "chars": 23,
+          "t": 127657
         }
       ],
       "observerLen": 1
