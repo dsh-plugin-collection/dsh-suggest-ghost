@@ -253,9 +253,11 @@ try {
     //   断言 B 立刻从 0 变成 6165、D 的跨度变成整幅 —— 判据反过来把我纠正了。
     // 正解是"贴着 overlay 的盒子"，多出来的高度靠**加高视口**解决（见下面 setDeviceMetrics）。
     const ovb = pre.box;
-    const clip = { x: Math.max(0, Math.round(ovb.x - 12)), y: Math.max(0, Math.round(ovb.y - 12)),
-      width: Math.round(ovb.w + 24), height: Math.round(ovb.h + 24) };
-    const clipBottomInsideDoc = clip.y + clip.height;
+    // 左侧多留 28px（原 12）：lead 眼验发现首字"没"的左半被裁切框切掉（③ 更明显）。
+    // ⚠️ 改了裁切就必须重跑四道断言 —— 上一版"为救下沿多留 48px"把工具条图标圈进来、
+    //   B 从 0 变 6165，就是改了框没重测。左侧 28px 只落在输入框内边距的白底上（B 仍应为 0）。
+    const clip = { x: Math.max(0, Math.round(ovb.x - 28)), y: Math.max(0, Math.round(ovb.y - 12)),
+      width: Math.round(ovb.w + 40), height: Math.round(ovb.h + 24) };
     const pngReal = await shot(clip, `r${round}-00-real.png`);
     // ② 置空产品 overlay（visibility:hidden 保留布局，不引起回流），再截一张
     const blanked = await ev(`(() => {

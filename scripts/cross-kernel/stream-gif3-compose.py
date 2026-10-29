@@ -23,6 +23,23 @@ def is_ghost(p):
             and 4 <= b - r <= 30 and abs(r - g) <= 18)
 
 
+def ink_rows(path, xlo=0, xhi=None):
+    """文字行的 y 范围：按"偏离背景(白)的像素"定，**不用幽灵色判据**。
+    幽灵色判据太严（只收冷灰核心），会漏掉抗锯齿边缘，
+    于是量到的行高比真实字形矮 ⇒ 拼出来的图把字**下沿切掉**（上一版就是这个毛病）。"""
+    im = Image.open(path).convert('RGB')
+    w, h = im.size
+    px = im.load()
+    # 只在**文字的 x 范围**内找行：整幅扫会把输入框的圆角边框也当成"墨迹"，
+    # 于是 y 窗口被边框撑高、文字反而贴到框底被切掉（上一版就是这个）。
+    hi = xhi or w
+    ys = [y for y in range(h) for x in range(xlo, min(hi, w), 2)
+          if px[x, y][0] < 236 or px[x, y][1] < 236 or px[x, y][2] < 236]
+    if not ys:
+        return 0, h
+    return max(0, min(ys) - 10), min(h, max(ys) + 14)
+
+
 def scan(path):
     """(墨迹数, 外接 x0,x1, 有墨迹的行范围 y0,y1)。"""
     im = Image.open(path).convert('RGB')
@@ -35,7 +52,7 @@ def scan(path):
                 xs.append(x)
                 ys.append(y)
     if not xs:
-        return 0, None, (0, h)
+        return 0, None, (0, h)   # 置空图：由调用方套用同一 y 范围
     return len(xs), (min(xs), max(xs)), (max(0, min(ys) - 8), min(h, max(ys) + 12))
 
 
@@ -49,7 +66,10 @@ def main():
     for r in [x for x in rec['rounds'] if x.get('ok')]:
         frames = [c for c in r['cells'] if c['kind'] == 'frame']
         blank = next(c for c in r['cells'] if c['kind'] == 'blank')
-        fin_cnt, fin_box, fin_rows = scan(os.path.join(OUT, frames[-1]['png']))
+        fin_path = os.path.join(OUT, frames[-1]['png'])
+        fin_cnt, fin_box, _ = scan(fin_path)
+        fb = fin_box or (0, 900)
+        fin_rows = ink_rows(fin_path, max(0, fb[0] - 6), fb[1] + 6)   # ← 行范围只看文字列内
         x1 = min(W, (fin_box[1] if fin_box else 900) + 60)
         top, bot = fin_rows
         # 置空图没有墨迹，用同一 y 范围，保证"同一块画面区域"
