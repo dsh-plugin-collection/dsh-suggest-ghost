@@ -1,0 +1,95 @@
+{
+  "label": "real1",
+  "home": "/home/wujue/xk-gif2-r40",
+  "scale": 4,
+  "pad": 24,
+  "rounds": [
+    {
+      "round": 1,
+      "ok": true,
+      "ask": "git worktree 和普通 clone",
+      "frames": [
+        {
+          "frame": 1,
+          "final": false,
+          "chars": 12,
+          "pageT": 117283
+        },
+        {
+          "frame": 2,
+          "final": false,
+          "chars": 26,
+          "pageT": 117373
+        },
+        {
+          "frame": 3,
+          "final": true,
+          "chars": 26,
+          "pageT": 117395
+        }
+      ],
+      "seenStates": [],
+      "shots": [],
+      "assertionA": {
+        "clip": null,
+        "input": null,
+        "intersects": false
+      },
+      "assertionB": []
+    },
+    {
+      "round": 2,
+      "ok": true,
+      "ask": "如何安全撤销最近一次 git 提交？请把 r",
+      "frames": [
+        {
+          "frame": 1,
+          "final": false,
+          "chars": 8,
+          "pageT": 233133
+        },
+        {
+          "frame": 2,
+          "final": true,
+          "chars": 9,
+          "pageT": 233705
+        }
+      ],
+      "seenStates": [],
+      "shots": [],
+      "assertionA": {
+        "clip": null,
+        "input": null,
+        "intersects": false
+      },
+      "assertionB": []
+    },
+    {
+      "round": 3,
+      "ok": true,
+      "ask": "怎么用 ss 或 lsof 查某个端口被哪个",
+      "frames": [
+        {
+          "frame": 1,
+          "final": false,
+          "chars": 7,
+          "pageT": 362116
+        },
+        {
+          "frame": 2,
+          "final": true,
+          "chars": 11,
+          "pageT": 362192
+        }
+      ],
+      "seenStates": [],
+      "shots": [],
+      "assertionA": {
+        "clip": null,
+        "input": null,
+        "intersects": false
+      },
+      "assertionB": []
+    }
+  ]
+}
