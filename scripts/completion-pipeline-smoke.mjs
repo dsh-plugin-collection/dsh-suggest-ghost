@@ -323,7 +323,7 @@ run('上界按真宿主实测分布取值，不是按快样本的算术', () => 
   );
 });
 
-run('设置页字段集合与基线一致（#108 之后共 28 项，含两个推理档位与流式投递开关）', () => {
+run('设置页字段集合与基线一致（#108 之后共 29 项，含两个推理档位、流式投递开关与路由继承开关）', () => {
   const hostSource = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta.url)), 'utf8');
   // 只截 `const EditableFields = {` 这个对象字面量本身：从起始 brace 找到它自己的
   // `};`。上一版在这里用 indexOf('/** 配置 schema') 取右边界，而源码里那句写在
@@ -360,6 +360,9 @@ run('设置页字段集合与基线一致（#108 之后共 28 项，含两个推
   const BASELINE_FIELDS = [
     'maxInputBytes', 'maxOutputTokens', 'timeoutMs', 'maxRecentTurns', 'maxTranscriptChars',
     'contextSummaryEnabled', 'contextSummaryChars', 'maxSuggestionChars', 'provider', 'model',
+    // #47 新增的 volatile 设置项（会话路由继承开关，默认关）。登记到这里 = 承认它同时牵动了
+    // schema、live-settings 键表与设置卡三处；漏一处就是「设置页改了不生效」那个老形状。
+    'inheritSessionRoute',
     'llmEnabled', 'suggestionReasoningEffort', 'streamingDelivery', 'historyEnabled', 'historyCrossSession',
     'historyMaxEntries', 'historyMinChars',
     'inlineEnabled', 'inlineDelayMs', 'inlineMinChars', 'inlineMaxChars', 'completionReasoningEffort',

@@ -24,6 +24,14 @@ export interface Config {
     maxSuggestionChars: number;
     provider?: string;
     model?: string;
+    /**
+     * #108/#47：**显式开关**，默认 `false`。开启时才允许继承「本会话最近一次请求的路由」。
+     *
+     * 为什么默认必须关：不关就是这次的故障形状 —— 用户把主会话切到一条 401 的路由上，
+     * 建议与停顿补全**全部跟着漂过去**，全线哑掉而界面上看不出来。会话路由属于主会话，
+     * 不该是辅助调用的默认来源。
+     */
+    inheritSessionRoute?: boolean;
     acceptKey?: string;
     /** LLM 下一条建议开关（默认开）；关闭后每回合不再调用建议模型。 */
     llmEnabled?: boolean;
@@ -230,6 +238,48 @@ export declare function systemPrompt(maxSuggestionChars: number, language: strin
  * 让模型看到早期已确认的目标、偏好、约束，避免长会话建议质量随长度下降。
  */
 export declare function buildTranscript(session: Session, maxRecentTurns: number, maxTranscriptChars: number, maxInputBytes: number, contextSummaryEnabled?: boolean, contextSummaryChars?: number): Transcript | undefined;
+/**
+ * 解析这次辅助调用该用哪条模型路由（#47，照 `dsh-gitea-dispatch` 的语义重做）。
+ *
+ * ## 优先级（从高到低，只有第 3 条是"跟随"）
+ *  1. **显式配置**：`provider` 与 `model` 都非空 ⇒ 用它。
+ *  2. **半配置 = 抛错**（不静默降级）：只给一个说明是有人填了一半，猜哪一半都会错。
+ *  3. `inheritSessionRoute: true` ⇒ **先**试会话路由（开关开着就得真的生效，否则它是死键），
+ *     试不到再退部署默认。
+ *  4. **部署默认**（`agentDefaultModel`）⇒ 默认关继承时，"跟随"指的就是它。
+ *     ⚠️ 任务书原话是"没配 ⇒ 不传 provider/model"，**这条在本插件不可实现**：
+ *     `GenerateOptions.provider` / `.model` 都是必填（`dsh-llm/lib/types/types.d.ts:491-492`），
+ *     而 gitea-dispatch 之所以能"不传"，是因为它走**建会话**（`request.model = route` 可选），
+ *     我们走的是直接 `llm.generate`。⇒ 同一个语义在这里必须翻译成"取部署默认"，
+ *     而不是"少传两个字段"。
+ *  4. **会话路由**：只有 `inheritSessionRoute: true` 才读 —— 这次的故障正是它默认为真。
+ *  5. 全都没有 ⇒ 抛错，且**错误里写清两条出路**（配置 provider/model，或打开继承开关）。
+ *
+ * 空串一律算"未配置"：schema 用 `.default('')` 表达可选（volatile 表单不接受必填项）。
+ *
+ * 导出给单测（`scripts/model-route-smoke.mjs`）：四条判据都是纯函数断言，
+ * 不该为了测它而起了真宿主。
+ */
+export declare function routeOf(session: Session, config: Config, deployment?: {
+    readonly provider: string;
+    readonly model: string;
+} | undefined): {
+    readonly provider: string;
+    readonly model: string;
+};
+/**
+ * 读宿主 `agentDefaultModel` 拿「部署默认路由」（#47 判据 ② 的来源）。
+ *
+ * 写得这么防御是因为这条服务不是各代次都有（0.1.x 的组合里可能没有），而拿不到它就是
+ * "没有部署默认" —— 不能因为探测本身抛错。形状按 `{ get(): {provider, model} }` 读，
+ * 不符就当没有，后面的报错会告诉用户该配什么。
+ */
+export declare function deploymentRoute(ctx: {
+    get?: (name: string) => unknown;
+}): {
+    readonly provider: string;
+    readonly model: string;
+} | undefined;
 /**
  * 为一个已完成回合生成建议。模型产出空或不合格回复 = 无建议（静默返回
  * undefined），真实失败抛错。

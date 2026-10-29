@@ -147,7 +147,13 @@ const fakeSession = () => ({
   requestHeader: () => ({ config: { provider: 'p-smoke', model: 'm-smoke' } }),
 });
 
+// #47 之后**未配置就不再有路由**（旧实现会去继承会话最近一次请求的路由，正是那个语义让
+// 主会话换到坏路由时全线哑掉）。本文件的判据是「档位怎么带」，与路由来源无关 ⇒
+// 这里给**显式路由**（值沿用原来 fakeSession 头部那对，其它断言一字不动）。
+// ⚠️ 这是改夹具适配新契约，不是放宽断言：断言的条数与内容都没变。
 const baseConfig = (over = {}) => ({
+  provider: 'p-smoke',
+  model: 'm-smoke',
   maxInputBytes: 4096,
   maxOutputTokens: 512,
   timeoutMs: 5000,

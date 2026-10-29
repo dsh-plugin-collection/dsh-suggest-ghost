@@ -95,6 +95,14 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      */
     provider: z<string, string, "volatile-defined">;
     model: z<string, string, "volatile-defined">;
+    /**
+     * #47：**是否允许继承「本会话最近一次请求的路由」，默认 false**。
+     *
+     * 默认必须关：开着就是这次的故障形状 —— 主会话切到一条 401 的路由，建议与停顿补全全部
+     * 跟着漂过去，全线哑掉而界面上看不出来。关掉之后，未显式配置的辅助调用走**部署默认**
+     * （宿主 `agentDefaultModel`），与"主会话现在用哪条"解耦。
+     */
+    inheritSessionRoute: z<boolean, boolean, "volatile-defined">;
     /** LLM 下一条建议开关（默认开）；关闭后每回合不再调用建议模型。 */
     llmEnabled: z<boolean, boolean, "volatile-defined">;
     /**
@@ -228,6 +236,14 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      */
     provider: z<string, string, "volatile-defined">;
     model: z<string, string, "volatile-defined">;
+    /**
+     * #47：**是否允许继承「本会话最近一次请求的路由」，默认 false**。
+     *
+     * 默认必须关：开着就是这次的故障形状 —— 主会话切到一条 401 的路由，建议与停顿补全全部
+     * 跟着漂过去，全线哑掉而界面上看不出来。关掉之后，未显式配置的辅助调用走**部署默认**
+     * （宿主 `agentDefaultModel`），与"主会话现在用哪条"解耦。
+     */
+    inheritSessionRoute: z<boolean, boolean, "volatile-defined">;
     /** LLM 下一条建议开关（默认开）；关闭后每回合不再调用建议模型。 */
     llmEnabled: z<boolean, boolean, "volatile-defined">;
     /**
