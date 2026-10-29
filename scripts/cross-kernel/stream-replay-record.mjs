@@ -271,38 +271,45 @@ try {
       say(`· 轮 ${round}: 跳过 —— DOM=${JSON.stringify(domFrames)} 留痕帧=${traceFrames.length}`);
       continue;
     }
-    // 起点格：清空**产品 overlay** 自身（断言 B 的底）
-    await ev('(() => { const el = window.__y.overlay(); if (el != null) el.textContent = ""; return true; })()');
-    await sleep(120);
+    // ⚠️ **顺序**：必须**先量几何、再清空 overlay**。
+    //   上一版在清空之后才量 bbox ⇒ 空 overlay 的盒子塌成 0 高，clip 是个退化矩形，
+    //   于是每张截图都是"什么都没有的那块"，断言 C/D 全读成 0 ——
+    //   而渲染本身是好的（rendered=6/20/20 与 chars 一致）。**测量几何错，不是被测对象错。**
     const geo = await ev(`(() => {
       const el = window.__y.overlay(); const tb = window.__y.input();
       if (el == null || tb == null) return null;
       const r = el.getBoundingClientRect(); const ir = tb.getBoundingClientRect();
-      return { box: { x: r.x, y: r.y, w: r.width, h: r.height }, input: { x: ir.x, y: ir.y, w: ir.width, h: ir.height } };
+      return { box: { x: r.x, y: r.y, w: r.width, h: r.height }, input: { x: ir.x, y: ir.y, w: ir.width, h: ir.height },
+        charsNow: (el.textContent ?? '').length };
     })()`);
-    if (geo == null) { rounds.push({ round, ok: false, why: 'no-geometry' }); continue; }
-    // 裁切贴 overlay 自身 bbox + 24px（§17.8 的教训：不要盲目放大 clip）
+    if (geo == null || !(geo.box.h > 0 && geo.box.w > 0)) {
+      rounds.push({ round, ok: false, why: geo == null ? 'no-geometry' : 'collapsed-box' });
+      continue;
+    }
+    // 裁切贴 overlay 自身 bbox + 24px（§17.8：不要盲目放大 clip，会圈进工具条）
     const clip = { x: Math.max(0, Math.round(geo.box.x - 12)), y: Math.max(0, Math.round(geo.box.y - PAD)),
       width: Math.round(geo.box.w + 24), height: Math.round(geo.box.h + PAD * 2) };
     const shots = [];
+    // 起点格：清空**产品 overlay** 自身（断言 B 的底），用**同一块**裁切框
+    await ev('(() => { const el = window.__y.overlay(); if (el != null) el.textContent = ""; return true; })()');
+    await sleep(150);
     const s0 = await send('Page.captureScreenshot', { format: 'png', clip: { ...clip, scale: 1 } });
     writeFileSync(join(OUT, `r${round}-00-blank.png`), Buffer.from(s0.data, 'base64'));
     shots.push({ png: `r${round}-00-blank.png`, chars: 0, source: 'blank' });
-    // 逐帧回填：**内容来自测试侧 MutationObserver 记录的真实文本**，渲染者是产品 overlay 元素
+    // 逐帧回填：内容 = ① 观察者抓到的该长度真实文本；② 取不到则用**终态文本的前缀**
+    //（产品语义：净化前缀恒为终态的前缀）。渲染者是**产品 overlay 元素自己**。
     for (const [i, f] of domFrames.entries()) {
-      // 内容优先级：① 观察者抓到的**该长度真实文本**（最可信，逐帧实测）
-      //             ② 终态文本的前缀（产品语义：净化前缀恒为终态前缀）—— 来源在 record.json 里标出来
       const observed = (moLog ?? []).find((x) => x.text.length === f.chars) ?? null;
       const useText = observed != null ? observed.text : finalText.slice(0, f.chars);
       const srcKind = observed != null ? 'observer' : 'final-prefix';
       const st = await ev(`window.__y.backfill(${JSON.stringify(useText)})`);
-      await sleep(120);
+      await sleep(150);
       const nm = `r${round}-${String(i + 1).padStart(2, '0')}-f${f.frame}c${f.chars}.png`;
       const sh = await send('Page.captureScreenshot', { format: 'png', clip: { ...clip, scale: 1 } });
       writeFileSync(join(OUT, nm), Buffer.from(sh.data, 'base64'));
       shots.push({ png: nm, chars: f.chars, frame: f.frame, final: !!f.final, tDom: f.t,
         tObserver: observed == null ? null : observed.t, textSource: srcKind,
-        rendered: st?.chars ?? 0, font: st ? st.size + ' ' + st.font : null });
+        rendered: st?.chars ?? 0, font: st ? st.size + ' ' + st.font : null, measureRect: st?.textRect ?? null });
     }
     // 断言 F：两条独立来源逐格对齐（chars 与 t，容差 ±5ms）
     const align = domFrames.map((f, i) => ({
