@@ -15,36 +15,40 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else 'scripts/cross-kernel/out/gif3-rebui
 DEST = sys.argv[2] if len(sys.argv) > 2 else 'docs/cross-kernel-shots/streaming-0.2.1-rc.2-stream.gif'
 MIN_MS, MAX_MS = 260, 1600
 rec = json.load(open(os.path.join(OUT, 'record.json')))
-comp = json.load(open(os.path.join(OUT, 'compose.json')))
 os.makedirs(os.path.dirname(DEST) or '.', exist_ok=True)
-lines = []
-gaps = []
+MIN_MS, MAX_MS = 260, 1600
+plan = []          # [(png, 目标停留 ms, 标注)]
 for r in [x for x in rec['rounds'] if x.get('ok')]:
     frames = [c for c in r['cells'] if c['kind'] == 'frame']
     tmin = frames[0]['tMs']
+    gaps = [0] + [frames[i]['tMs'] - frames[i - 1]['tMs'] for i in range(1, len(frames))]
+    biggest = max(gaps) or 1
     for i, c in enumerate(frames):
-        idx = i + (1 if i < len(frames) else 0)
-        png = 'gif-%02d-r%d.png' % (i, r['round'])       # compose 里第 0 帧就是置空底
-        gap = (c['tMs'] - tmin) if i else 0
-        if i:
-            gaps.append(gap - (frames[i - 1]['tMs'] - tmin))
-        dur = MIN_MS if i == 0 else max(MIN_MS, min(MAX_MS, round(gap / max(gaps or [1]) * MAX_MS)))
-        path = os.path.join(OUT, png)
-        if not os.path.exists(path):
-            print('缺帧', png)
-            continue
-        lines.append("file '%s'" % os.path.abspath(path))
-        lines.append('duration %.3f' % (dur / 1000.0))
-lines.append("file '%s'" % os.path.abspath(os.path.join(OUT, 'gif-%02d-r%d.png' % (len(frames) - 1, r['round']))))
-lines.append('duration 1.800')
+        dur = MIN_MS if i == 0 else max(MIN_MS, min(MAX_MS, round(gaps[i] / biggest * MAX_MS)))
+        plan.append(('gif-r%d-%02d.png' % (r['round'], i + 1), dur,
+                     '轮%d %s t=+%dms %d字符' % (r['round'], '终帧' if c['final'] else '步%d' % (i + 1), c['tMs'], c['chars'])))
+    plan.append(('gif-r%d-00.png' % r['round'], 320, '轮%d 置空起点' % r['round']))
+lines = []
+for png, dur, _ in plan:
+    path = os.path.join(OUT, png)
+    if not os.path.exists(path):
+        print('缺帧', png); continue
+    lines.append("file '%s'" % os.path.abspath(path))
+    lines.append('duration %.3f' % (dur / 1000.0))
+lines.append("file '%s'" % os.path.abspath(os.path.join(OUT, plan[-1][0])))
+lines.append('duration %.3f' % (plan[-1][1] / 1000.0))
 lp = os.path.join(OUT, 'gif-list.txt')
 open(lp, 'w').write('\n'.join(lines) + '\n')
-r0 = subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', lp,
-                     '-vf', 'fps=20,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse', DEST],
-                    capture_output=True, text=True)
+# ⚠️ 不能再用 -vf fps=20：那一步把 concat 的 duration 指令**全部重采样掉**
+#   （实测 18 帧全变 50ms = 20fps，等于把"停留∝真实间隔"这句话当场作废）。
+#   改用 -fps_mode passthrough，让每帧时长原样落到文件里。
+cmd = ['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', lp,
+       '-fps_mode', 'passthrough', '-vf', 'split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=none', DEST]
+r0 = subprocess.run(cmd, capture_output=True, text=True)
 if r0.returncode != 0:
-    print((r0.stderr or '').split('\n')[-6:])
-    sys.exit(1)
+    print((r0.stderr or '').split('\n')[-8:]); sys.exit(1)
 print('GIF →', DEST, os.path.getsize(DEST), 'B')
-print('真实逐格间隔(ms) =', gaps, '⇒ 停留时长映射 min=%d max=%d' % (MIN_MS, MAX_MS))
-print('复跑命令：ffmpeg -y -f concat -safe 0 -i %s -vf "fps=20,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" %s' % (lp, DEST))
+print('目标时长(ms) =', [d for _, d, _ in plan])
+print('复跑命令：' + ' '.join(cmd))
+json.dump({'plan': [{'png': p, 'durMs': d, 'label': l} for p, d, l in plan]},
+          open(os.path.join(OUT, 'gif-plan.json'), 'w'), ensure_ascii=False, indent=1)

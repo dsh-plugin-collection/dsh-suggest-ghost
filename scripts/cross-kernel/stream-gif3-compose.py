@@ -112,7 +112,10 @@ def main():
             fd.text((12, ch + 46), '格与格之间的停留时长 ∝ 真实帧间隔 · 本图非录像（overlay 已置空、灰字按逐帧留痕重绘）',
                     font=sm, fill=(110, 124, 138))
             fr.paste(crop_of(png), (0, 36))
-            fr.save(os.path.join(OUT, 'gif-%02d-r%d.png' % (i, r['round'])))
+            # ⚠️ 文件名**必须带轮次**：上一版只带 i，三轮写进同一批 gif-00/01/02.png，
+            #   后一轮覆盖前一轮 ⇒ 交付的 GIF 其实只有轮 3 的格子被重复三遍，
+            #   而我在报告里说"8 格"。⇒ 产物自己不会说话，回读才知道（见断言 E）。
+            fr.save(os.path.join(OUT, 'gif-r%d-%02d.png' % (r['round'], i)))
         summary.append({'round': r['round'], 'file': name, 'ink': inks,
                         'span': [b - a for a, b in spans], 'chars': [c['chars'] for c in frames],
                         'tMs': [c['tMs'] for c in frames], 'cells': len(cells)})
