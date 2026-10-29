@@ -2,6 +2,7 @@
   "home": "/home/wujue/xk-replay-0212",
   "scale": 4,
   "pad": 24,
+  "supersedes": "scripts/cross-kernel/out/replay/record.json（§18 @963d824：中间帧文本走 final-prefix 兜底）",
   "rounds": [
     {
       "round": 1,
@@ -26,7 +27,7 @@
           "w": 708,
           "h": 36
         },
-        "charsNow": 11
+        "charsNow": 16
       },
       "shots": [
         {
@@ -39,9 +40,12 @@
           "chars": 7,
           "frame": 1,
           "final": false,
-          "tDom": 43880,
+          "tDom": 50273,
           "tObserver": null,
           "textSource": "final-prefix",
+          "obsSrc": null,
+          "obsDeltaMs": null,
+          "textIsFinalPrefix": true,
           "rendered": 7,
           "font": "14px -apple-system",
           "measureRect": {
@@ -52,49 +56,129 @@
           }
         },
         {
-          "png": "r1-02-f2c11.png",
-          "chars": 11,
+          "png": "r1-02-f2c16.png",
+          "chars": 16,
           "frame": 2,
-          "final": true,
-          "tDom": 43951,
-          "tObserver": 44251,
-          "textSource": "observer",
-          "rendered": 11,
+          "final": false,
+          "tDom": 50355,
+          "tObserver": 50667,
+          "textSource": "observed",
+          "obsSrc": "mo",
+          "obsDeltaMs": 312,
+          "textIsFinalPrefix": true,
+          "rendered": 16,
           "font": "14px -apple-system",
           "measureRect": {
             "x": 385,
             "y": 986,
-            "w": 154,
+            "w": 224,
+            "h": 19
+          }
+        },
+        {
+          "png": "r1-03-f3c16.png",
+          "chars": 16,
+          "frame": 3,
+          "final": true,
+          "tDom": 50390,
+          "tObserver": 50667,
+          "textSource": "observed",
+          "obsSrc": "mo",
+          "obsDeltaMs": 277,
+          "textIsFinalPrefix": true,
+          "rendered": 16,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 224,
             "h": 19
           }
         }
       ],
       "F": {
-        "countDom": 2,
-        "countTrace": 2,
-        "countObserver": 1,
+        "countDom": 3,
+        "countTrace": 3,
+        "countObserver": 2,
         "rows": [
           {
             "frame": 1,
             "charsDom": 7,
             "charsTrace": 7,
-            "tDom": 43880,
-            "tTrace": 43880,
+            "tDom": 50273,
+            "tTrace": 50273,
             "charsMatch": true,
             "tMatch": true
           },
           {
             "frame": 2,
-            "charsDom": 11,
-            "charsTrace": 11,
-            "tDom": 43951,
-            "tTrace": 43951,
+            "charsDom": 16,
+            "charsTrace": 16,
+            "tDom": 50355,
+            "tTrace": 50355,
+            "charsMatch": true,
+            "tMatch": true
+          },
+          {
+            "frame": 3,
+            "charsDom": 16,
+            "charsTrace": 16,
+            "tDom": 50390,
+            "tTrace": 50390,
             "charsMatch": true,
             "tMatch": true
           }
         ],
         "charsAllMatch": true,
         "tAllMatch": true
+      },
+      "F2": {
+        "rows": [
+          {
+            "frame": 1,
+            "charsDom": 7,
+            "tDom": 50273,
+            "obsChars": null,
+            "obsT": null,
+            "obsDeltaMs": null,
+            "obsSrc": null,
+            "obsIsFinalPrefix": null
+          },
+          {
+            "frame": 2,
+            "charsDom": 16,
+            "tDom": 50355,
+            "obsChars": 16,
+            "obsT": 50667,
+            "obsDeltaMs": 312,
+            "obsSrc": "mo",
+            "obsIsFinalPrefix": true
+          },
+          {
+            "frame": 3,
+            "charsDom": 16,
+            "tDom": 50390,
+            "obsChars": 16,
+            "obsT": 50667,
+            "obsDeltaMs": 277,
+            "obsSrc": "mo",
+            "obsIsFinalPrefix": true
+          }
+        ],
+        "allObserved": false
+      },
+      "G": {
+        "distinctNonEmpty": 1,
+        "allObservedAreFinalPrefix": true,
+        "rows": [
+          {
+            "chars": 16,
+            "t": 50667,
+            "src": "mo",
+            "disp": "block/1",
+            "isFinalPrefix": true
+          }
+        ]
       },
       "textRowWin": [
         986,
@@ -105,13 +189,19 @@
           "frame": 1,
           "final": 0,
           "chars": 7,
-          "t": 43880
+          "t": 50273
         },
         {
           "frame": 2,
+          "final": 0,
+          "chars": 16,
+          "t": 50355
+        },
+        {
+          "frame": 3,
           "final": 1,
-          "chars": 11,
-          "t": 43951
+          "chars": 16,
+          "t": 50390
         }
       ],
       "traceFrames": [
@@ -119,16 +209,68 @@
           "frame": 1,
           "final": false,
           "chars": 7,
-          "t": 43880
+          "t": 50273
         },
         {
           "frame": 2,
+          "final": false,
+          "chars": 16,
+          "t": 50355
+        },
+        {
+          "frame": 3,
           "final": true,
-          "chars": 11,
-          "t": 43951
+          "chars": 16,
+          "t": 50390
         }
       ],
-      "observerLen": 1
+      "obsLen": 2,
+      "obsStarted": {
+        "already": false,
+        "samples": 1
+      },
+      "probe": {
+        "overlays": 1,
+        "inDoc": true,
+        "connected": [
+          true
+        ],
+        "hasDataset": true,
+        "datasetLen": 129,
+        "overlayTextLen": 16,
+        "overlayDisp": "block",
+        "inputPhase": "plain"
+      },
+      "obsSeq": [
+        {
+          "dt": -35647,
+          "chars": 0,
+          "disp": "absent",
+          "src": "start"
+        },
+        {
+          "dt": 394,
+          "chars": 16,
+          "disp": "block/1",
+          "src": "mo"
+        }
+      ],
+      "firstNonEmpty": {
+        "dt": 394,
+        "chars": 16,
+        "disp": "block/1",
+        "src": "mo"
+      },
+      "console": [
+        "[dsh-suggest-ghost][ops-trace] completion not shown: reason=other-session draftChars=46 payloadDraftChars=45 completionChars=45 payloadSessionMatches=false",
+        "[dsh-suggest-ghost][ops-trace] render-source: reason=other dominant=other session=8 input=3 face=0 other=39 total=50 deferredSkipped=0",
+        "[dsh-suggest-ghost][ops-trace] render-source: reason=session dominant=session session=65 input=6 face=0 other=65 total=136 deferredSkipped=0",
+        "[dsh-suggest-ghost][ops-trace] stream open session=session-69bc",
+        "[dsh-suggest-ghost][ops-trace] stream frame=1 final=0 chars=7 turn=1 t=50273",
+        "[dsh-suggest-ghost][ops-trace] stream frame=2 final=0 chars=16 turn=1 t=50355",
+        "[dsh-suggest-ghost][ops-trace] stream frame=3 final=1 chars=16 turn=1 t=50390",
+        "[dsh-suggest-ghost][ops-trace] push-cell: reason=suggestion-cell-changed  parses=3 frameRuns=3 cellSkips=20 applies=23"
+      ]
     },
     {
       "round": 2,
@@ -153,7 +295,7 @@
           "w": 708,
           "h": 36
         },
-        "charsNow": 9
+        "charsNow": 19
       },
       "shots": [
         {
@@ -162,92 +304,110 @@
           "source": "blank"
         },
         {
-          "png": "r2-01-f1c5.png",
-          "chars": 5,
+          "png": "r2-01-f1c9.png",
+          "chars": 9,
           "frame": 1,
           "final": false,
-          "tDom": 88843,
+          "tDom": 88139,
           "tObserver": null,
           "textSource": "final-prefix",
-          "rendered": 5,
+          "obsSrc": null,
+          "obsDeltaMs": null,
+          "textIsFinalPrefix": true,
+          "rendered": 9,
           "font": "14px -apple-system",
           "measureRect": {
             "x": 385,
             "y": 986,
-            "w": 70,
+            "w": 126,
             "h": 19
           }
         },
         {
-          "png": "r2-02-f2c9.png",
-          "chars": 9,
+          "png": "r2-02-f2c19.png",
+          "chars": 19,
           "frame": 2,
-          "final": false,
-          "tDom": 88919,
-          "tObserver": 89203,
-          "textSource": "observer",
-          "rendered": 9,
-          "font": "14px -apple-system",
-          "measureRect": {
-            "x": 385,
-            "y": 986,
-            "w": 126,
-            "h": 19
-          }
-        },
-        {
-          "png": "r2-03-f3c9.png",
-          "chars": 9,
-          "frame": 3,
           "final": true,
-          "tDom": 88955,
-          "tObserver": 89203,
-          "textSource": "observer",
-          "rendered": 9,
+          "tDom": 88214,
+          "tObserver": 88398,
+          "textSource": "observed",
+          "obsSrc": "mo",
+          "obsDeltaMs": 184,
+          "textIsFinalPrefix": true,
+          "rendered": 19,
           "font": "14px -apple-system",
           "measureRect": {
             "x": 385,
             "y": 986,
-            "w": 126,
+            "w": 212,
             "h": 19
           }
         }
       ],
       "F": {
-        "countDom": 3,
-        "countTrace": 3,
-        "countObserver": 1,
+        "countDom": 2,
+        "countTrace": 2,
+        "countObserver": 2,
         "rows": [
           {
             "frame": 1,
-            "charsDom": 5,
-            "charsTrace": 5,
-            "tDom": 88843,
-            "tTrace": 88843,
+            "charsDom": 9,
+            "charsTrace": 9,
+            "tDom": 88139,
+            "tTrace": 88139,
             "charsMatch": true,
             "tMatch": true
           },
           {
             "frame": 2,
-            "charsDom": 9,
-            "charsTrace": 9,
-            "tDom": 88919,
-            "tTrace": 88919,
-            "charsMatch": true,
-            "tMatch": true
-          },
-          {
-            "frame": 3,
-            "charsDom": 9,
-            "charsTrace": 9,
-            "tDom": 88955,
-            "tTrace": 88955,
+            "charsDom": 19,
+            "charsTrace": 19,
+            "tDom": 88214,
+            "tTrace": 88214,
             "charsMatch": true,
             "tMatch": true
           }
         ],
         "charsAllMatch": true,
         "tAllMatch": true
+      },
+      "F2": {
+        "rows": [
+          {
+            "frame": 1,
+            "charsDom": 9,
+            "tDom": 88139,
+            "obsChars": null,
+            "obsT": null,
+            "obsDeltaMs": null,
+            "obsSrc": null,
+            "obsIsFinalPrefix": null
+          },
+          {
+            "frame": 2,
+            "charsDom": 19,
+            "tDom": 88214,
+            "obsChars": 19,
+            "obsT": 88398,
+            "obsDeltaMs": 184,
+            "obsSrc": "mo",
+            "obsIsFinalPrefix": true
+          }
+        ],
+        "allObserved": false
+      },
+      "G": {
+        "distinctNonEmpty": 1,
+        "allObservedAreFinalPrefix": true,
+        "rows": [
+          {
+            "chars": 19,
+            "t": 88398,
+            "src": "mo",
+            "disp": "block/1",
+            "isFinalPrefix": true
+          }
+        ]
       },
       "textRowWin": [
         986,
@@ -257,43 +417,74 @@
         {
           "frame": 1,
           "final": 0,
-          "chars": 5,
-          "t": 88843
+          "chars": 9,
+          "t": 88139
         },
         {
           "frame": 2,
-          "final": 0,
-          "chars": 9,
-          "t": 88919
-        },
-        {
-          "frame": 3,
           "final": 1,
-          "chars": 9,
-          "t": 88955
+          "chars": 19,
+          "t": 88214
         }
       ],
       "traceFrames": [
         {
           "frame": 1,
           "final": false,
-          "chars": 5,
-          "t": 88843
+          "chars": 9,
+          "t": 88139
         },
         {
           "frame": 2,
-          "final": false,
-          "chars": 9,
-          "t": 88919
-        },
-        {
-          "frame": 3,
           "final": true,
-          "chars": 9,
-          "t": 88955
+          "chars": 19,
+          "t": 88214
         }
       ],
-      "observerLen": 1
+      "obsLen": 2,
+      "obsStarted": {
+        "already": false,
+        "samples": 3
+      },
+      "probe": {
+        "overlays": 1,
+        "inDoc": true,
+        "connected": [
+          true
+        ],
+        "hasDataset": true,
+        "datasetLen": 86,
+        "overlayTextLen": 19,
+        "overlayDisp": "block",
+        "inputPhase": "plain"
+      },
+      "obsSeq": [
+        {
+          "dt": -34169,
+          "chars": 0,
+          "disp": "absent",
+          "src": "start"
+        },
+        {
+          "dt": 259,
+          "chars": 19,
+          "disp": "block/1",
+          "src": "mo"
+        }
+      ],
+      "firstNonEmpty": {
+        "dt": 259,
+        "chars": 19,
+        "disp": "block/1",
+        "src": "mo"
+      },
+      "console": [
+        "[dsh-suggest-ghost][ops-trace] push-cell: reason=hot-cell-only  parses=4 frameRuns=4 cellSkips=22 applies=26",
+        "[dsh-suggest-ghost][ops-trace] stream open session=session-08c2",
+        "[dsh-suggest-ghost][ops-trace] push-cell: reason=suggestion-cell-changed  parses=5 frameRuns=5 cellSkips=32 applies=37",
+        "[dsh-suggest-ghost][ops-trace] stream frame=1 final=0 chars=9 turn=1 t=88139",
+        "[dsh-suggest-ghost][ops-trace] stream frame=2 final=1 chars=19 turn=1 t=88214"
+      ]
     },
     {
       "round": 3,
@@ -308,17 +499,17 @@
       "geo": {
         "box": {
           "x": 384.5,
-          "y": 983.5,
+          "y": 984,
           "w": 686,
           "h": 24
         },
         "input": {
           "x": 370.5,
-          "y": 979.5,
+          "y": 980,
           "w": 708,
           "h": 36
         },
-        "charsNow": 23
+        "charsNow": 13
       },
       "shots": [
         {
@@ -327,92 +518,110 @@
           "source": "blank"
         },
         {
-          "png": "r3-01-f1c11.png",
-          "chars": 11,
+          "png": "r3-01-f1c9.png",
+          "chars": 9,
           "frame": 1,
           "final": false,
-          "tDom": 127562,
+          "tDom": 131097,
           "tObserver": null,
           "textSource": "final-prefix",
-          "rendered": 11,
+          "obsSrc": null,
+          "obsDeltaMs": null,
+          "textIsFinalPrefix": true,
+          "rendered": 9,
           "font": "14px -apple-system",
           "measureRect": {
             "x": 385,
             "y": 986,
-            "w": 77,
+            "w": 54,
             "h": 19
           }
         },
         {
-          "png": "r3-02-f2c23.png",
-          "chars": 23,
+          "png": "r3-02-f2c13.png",
+          "chars": 13,
           "frame": 2,
-          "final": false,
-          "tDom": 127628,
-          "tObserver": 127895,
-          "textSource": "observer",
-          "rendered": 23,
-          "font": "14px -apple-system",
-          "measureRect": {
-            "x": 385,
-            "y": 986,
-            "w": 207,
-            "h": 19
-          }
-        },
-        {
-          "png": "r3-03-f3c23.png",
-          "chars": 23,
-          "frame": 3,
           "final": true,
-          "tDom": 127657,
-          "tObserver": 127895,
-          "textSource": "observer",
-          "rendered": 23,
+          "tDom": 131180,
+          "tObserver": 131382,
+          "textSource": "observed",
+          "obsSrc": "mo",
+          "obsDeltaMs": 202,
+          "textIsFinalPrefix": true,
+          "rendered": 13,
           "font": "14px -apple-system",
           "measureRect": {
             "x": 385,
             "y": 986,
-            "w": 207,
+            "w": 99,
             "h": 19
           }
         }
       ],
       "F": {
-        "countDom": 3,
-        "countTrace": 3,
-        "countObserver": 1,
+        "countDom": 2,
+        "countTrace": 2,
+        "countObserver": 2,
         "rows": [
           {
             "frame": 1,
-            "charsDom": 11,
-            "charsTrace": 11,
-            "tDom": 127562,
-            "tTrace": 127562,
+            "charsDom": 9,
+            "charsTrace": 9,
+            "tDom": 131097,
+            "tTrace": 131097,
             "charsMatch": true,
             "tMatch": true
           },
           {
             "frame": 2,
-            "charsDom": 23,
-            "charsTrace": 23,
-            "tDom": 127628,
-            "tTrace": 127628,
-            "charsMatch": true,
-            "tMatch": true
-          },
-          {
-            "frame": 3,
-            "charsDom": 23,
-            "charsTrace": 23,
-            "tDom": 127657,
-            "tTrace": 127657,
+            "charsDom": 13,
+            "charsTrace": 13,
+            "tDom": 131180,
+            "tTrace": 131180,
             "charsMatch": true,
             "tMatch": true
           }
         ],
         "charsAllMatch": true,
         "tAllMatch": true
+      },
+      "F2": {
+        "rows": [
+          {
+            "frame": 1,
+            "charsDom": 9,
+            "tDom": 131097,
+            "obsChars": null,
+            "obsT": null,
+            "obsDeltaMs": null,
+            "obsSrc": null,
+            "obsIsFinalPrefix": null
+          },
+          {
+            "frame": 2,
+            "charsDom": 13,
+            "tDom": 131180,
+            "obsChars": 13,
+            "obsT": 131382,
+            "obsDeltaMs": 202,
+            "obsSrc": "mo",
+            "obsIsFinalPrefix": true
+          }
+        ],
+        "allObserved": false
+      },
+      "G": {
+        "distinctNonEmpty": 1,
+        "allObservedAreFinalPrefix": true,
+        "rows": [
+          {
+            "chars": 13,
+            "t": 131382,
+            "src": "mo",
+            "disp": "block/1",
+            "isFinalPrefix": true
+          }
+        ]
       },
       "textRowWin": [
         986,
@@ -422,43 +631,287 @@
         {
           "frame": 1,
           "final": 0,
-          "chars": 11,
-          "t": 127562
+          "chars": 9,
+          "t": 131097
         },
         {
           "frame": 2,
-          "final": 0,
-          "chars": 23,
-          "t": 127628
-        },
-        {
-          "frame": 3,
           "final": 1,
-          "chars": 23,
-          "t": 127657
+          "chars": 13,
+          "t": 131180
         }
       ],
       "traceFrames": [
         {
           "frame": 1,
           "final": false,
-          "chars": 11,
-          "t": 127562
+          "chars": 9,
+          "t": 131097
         },
         {
           "frame": 2,
-          "final": false,
-          "chars": 23,
-          "t": 127628
-        },
-        {
-          "frame": 3,
           "final": true,
-          "chars": 23,
-          "t": 127657
+          "chars": 13,
+          "t": 131180
         }
       ],
-      "observerLen": 1
+      "obsLen": 2,
+      "obsStarted": {
+        "already": false,
+        "samples": 5
+      },
+      "probe": {
+        "overlays": 1,
+        "inDoc": true,
+        "connected": [
+          true
+        ],
+        "hasDataset": true,
+        "datasetLen": 88,
+        "overlayTextLen": 13,
+        "overlayDisp": "block",
+        "inputPhase": "plain"
+      },
+      "obsSeq": [
+        {
+          "dt": -39526,
+          "chars": 0,
+          "disp": "absent",
+          "src": "start"
+        },
+        {
+          "dt": 285,
+          "chars": 13,
+          "disp": "block/1",
+          "src": "mo"
+        }
+      ],
+      "firstNonEmpty": {
+        "dt": 285,
+        "chars": 13,
+        "disp": "block/1",
+        "src": "mo"
+      },
+      "console": [
+        "[dsh-suggest-ghost][ops-trace] stream open session=session-2be6",
+        "[dsh-suggest-ghost][ops-trace] stream frame=1 final=0 chars=9 turn=1 t=131097",
+        "[dsh-suggest-ghost][ops-trace] stream frame=2 final=1 chars=13 turn=1 t=131180",
+        "[dsh-suggest-ghost][ops-trace] push-cell: reason=hot-cell-only  parses=7 frameRuns=7 cellSkips=35 applies=42"
+      ]
+    },
+    {
+      "round": 4,
+      "ok": true,
+      "ask": "我在写一个插件的跨内核回归脚本，想让",
+      "clip": {
+        "x": 373,
+        "y": 960,
+        "width": 710,
+        "height": 72
+      },
+      "geo": {
+        "box": {
+          "x": 384.5,
+          "y": 984,
+          "w": 686,
+          "h": 24
+        },
+        "input": {
+          "x": 370.5,
+          "y": 980,
+          "w": 708,
+          "h": 36
+        },
+        "charsNow": 16
+      },
+      "shots": [
+        {
+          "png": "r4-00-blank.png",
+          "chars": 0,
+          "source": "blank"
+        },
+        {
+          "png": "r4-01-f1c3.png",
+          "chars": 3,
+          "frame": 1,
+          "final": false,
+          "tDom": 175341,
+          "tObserver": null,
+          "textSource": "final-prefix",
+          "obsSrc": null,
+          "obsDeltaMs": null,
+          "textIsFinalPrefix": true,
+          "rendered": 3,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 42,
+            "h": 19
+          }
+        },
+        {
+          "png": "r4-02-f2c16.png",
+          "chars": 16,
+          "frame": 2,
+          "final": true,
+          "tDom": 175674,
+          "tObserver": 175861,
+          "textSource": "observed",
+          "obsSrc": "mo",
+          "obsDeltaMs": 187,
+          "textIsFinalPrefix": true,
+          "rendered": 16,
+          "font": "14px -apple-system",
+          "measureRect": {
+            "x": 385,
+            "y": 986,
+            "w": 224,
+            "h": 19
+          }
+        }
+      ],
+      "F": {
+        "countDom": 2,
+        "countTrace": 2,
+        "countObserver": 2,
+        "rows": [
+          {
+            "frame": 1,
+            "charsDom": 3,
+            "charsTrace": 3,
+            "tDom": 175341,
+            "tTrace": 175341,
+            "charsMatch": true,
+            "tMatch": true
+          },
+          {
+            "frame": 2,
+            "charsDom": 16,
+            "charsTrace": 16,
+            "tDom": 175674,
+            "tTrace": 175674,
+            "charsMatch": true,
+            "tMatch": true
+          }
+        ],
+        "charsAllMatch": true,
+        "tAllMatch": true
+      },
+      "F2": {
+        "rows": [
+          {
+            "frame": 1,
+            "charsDom": 3,
+            "tDom": 175341,
+            "obsChars": null,
+            "obsT": null,
+            "obsDeltaMs": null,
+            "obsSrc": null,
+            "obsIsFinalPrefix": null
+          },
+          {
+            "frame": 2,
+            "charsDom": 16,
+            "tDom": 175674,
+            "obsChars": 16,
+            "obsT": 175861,
+            "obsDeltaMs": 187,
+            "obsSrc": "mo",
+            "obsIsFinalPrefix": true
+          }
+        ],
+        "allObserved": false
+      },
+      "G": {
+        "distinctNonEmpty": 1,
+        "allObservedAreFinalPrefix": true,
+        "rows": [
+          {
+            "chars": 16,
+            "t": 175861,
+            "src": "mo",
+            "disp": "block/1",
+            "isFinalPrefix": true
+          }
+        ]
+      },
+      "textRowWin": [
+        986,
+        1005
+      ],
+      "domFrames": [
+        {
+          "frame": 1,
+          "final": 0,
+          "chars": 3,
+          "t": 175341
+        },
+        {
+          "frame": 2,
+          "final": 1,
+          "chars": 16,
+          "t": 175674
+        }
+      ],
+      "traceFrames": [
+        {
+          "frame": 1,
+          "final": false,
+          "chars": 3,
+          "t": 175341
+        },
+        {
+          "frame": 2,
+          "final": true,
+          "chars": 16,
+          "t": 175674
+        }
+      ],
+      "obsLen": 2,
+      "obsStarted": {
+        "already": false,
+        "samples": 7
+      },
+      "probe": {
+        "overlays": 1,
+        "inDoc": true,
+        "connected": [
+          true
+        ],
+        "hasDataset": true,
+        "datasetLen": 88,
+        "overlayTextLen": 16,
+        "overlayDisp": "block",
+        "inputPhase": "plain"
+      },
+      "obsSeq": [
+        {
+          "dt": -40878,
+          "chars": 0,
+          "disp": "absent",
+          "src": "start"
+        },
+        {
+          "dt": 520,
+          "chars": 16,
+          "disp": "block/1",
+          "src": "mo"
+        }
+      ],
+      "firstNonEmpty": {
+        "dt": 520,
+        "chars": 16,
+        "disp": "block/1",
+        "src": "mo"
+      },
+      "console": [
+        "[dsh-suggest-ghost][ops-trace] push-cell: reason=hot-cell-only  parses=9 frameRuns=9 cellSkips=45 applies=54",
+        "[dsh-suggest-ghost][ops-trace] stream open session=session-0f0d",
+        "[dsh-suggest-ghost][ops-trace] stream frame=1 final=0 chars=3 turn=1 t=175341",
+        "[dsh-suggest-ghost][ops-trace] stream frame=2 final=1 chars=16 turn=1 t=175674",
+        "[dsh-suggest-ghost][ops-trace] push-cell: reason=suggestion-cell-changed  parses=10 frameRuns=10 cellSkips=53 applies=63"
+      ]
     }
   ]
 }

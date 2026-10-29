@@ -17,7 +17,7 @@ rec = json.load(open(os.path.join(OUT, 'record.json')))
 os.makedirs(os.path.dirname(DEST) or '.', exist_ok=True)
 big = ImageFont.truetype(FONT, 26)
 sm = ImageFont.truetype(FONT, 19)
-CAP = '重放图：产品 overlay 自身渲染 + 实测逐帧内容（data-stream-frames 与留痕两源对齐）· 不是录像（中间态 66–112ms vs 截图往返 ~30ms）'
+CAP = '重放图：产品 overlay 自身渲染；中间格按**实测 chars** 重建（8ms 采样逐样本观测：中间帧未上屏，首绘落后终帧 177–375ms）· 不是录像'
 
 # 全局最大间隔，用来做比例映射
 gaps = []
@@ -34,12 +34,23 @@ for r in [x for x in rec['rounds'] if x.get('ok')]:
     for i, f in enumerate(r['domFrames']):
         gap = f['t'] - ts0 if i == 0 else f['t'] - r['domFrames'][i - 1]['t']
         dur = MIN_MS if i == 0 else max(MIN_MS, min(MAX_MS, round(gap / biggest * MAX_MS)))
-        png = next((s['png'] for s in r['shots'] if s.get('frame') == f['frame'] and s.get('chars') == f['chars']), None)
-        if png is None:
+        shot = next((s for s in r['shots'] if s.get('frame') == f['frame'] and s.get('chars') == f['chars']), None)
+        if shot is None:
             print('缺格', r['round'], f); continue
-        tag = '终帧（权威）' if f['final'] else '增长步 %d' % (i + 1)
-        cells.append((os.path.join(OUT, png), dur,
-                      '轮%d %s  t=+%dms  %d 字符' % (r['round'], tag, f['t'] - ts0, f['chars']), f['chars']))
+        # §19：口径要落到每一格上 —— 中间格不是"当时屏幕上就是这样"，而是
+        # "产品渲染能力 + 实测 chars 重建"（本轮逐样本观测证明中间帧没上屏）。
+        tag = '终帧（权威）' if f['final'] else '增长步 %d · 重建（屏幕上未出现）' % (i + 1)
+        # 文本来源要标**它是什么**，不是"看起来更可信"：
+        #   observed 且样本就在这一格附近 ⇒ 实测文本；observed 但样本晚于本格 ⇒ 实测（+Nms 后）；
+        #   没配上任何观测 ⇒ 终态前缀（构造出来的）。
+        if shot.get('textSource') != 'observed':
+            src_tag = '终态前缀'
+        elif abs(int(shot.get('obsDeltaMs') or 0)) <= 100:
+            src_tag = '实测文本'
+        else:
+            src_tag = '实测（%+dms 后）' % int(shot.get('obsDeltaMs') or 0)
+        cells.append((os.path.join(OUT, shot['png']), dur,
+                      '轮%d %s  t=+%dms  %d 字符  %s' % (r['round'], tag, f['t'] - ts0, f['chars'], src_tag), f['chars']))
 
 frames = []
 durs = []

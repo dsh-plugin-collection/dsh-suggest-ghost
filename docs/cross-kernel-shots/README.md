@@ -112,13 +112,18 @@ GIF 默认 disposal=0/"keep" ⇒ 每格画在上一格残留位图上，"置空�
    且断言之间要能互相对账
    （B=0 与 C=0 同时成立 = 框里根本没有字，不是"置空成功且没有增长"）。
 
-## 真实像素版（task-46，**看"产品长什么样"用这张**）
+## 真实像素版（**看"产品长什么样"用这张**）
 
-- `streaming-0.2.1-rc.2-replay.gif`（446,681 B，11 格 + 1 循环帧）——
+- `streaming-0.2.1-rc.2-replay.gif`（574,279 B，13 格 + 1 循环帧）——
   字由**产品自己的 overlay 元素**渲染（#114 的 `data-stream-frames` 提供逐帧 frame/final/chars/t），
   不是我复刻样式的 div。
 - 与上一张的分工：`…-stream.gif`（§17）= 手绘重绘版，口径"我画的 div"；
-  `…-replay.gif`（§18）= 产品重放版，口径"产品 overlay 自身渲染 + 实测逐帧内容"。**两张都有效，用途不同。**
+  `…-replay.gif` = 产品重放版，口径"产品 overlay 自身渲染 + **按实测 chars 重建**"。
+  **两张都有效，用途不同。**
+- ⚠️ **中间格不是"当时屏幕上就是这样"**：8ms 采样的逐样本观测（FINDINGS §19）显示，
+  4 个回合里中间帧一次都没有上屏，首绘落后终帧 177–375ms 且内容已是终态。
+  所以中间格一律标 `重建（屏幕上未出现）`，图头也写了同一句。这个结论是**观测**，
+  不是推理；它把"逐帧文本是否真实"这个问题从"未判定"推进到"观测到没有"。
 
 复跑：
 
@@ -131,8 +136,9 @@ node scripts/dev-sandbox.mjs --home ~/xk-replay-0212 --deploy . --bin … --live
 # ⚠️ 插件必须是**实体目录**，且目录内要有 node_modules 才解析得到 typert protocol（§18.4）
 ln -sfn ~/dsh-versions/0.2.1-rc.2/node_modules ~/xk-replay-0212/plugin/node_modules
 # 之后重启宿主用 dev-sandbox（注意 boot 会 rmSync plugin，内链要**重启后**再补）
-node scripts/cross-kernel/stream-replay-record.mjs --home ~/xk-replay-0212 --ws ~/xk-replay-ws --rounds 3
-python3 scripts/cross-kernel/stream-replay-measure.py scripts/cross-kernel/out/replay   # A–D + F
+node scripts/cross-kernel/stream-replay-record.mjs --home ~/xk-replay-0212 --ws ~/xk-replay-ws --rounds 4
+# 同会话复用对照（隔离"每轮新建会话"的影响）：加 --reuse 1
+python3 scripts/cross-kernel/stream-replay-measure.py scripts/cross-kernel/out/replay   # A–D（F/F2/G 在 record.json 里）
 python3 scripts/cross-kernel/stream-replay-gif.py scripts/cross-kernel/out/replay \
   docs/cross-kernel-shots/streaming-0.2.1-rc.2-replay.gif
 python3 scripts/cross-kernel/stream-replay-verify-gif.py scripts/cross-kernel/out/replay \
@@ -144,4 +150,10 @@ python3 scripts/cross-kernel/stream-replay-verify-gif.py scripts/cross-kernel/ou
 2. **坐标要换算** —— `measureRect` 是页面 CSS 坐标，截图是裁切后的 `deviceScaleFactor` 位图：
    `图内 y = (页面 y − clip.y) × scale`，不换算就是"在 288 高的图里找第 986 行"；
 3. **回读时把自己的标注排除在被测区之外** —— 否则标注文字会被数成"墨迹"，
-   看着像"置空没成功"，其实是我的注释污染了被测区域。
+   看着像"置空没成功"，其实是我的注释污染了被测区域；
+4. **D（跨度）要减掉起点格** —— 那一行里本来就有输入框下边框，直接量"这一行的跨度"会量到它，
+   5 字符与 18 字符都读 2740（FINDINGS §19.4）。
+
+沙箱形状（不是产品缺陷）：新建沙箱的 `agent-default-model` 若指向 `commandcode`，
+该 provider 的 bundle 在 0.2.1-rc.2 树里被 `prune-bundles` 丢掉 ⇒ 回合不产生建议或建议恒被过滤。
+改成同机 `qoder-route/efficient`（模型 id 必须在 `models` 里已声明）即可，见 FINDINGS §19.7。
