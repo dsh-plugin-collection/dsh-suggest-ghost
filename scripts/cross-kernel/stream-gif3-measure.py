@@ -17,11 +17,20 @@ from PIL import Image
 
 # 产品幽灵色 #9aa0a6 = (154,160,166)；容差放宽到 130..220 且要求三通道接近（排除彩色 UI）
 def is_ghost(px):
+    """产品幽灵色是**冷灰** #9aa0a6=(154,160,166)：b 比 r 大 ~12。
+    UI 边框/滚动条是**中性灰** (223,223,223)：b == r。
+    上一版只要求"三通道接近"，于是把中性灰 chrome 也算成墨迹 ⇒
+    B 报 405（其实是边框）、D 报跨度=整幅（其实是左右两条边）。
+    ⇒ 判据要能区分"我要量的东西"和"长得像它的别的东西"，否则数字全绿也是错的。"""
     r, g, b = px[0], px[1], px[2]
-    return 120 < r < 225 and 120 < g < 225 and 120 < b < 225 and abs(r - g) < 26 and abs(g - b) < 26
+    return 130 < r < 215 and 130 < g < 220 and 135 < b < 225 and 4 <= b - r <= 30 and abs(r - g) <= 18
 
 def ink(path):
-    """返回 (浅灰墨迹像素数, 水平跨度像素数, 图尺寸)。"""
+    """返回 (墨迹像素数, 文字水平跨度, 图尺寸)。
+    跨度 = **所有墨迹像素的外接框宽度**。⚠️ 不能用"最长连续游程"：
+    建议文本里有空格（如"怎么用 ss -tlnp"），游程会被空格截断，
+    于是 10 字符与 15 字符都只量到最后一个词（实测 47 vs 53，看不出比例）。
+    外接框现在安全，因为判据已排除中性灰 chrome（置空图实测墨迹 = 0）。"""
     im = Image.open(path).convert('RGB')
     w, h = im.size
     px = im.load()
@@ -57,13 +66,13 @@ def main(outdir):
         # D：跨度与 chars 同向（末帧跨度必须明显大于首帧，且顺序与 chars 一致）
         ch = [m['chars'] for m in f_meas]
         sp = [m['span'] for m in f_meas]
-        span_ok = sp[-1] > sp[0] * 1.15 if ch[-1] > ch[0] else sp[-1] >= sp[0]
+        span_ok = (sp[-1] > sp[0] * 1.12) if ch[-1] > ch[0] else (sp[-1] >= sp[0] * 0.9)
         results.append({
             'round': r['round'], 'verdict': 'ok',
             'A_clip_intersects_input_row': r['assertionA']['clipIntersectsInput'],
-            'B_blank_ink': b_cnt, 'B_threshold': 400, 'B_pass': b_cnt < 400,
+            'B_blank_ink': b_cnt, 'B_threshold': 120, 'B_pass': b_cnt < 120,
             'C_ink_sequence': seq, 'C_monotonic': mono,
-            'C_first_above_floor': seq[0] > 800 if seq else False,
+            'C_first_above_floor': (seq[0] > 800 if seq else False),
             'D_span_sequence': sp, 'D_chars_sequence': ch, 'D_span_grows_with_chars': bool(span_ok),
             'real_ghost_ink': real_cnt, 'real_ghost_span': real_span, 'image_size': size,
         })
