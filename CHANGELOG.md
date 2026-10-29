@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### 新增
+
+- **流式的逐帧痕迹现在回合结束后仍可从 DOM 读到**（#113 / PR #114）：overlay 上写 `data-stream-frames` =
+  `[{frame, final, chars, t}]` —— **四个数字、零正文**（隐私口径与既有留痕一致），上限 64，换会话或换回合清空
+  （键是 `sessionId|turn`，只看 turn 会把"切到 turn 号相同的另一个会话"误当成同一回合续写）
+  - 落在**既有 overlay 节点**上（不新开全局对象，避免与 fiber 生命周期打架）；写入点刻意放在 `streamTrace(...)`
+    **之后、两道防御过滤之前** —— 放后面 DOM 与留痕就成了两套真相
+  - ⇒ 这条补上的是"中间态可观测性"：此前帧数据只进 `console.debug`，回合结束 DOM 清空后**事后无从重建**
+    （task-43/44 录 GIF 时正是卡在这，只能靠"置空 overlay + 按留痕重绘"绕）
+  - 判据（真 GUI、0.2.1-rc.2、真回合）：**纯读 DOM 重建的表与 `stream frame … t=` 留痕逐格全等**
+    （DOM 走 `evaluate`、留痕走 `consoleAPICalled`，两条独立通道互不依赖 ⇒ 这本身就是回归）；
+    回合结束、DOM 空闲后仍可读（`1→4字, 2→11字(终)`，间隔 215ms）；开启时**不新增写盘**
+    （`(?<!hot )push landed` = 0）；默认关时该属性不存在 ⇒ 由常驻链上的新断言守住（`ghost-frame-cell-e2e` PASS 11 / FAIL 0）
+  - 驱动 `scripts/stream-frames-dom-e2e.mjs`（要真模型真回合 ⇒ **不进测试链**，`--streaming on|off`）
+
 ### 修复
 
 - **修回"插件在三个代次上整个不装载"**（#110 / PR #112，回归由 #109 引入）：`@deepseek-ai/dsh-typert-protocol`
