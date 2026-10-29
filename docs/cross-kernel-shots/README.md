@@ -69,3 +69,34 @@ node scripts/cross-kernel/stream-gif-stack.mjs --gen 0.2.1-rc.2 \
 2. **时间轴取页内 `performance.now()`**：页外轮询/抓图往返（实测 30~45ms）都会把两帧读成一次变化；
 3. **回合窗口 > 提前量**：一次回合 8~25 秒，而提前量是几十毫秒 ⇒ 任何"看起来明显"的处理
    都会盖过这个比例。所以每格只说自己那一格的真实数字，不共享横轴（两次冷启动的 t=0 没有对应关系）。
+
+## 幽灵逐段变长：重建图与 GIF（task-44，当前有效）
+
+- `streaming-0.2.1-rc.2-stream.gif`（7 格，**每格停留按真实间隔比例**，不用统一 1500ms）
+- 三轮对比图 `scripts/cross-kernel/out/gif3-rebuild/two-cells-r{1,2,3}.png`
+- 口径：**重建图，非录像** —— 底图为真实截图、产品 overlay 已置空、灰字按逐帧留痕重绘。
+  它回答"分几步、每步多少字、隔多少毫秒"，**不回答"那一毫秒长什么样"**。
+
+复跑（四步，缺一不可）：
+
+```bash
+export DSH_SUGGEST_GHOST_TRACE=debug            # 不设则逐帧留痕被默认阈值静音（脚本会直接拒绝开工）
+node scripts/dev-sandbox.mjs --home ~/xk-gif3-0212 --rewrite 'port: 3983=port: 4231' \
+  --bin ~/dsh-versions/0.2.1-rc.2/node_modules/.bin/dsh --live-nm ~/dsh-versions/0.2.1-rc.2/node_modules
+node scripts/cross-kernel/prune-bundles.mjs --home ~/xk-gif3-0212 --tree ~/dsh-versions/0.2.1-rc.2
+# 录制 + 置空 + 逐帧重建（每帧一次真实截图）
+node scripts/cross-kernel/stream-gif3-rebuild.mjs --home ~/xk-gif3-0212 --ws ~/xk-gif3-ws \
+  --rounds 3 --out scripts/cross-kernel/out/gif3-rebuild
+python3 scripts/cross-kernel/stream-gif3-measure.py scripts/cross-kernel/out/gif3-rebuild   # 四道断言
+python3 scripts/cross-kernel/stream-gif3-compose.py scripts/cross-kernel/out/gif3-rebuild   # 拼版 + GIF 帧
+python3 scripts/cross-kernel/stream-gif3-gif.py scripts/cross-kernel/out/gif3-rebuild \
+  docs/cross-kernel-shots/streaming-0.2.1-rc.2-stream.gif
+```
+
+三条硬规矩（都是实测换来的，见 FINDINGS §17）：
+1. **画之前先把产品 overlay 置空**（`visibility:hidden` 保留布局）——否则注入的灰字与真实 overlay
+   同位同色同字体，被同一份真实文字盖住，永远看不出增长（§16 的真因）。
+2. **裁切贴着 overlay 自身盒子**；高度不够**加高视口**（880→1100），不要盲目放大 clip——
+   多留 48px 就会把下面工具条的冷灰图标圈进来，断言立刻被污染。
+3. **断言一律 PIL 逐像素**，不解析 ImageMagick `compare` 的 stdout；且断言之间要能互相对账
+   （B=0 与 C=0 同时成立 = 框里根本没有字，不是"置空成功且没有增长"）。

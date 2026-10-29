@@ -1,0 +1,253 @@
+{
+  "home": "/home/wujue/xk-gif3-0212",
+  "scale": 4,
+  "pad": 24,
+  "rounds": [
+    {
+      "round": 1,
+      "ok": true,
+      "ask": "怎么用 ss 或 lsof 查看某个端口",
+      "frames": [
+        {
+          "frame": 1,
+          "final": false,
+          "chars": 2,
+          "pageT": 51539
+        },
+        {
+          "frame": 2,
+          "final": true,
+          "chars": 12,
+          "pageT": 51660
+        }
+      ],
+      "finalChars": 12,
+      "finalTextLen": 12,
+      "clip": {
+        "x": 373,
+        "y": 972,
+        "width": 710,
+        "height": 48
+      },
+      "assertionA": {
+        "clipIntersectsInput": true
+      },
+      "pngReal": "r1-00-real.png",
+      "blanked": {
+        "ok": true,
+        "stillThere": true,
+        "rect": [
+          385,
+          984,
+          686,
+          24
+        ],
+        "vis": "hidden"
+      },
+      "cells": [
+        {
+          "kind": "blank",
+          "png": "r1-01-blank.png",
+          "chars": 0
+        },
+        {
+          "kind": "frame",
+          "png": "r1-02-f1c2.png",
+          "chars": 2,
+          "frame": 1,
+          "final": false,
+          "tMs": 0,
+          "measuredRect": {
+            "x": 385,
+            "y": 986,
+            "w": 28,
+            "h": 19
+          }
+        },
+        {
+          "kind": "frame",
+          "png": "r1-03-f2c12.png",
+          "chars": 12,
+          "frame": 2,
+          "final": true,
+          "tMs": 121,
+          "measuredRect": {
+            "x": 385,
+            "y": 986,
+            "w": 142,
+            "h": 19
+          }
+        }
+      ],
+      "productStyle": {
+        "font": "14px / 24px -apple-system, BlinkMacSystemFont, \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)",
+        "shadow": "rgb(173, 178, 184) 0px 0px 1px, rgb(173, 178, 184) 0px 0px 8px"
+      }
+    },
+    {
+      "round": 2,
+      "ok": true,
+      "ask": "git worktree 和普通 clo",
+      "frames": [
+        {
+          "frame": 1,
+          "final": false,
+          "chars": 7,
+          "pageT": 105584
+        },
+        {
+          "frame": 2,
+          "final": true,
+          "chars": 11,
+          "pageT": 105936
+        }
+      ],
+      "finalChars": 11,
+      "finalTextLen": 11,
+      "clip": {
+        "x": 373,
+        "y": 972,
+        "width": 710,
+        "height": 48
+      },
+      "assertionA": {
+        "clipIntersectsInput": true
+      },
+      "pngReal": "r2-00-real.png",
+      "blanked": {
+        "ok": true,
+        "stillThere": true,
+        "rect": [
+          385,
+          984,
+          686,
+          24
+        ],
+        "vis": "hidden"
+      },
+      "cells": [
+        {
+          "kind": "blank",
+          "png": "r2-01-blank.png",
+          "chars": 0
+        },
+        {
+          "kind": "frame",
+          "png": "r2-02-f1c7.png",
+          "chars": 7,
+          "frame": 1,
+          "final": false,
+          "tMs": 0,
+          "measuredRect": {
+            "x": 385,
+            "y": 986,
+            "w": 98,
+            "h": 19
+          }
+        },
+        {
+          "kind": "frame",
+          "png": "r2-03-f2c11.png",
+          "chars": 11,
+          "frame": 2,
+          "final": true,
+          "tMs": 352,
+          "measuredRect": {
+            "x": 385,
+            "y": 986,
+            "w": 154,
+            "h": 19
+          }
+        }
+      ],
+      "productStyle": {
+        "font": "14px / 24px -apple-system, BlinkMacSystemFont, \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)",
+        "shadow": "rgb(173, 178, 184) 0px 0px 1px, rgb(173, 178, 184) 0px 0px 8px"
+      }
+    },
+    {
+      "round": 3,
+      "ok": true,
+      "ask": "如何安全地撤销最近一次 git 提交？请",
+      "frames": [
+        {
+          "frame": 1,
+          "final": false,
+          "chars": 5,
+          "pageT": 150810
+        },
+        {
+          "frame": 2,
+          "final": true,
+          "chars": 7,
+          "pageT": 150887
+        }
+      ],
+      "finalChars": 7,
+      "finalTextLen": 7,
+      "clip": {
+        "x": 373,
+        "y": 972,
+        "width": 710,
+        "height": 48
+      },
+      "assertionA": {
+        "clipIntersectsInput": true
+      },
+      "pngReal": "r3-00-real.png",
+      "blanked": {
+        "ok": true,
+        "stillThere": true,
+        "rect": [
+          385,
+          984,
+          686,
+          24
+        ],
+        "vis": "hidden"
+      },
+      "cells": [
+        {
+          "kind": "blank",
+          "png": "r3-01-blank.png",
+          "chars": 0
+        },
+        {
+          "kind": "frame",
+          "png": "r3-02-f1c5.png",
+          "chars": 5,
+          "frame": 1,
+          "final": false,
+          "tMs": 0,
+          "measuredRect": {
+            "x": 385,
+            "y": 986,
+            "w": 70,
+            "h": 19
+          }
+        },
+        {
+          "kind": "frame",
+          "png": "r3-03-f2c7.png",
+          "chars": 7,
+          "frame": 2,
+          "final": true,
+          "tMs": 77,
+          "measuredRect": {
+            "x": 385,
+            "y": 986,
+            "w": 98,
+            "h": 19
+          }
+        }
+      ],
+      "productStyle": {
+        "font": "14px / 24px -apple-system, BlinkMacSystemFont, \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)",
+        "shadow": "rgb(173, 178, 184) 0px 0px 1px, rgb(173, 178, 184) 0px 0px 8px"
+      }
+    }
+  ]
+}
