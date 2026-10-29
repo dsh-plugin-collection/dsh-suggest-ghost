@@ -18,6 +18,7 @@ import { statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import z from '@deepseek-ai/schemastery';
 import { traceAt, traceNote } from './trace.js';
+import { MODEL_OPTIONS_PATH, createModelCatalogHandler } from './model-catalog.js';
 import type { Volatile } from '@deepseek-ai/cosmokit';
 import type { Context } from '@deepseek-ai/cordis';
 import type { Session, SessionId } from '@deepseek-ai/dsh-session';
@@ -3041,5 +3042,43 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         view: (state: SuggestGhostProjection) => state,
       },
     });
+  });
+
+  // ── 模型目录路由（#116：设置卡两个下拉框的数据源）───────────────────────────
+  //
+  // 为什么**单独** inject(['webServer']) 而不是加进模块级 `inject`：模块级 inject 少一个服务
+  // 会把整个插件 park 死（#116 那次整页 "Failed to load plugins" 就是 inject 失败被提升成致命），
+  // 而老代次（0.1.x）可能没有 webServer。目录路由属于锦上添花 ⇒ 拿不到就静默降级成
+  // 自由文本输入框，绝不能拖垮插件。
+  ctx.inject(['webServer'], (webCtx) => {
+    const server = (webCtx as unknown as {
+      webServer?: { register: (route: Record<string, unknown>) => void };
+    }).webServer;
+    if (server === undefined) return;
+    const llm = ctx.llm as unknown as {
+      listProviders?: () => unknown;
+      listModels?: (provider: string) => unknown;
+    } | undefined;
+    // ⚠️ 数据源**只有这两个**，且都取自宿主 llm 服务：不接 session、不接 settings、不接热表。
+    // 这条路由不经鉴权（#40 第 6 条），"它能拿到什么"完全由这里接了什么决定 —— 想漏会话数据，
+    // 必须先给这个 handler 多接一个数据源，那会在 diff 里明晃晃出现，而
+    // `scripts/model-catalog-smoke.mjs` 里两条断言会当场红：
+    //   ① handler 只允许调用 providers / models 这两个源方法（Proxy 记录访问）；
+    //   ② 给源投毒一条带 draft / sessionId 字段的行 ⇒ 响应里必须没有（白名单投影）。
+    const sources = {
+      providers: () => llm?.listProviders?.() ?? [],
+      models: (provider: string) => llm?.listModels?.(provider) ?? [],
+    };
+    try {
+      server.register({
+        kind: 'exact',
+        path: MODEL_OPTIONS_PATH,
+        handler: createModelCatalogHandler({ sources, logger: ctx.logger }),
+      });
+    } catch (error) {
+      // 注册失败 = 下拉框退化成文本框，不影响任何既有判据 ⇒ 一行 warn 就够。
+      ctx.logger.warn(`dsh-suggest-ghost: model catalog route unavailable: `
+        + `${String((error as Error)?.message ?? error).slice(0, 120)}`);
+    }
   });
 }
