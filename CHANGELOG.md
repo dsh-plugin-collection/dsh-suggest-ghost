@@ -20,6 +20,24 @@ All notable changes to this project will be documented in this file.
 
 ### 修复
 
+- **辅助调用不再跟着主会话的模型路由漂**（#116 / PR #118）：补全"完全不触发"的真因是路由漂移 ——
+  旧 `routeOf` 在未配置 `provider`/`model` 时**继承该会话最近一次请求的路由** ⇒ 主会话切到一条
+  401 的路由后，建议/补全的辅助调用全线哑掉（日志：`llm-commandcode … rejected with 401`、
+  `no logged request route is available`），而 UI 完全无感知
+  - 新优先级：**显式配置 →（新开关 `inheritSessionRoute` 开着时）会话路由 → 部署默认 → 抛错并点名两条出路**；
+    开关**默认关**，所以默认行为是"跟随部署默认"
+  - ⚠️ 实现上与 `dsh-gitea-dispatch` 有一处必须翻译：它走"建会话"，`request.model` 可省略；
+    本插件直接调 `ctx.llm.generate`，而 **`GenerateOptions.provider`/`.model` 是必填**
+    （`dsh-llm/lib/types/types.d.ts:508-509`）⇒ "不传=跟随默认"在本插件里必须实现成**主动读部署默认**
+    （`agentDefaultModel.get()`），照字面抄会做出一个传 `undefined` 的调用
+  - 设置卡修了两条**在骗人**的 hint：provider/model 原文写"留空继承主请求路由"，那正是被移除的故障语义，
+    现改为"留空 = 跟随部署默认（不跟随主会话当前路由）"；并新增 `inheritSessionRoute` 开关
+  - 回归 `scripts/model-route-smoke.mjs` **10 条断言进 `test:smoke`（链 47 → 48）**；关键一条不比结果、
+    比**读取次数**：未配置时 `session.requestHeader()` **必须一次都不读**（读了但结果碰巧相同也照样红）。
+    变异自证：换回旧优先级 ⇒ 5 条转红，还原 ⇒ 全绿
+  - **未判定**：「主会话在会 401 的路由 + 插件显式配好 ⇒ 真回合补全仍成功」的现场版**没跑**（纯函数侧已覆盖
+    "根本不读会话路由"），等真实例 + 一条坏路由时补
+
 - **修回"插件在三个代次上整个不装载"**（#110 / PR #112，回归由 #109 引入）：`@deepseek-ai/dsh-typert-protocol`
   被写进 `peerDependencies`（并在 `peerDependenciesMeta` 标了 `optional: true`），而 **≤0.2.0 的准入门禁是
   peers-only 语义 —— 只读 `peerDependencies` 的范围、不看 `optional` 元数据** ⇒ 一个"可选"声明被当**硬要求**执行
