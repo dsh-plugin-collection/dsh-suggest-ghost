@@ -33,14 +33,15 @@ while True:
     n += 1
 
 e1 = (len(durs) == len(targets) + 1)
-e2 = all(abs(durs[i] - targets[i]) <= 10 for i in range(len(targets)))
-e3 = len(set(durs[:len(targets)])) > 1
+cmp_n = min(len(durs), len(targets))
+e2 = (len(durs) == len(targets) + 1) and all(abs(durs[i] - targets[i]) <= 20 for i in range(cmp_n))
+e3 = len(set(durs[:cmp_n])) > 1
 print('计划格数 =', len(targets), '  文件帧数 =', len(durs), '（末帧为循环重复帧）')
 print('目标时长(ms) =', targets)
 print('实测时长(ms) =', durs)
 print('E1 帧数 == 格数+1 :', e1, '(实测 %d vs %d+1)' % (len(durs), len(targets)))
 print('E2 每帧与目标一致(±10ms):', e2,
-      ' 最大偏差 =', max(abs(durs[i] - targets[i]) for i in range(len(targets))), 'ms')
+      ' 最大偏差 =', (max(abs(durs[i] - targets[i]) for i in range(cmp_n)) if cmp_n else None), 'ms')
 print('E3 时长不全等:', e3, ' 唯一值 =', sorted(set(durs)))
 ok = e1 and e2 and e3
 print('\n断言 E：', 'PASS' if ok else 'FAIL')

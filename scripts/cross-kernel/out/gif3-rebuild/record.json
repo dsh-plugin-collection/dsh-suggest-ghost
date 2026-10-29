@@ -1,5 +1,5 @@
 {
-  "home": "/home/wujue/xk-gif3-0212",
+  "home": "/home/wujue/xk-gif3b",
   "scale": 4,
   "pad": 24,
   "rounds": [
@@ -11,24 +11,18 @@
         {
           "frame": 1,
           "final": false,
-          "chars": 5,
-          "pageT": 48690
+          "chars": 4,
+          "pageT": 52178
         },
         {
           "frame": 2,
-          "final": false,
-          "chars": 11,
-          "pageT": 48787
-        },
-        {
-          "frame": 3,
           "final": true,
-          "chars": 15,
-          "pageT": 48832
+          "chars": 11,
+          "pageT": 52292
         }
       ],
-      "finalChars": 15,
-      "finalTextLen": 15,
+      "finalChars": 11,
+      "finalTextLen": 11,
       "clip": {
         "x": 357,
         "y": 972,
@@ -58,15 +52,15 @@
         },
         {
           "kind": "frame",
-          "png": "r1-02-f1c5.png",
-          "chars": 5,
+          "png": "r1-02-f1c4.png",
+          "chars": 4,
           "frame": 1,
           "final": false,
           "tMs": 0,
           "measuredRect": {
             "x": 385,
             "y": 986,
-            "w": 44,
+            "w": 56,
             "h": 19
           }
         },
@@ -75,26 +69,12 @@
           "png": "r1-03-f2c11.png",
           "chars": 11,
           "frame": 2,
-          "final": false,
-          "tMs": 97,
-          "measuredRect": {
-            "x": 385,
-            "y": 986,
-            "w": 117,
-            "h": 19
-          }
-        },
-        {
-          "kind": "frame",
-          "png": "r1-04-f3c15.png",
-          "chars": 15,
-          "frame": 3,
           "final": true,
-          "tMs": 142,
+          "tMs": 114,
           "measuredRect": {
             "x": 385,
             "y": 986,
-            "w": 173,
+            "w": 154,
             "h": 19
           }
         }
@@ -113,18 +93,18 @@
         {
           "frame": 1,
           "final": false,
-          "chars": 7,
-          "pageT": 89455
+          "chars": 3,
+          "pageT": 80079
         },
         {
           "frame": 2,
           "final": true,
-          "chars": 12,
-          "pageT": 89540
+          "chars": 3,
+          "pageT": 80107
         }
       ],
-      "finalChars": 12,
-      "finalTextLen": 12,
+      "finalChars": 3,
+      "finalTextLen": 3,
       "clip": {
         "x": 357,
         "y": 972,
@@ -154,29 +134,29 @@
         },
         {
           "kind": "frame",
-          "png": "r2-02-f1c7.png",
-          "chars": 7,
+          "png": "r2-02-f1c3.png",
+          "chars": 3,
           "frame": 1,
           "final": false,
           "tMs": 0,
           "measuredRect": {
             "x": 385,
             "y": 986,
-            "w": 98,
+            "w": 42,
             "h": 19
           }
         },
         {
           "kind": "frame",
-          "png": "r2-03-f2c12.png",
-          "chars": 12,
+          "png": "r2-03-f2c3.png",
+          "chars": 3,
           "frame": 2,
           "final": true,
-          "tMs": 85,
+          "tMs": 28,
           "measuredRect": {
             "x": 385,
             "y": 986,
-            "w": 168,
+            "w": 42,
             "h": 19
           }
         }
@@ -195,18 +175,18 @@
         {
           "frame": 1,
           "final": false,
-          "chars": 3,
-          "pageT": 118027
+          "chars": 9,
+          "pageT": 119591
         },
         {
           "frame": 2,
           "final": true,
-          "chars": 3,
-          "pageT": 118061
+          "chars": 13,
+          "pageT": 119675
         }
       ],
-      "finalChars": 3,
-      "finalTextLen": 3,
+      "finalChars": 13,
+      "finalTextLen": 13,
       "clip": {
         "x": 357,
         "y": 972,
@@ -236,29 +216,29 @@
         },
         {
           "kind": "frame",
-          "png": "r3-02-f1c3.png",
-          "chars": 3,
+          "png": "r3-02-f1c9.png",
+          "chars": 9,
           "frame": 1,
           "final": false,
           "tMs": 0,
           "measuredRect": {
             "x": 385,
             "y": 986,
-            "w": 42,
+            "w": 80,
             "h": 19
           }
         },
         {
           "kind": "frame",
-          "png": "r3-03-f2c3.png",
-          "chars": 3,
+          "png": "r3-03-f2c13.png",
+          "chars": 13,
           "frame": 2,
           "final": true,
-          "tMs": 34,
+          "tMs": 84,
           "measuredRect": {
             "x": 385,
             "y": 986,
-            "w": 42,
+            "w": 138,
             "h": 19
           }
         }

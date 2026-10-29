@@ -39,16 +39,38 @@ lines.append("file '%s'" % os.path.abspath(os.path.join(OUT, plan[-1][0])))
 lines.append('duration %.3f' % (plan[-1][1] / 1000.0))
 lp = os.path.join(OUT, 'gif-list.txt')
 open(lp, 'w').write('\n'.join(lines) + '\n')
-# ⚠️ 不能再用 -vf fps=20：那一步把 concat 的 duration 指令**全部重采样掉**
-#   （实测 18 帧全变 50ms = 20fps，等于把"停留∝真实间隔"这句话当场作废）。
-#   改用 -fps_mode passthrough，让每帧时长原样落到文件里。
-cmd = ['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', lp,
-       '-fps_mode', 'passthrough', '-vf', 'split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=none', DEST]
-r0 = subprocess.run(cmd, capture_output=True, text=True)
-if r0.returncode != 0:
-    print((r0.stderr or '').split('\n')[-8:]); sys.exit(1)
-print('GIF →', DEST, os.path.getsize(DEST), 'B')
-print('目标时长(ms) =', [d for _, d, _ in plan])
-print('复跑命令：' + ' '.join(cmd))
+# ⚠️ 编码这一步换成了 **PIL 直接写每帧 duration**，不再走 ffmpeg 的 concat + 调色板滤镜链。
+#   两次实测教训：
+#    - `-vf fps=20` 会把 concat 的 duration 指令**重采样掉** ⇒ 18 帧全变 50ms；
+#    - 改 `-vsync passthrough` 后又把 9 帧**吃掉 5 帧**（只剩 4 帧）——
+#      断言 E 回读文件才发现，光看脚本"算了映射"不算数。
+#   PIL 的 save(save_all=True, duration=[...]) 是逐帧显式写延时，没有中间重采样，可回读。
+from PIL import Image
+frames = []
+durs = []
+for png, dur, _ in plan:
+    path = os.path.join(OUT, png)
+    if not os.path.exists(path):
+        print('缺帧', png); continue
+    frames.append(Image.open(path).convert('RGB').convert('P', palette=Image.ADAPTIVE, colors=128))
+    durs.append(int(dur))
+# 末帧：给循环用的重复帧画一个角标，让它**与前一帧真的不同**。
+# 否则 PIL 会把"内容完全相同 + 紧跟其后"的两帧**合并成一帧**（实测 320ms 与 700ms
+# 被并成 1020ms、帧数少 1）—— 那又是一次"产物与声明不对齐"，只能靠回读发现。
+from PIL import ImageDraw, ImageFont
+last = frames[-1].convert('RGB')
+d = ImageDraw.Draw(last)
+try:
+    fnt = ImageFont.truetype('/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc', 22)
+    d.text((12, last.size[1] - 34), '↻ 循环到起点', font=fnt, fill=(110, 124, 138))
+except Exception:
+    d.rectangle([8, last.size[1] - 30, 150, last.size[1] - 10], outline=(110, 124, 138))
+frames.append(last.convert('P', palette=Image.ADAPTIVE, colors=128))
+durs.append(700)     # 末帧=循环用的重复帧（断言 E1 按"格数+1"核对）
 json.dump({'plan': [{'png': p, 'durMs': d, 'label': l} for p, d, l in plan]},
           open(os.path.join(OUT, 'gif-plan.json'), 'w'), ensure_ascii=False, indent=1)
+os.makedirs(os.path.dirname(DEST) or '.', exist_ok=True)
+frames[0].save(DEST, save_all=True, append_images=frames[1:], duration=durs, loop=0, optimize=False)
+print('GIF →', DEST, os.path.getsize(DEST), 'B  帧数 =', len(frames))
+print('目标时长(ms) =', durs)
+print('复跑命令：python3 scripts/cross-kernel/stream-gif3-gif.py %s %s' % (OUT, DEST))

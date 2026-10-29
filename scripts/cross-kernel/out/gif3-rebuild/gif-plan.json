@@ -1,0 +1,49 @@
+{
+ "plan": [
+  {
+   "png": "gif-r1-01.png",
+   "durMs": 260,
+   "label": "轮1 步1 t=+0ms 4字符"
+  },
+  {
+   "png": "gif-r1-02.png",
+   "durMs": 1600,
+   "label": "轮1 终帧 t=+114ms 11字符"
+  },
+  {
+   "png": "gif-r1-00.png",
+   "durMs": 320,
+   "label": "轮1 置空起点"
+  },
+  {
+   "png": "gif-r2-01.png",
+   "durMs": 260,
+   "label": "轮2 步1 t=+0ms 3字符"
+  },
+  {
+   "png": "gif-r2-02.png",
+   "durMs": 1600,
+   "label": "轮2 终帧 t=+28ms 3字符"
+  },
+  {
+   "png": "gif-r2-00.png",
+   "durMs": 320,
+   "label": "轮2 置空起点"
+  },
+  {
+   "png": "gif-r3-01.png",
+   "durMs": 260,
+   "label": "轮3 步1 t=+0ms 9字符"
+  },
+  {
+   "png": "gif-r3-02.png",
+   "durMs": 1600,
+   "label": "轮3 终帧 t=+84ms 13字符"
+  },
+  {
+   "png": "gif-r3-00.png",
+   "durMs": 320,
+   "label": "轮3 置空起点"
+  }
+ ]
+}
