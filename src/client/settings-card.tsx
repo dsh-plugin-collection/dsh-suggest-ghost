@@ -35,7 +35,7 @@ import { injectStyles } from './styles.js';
 import { IconChevronDownOutlineRegular, IconInfoOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
 
 /** 字段输入形态。 */
-export type FieldKind = 'number' | 'text' | 'boolean' | 'key' | 'select';
+export type FieldKind = 'number' | 'text' | 'boolean' | 'key' | 'select' | 'catalog';
 
 /** 双语文案值（zh 为源语言）。 */
 export interface Bilingual {
@@ -58,6 +58,13 @@ export const GHOST_FIELDS: ReadonlyArray<{
   readonly section: 'llm' | 'history' | 'inline' | 'language';
   /** 是否可经设置页写回（false = 只能改配置文件）。 */
   readonly writable: boolean;
+  /**
+   * 目录型下拉框取哪一份宿主目录（仅 kind='catalog'）：
+   *  - `providers`：宿主 llm 的 provider 列表（卡片打开时拉一次）
+   *  - `models`：**按 provider 懒加载** —— 只有当前选中的 provider 才发一次请求，
+   *    不一次拉全部（gitea-dispatch 同款口径）
+   */
+  readonly catalog?: 'providers' | 'models';
   /** select 控件的选项列表（仅 kind='select' 时使用）。 */
   readonly options?: ReadonlyArray<{ readonly value: string; readonly label: Bilingual }>;
 }> = [
@@ -213,7 +220,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
       zh: '显式路由；两个都留空 = 跟随部署默认模型（不跟随主会话当前路由）',
       en: 'Explicit route; leave both empty to follow the deployment default model (not the main session\'s current route)',
     },
-    kind: 'text',
+    kind: 'catalog',
+    catalog: 'providers',
     section: 'llm',
     writable: true,
   },
@@ -221,10 +229,11 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'model',
     label: { zh: 'Model', en: 'Model' },
     hint: {
-      zh: '显式路由；只填一个会直接报错（两个必须一起给）',
-      en: 'Explicit route; setting only one of the pair is an error (they must come together)',
+      zh: '显式路由；只填一个会直接报错（两个必须一起给）。列表按所选 provider 现取（懒加载）',
+      en: 'Explicit route; setting only one of the pair is an error. The list is fetched lazily for the selected provider',
     },
-    kind: 'text',
+    kind: 'catalog',
+    catalog: 'models',
     section: 'llm',
     writable: true,
   },
@@ -753,6 +762,69 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
   const setField = (key: string, raw: string | boolean | number): void => {
     setEdits(prev => ({ ...prev, [key]: raw }));
   };
+  // ── 模型目录（#116）：provider 列表 + 按 provider 懒加载的 model 列表 ─────────
+  //
+  // 三条硬规矩，都是这个仓里踩过坑的形状：
+  //  1. **拿不到目录就退回自由文本输入框**（老代次可能没有 webServer / 路由注册失败 /
+  //     宿主没接 llm）。设置项绝不能因为目录不可用而不可用，更不能让卡片抛。
+  //  2. **当前值不在目录里也必须保留成选项**。静默把用户已配的值丢掉，比下拉框少一项严重得多
+  //     （gitea-dispatch 同款处理）。
+  //  3. **model 列表按 provider 懒加载**：只有当前选中的 provider 才发一次请求，
+  //     切过的 provider 缓存复用；不一次拉全部。
+  const CATALOG_PATH = '/api/suggest-ghost/options';
+  const [catalogProviders, setCatalogProviders] = useState<readonly { id: string; name: string }[]>([]);
+  const [catalogModels, setCatalogModels] = useState<Record<string, readonly { id: string; name: string }[]>>({});
+  const [catalogUnavailable, setCatalogUnavailable] = useState(false);
+  const providerValue = fieldValue('provider');
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(CATALOG_PATH, { method: 'GET' });
+        if (!res.ok) { setCatalogUnavailable(true); return; }
+        const body = await res.json() as { providers?: unknown };
+        const rows = Array.isArray(body.providers) ? body.providers as { id: string; name: string }[] : [];
+        if (cancelled) return;
+        // 空目录按"不可用"处理：没有可选项的下拉框只会让人以为"这个部署没有模型"，
+        // 而事实更可能是宿主侧没接上 —— 退化成文本框至少不撒谎。
+        setCatalogProviders(rows);
+        setCatalogUnavailable(rows.length === 0);
+      } catch {
+        if (!cancelled) setCatalogUnavailable(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    const provider = (providerValue ?? '').trim();
+    if (provider === '' || catalogUnavailable || catalogModels[provider] !== undefined) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${CATALOG_PATH}?models=${encodeURIComponent(provider)}`, { method: 'GET' });
+        if (!res.ok) return;
+        const body = await res.json() as { models?: unknown };
+        if (cancelled) return;
+        setCatalogModels(prev => ({
+          ...prev,
+          [provider]: Array.isArray(body.models) ? body.models as { id: string; name: string }[] : [],
+        }));
+      } catch { /* 拉不到：该 provider 下只剩"当前值"可选项，不阻塞保存 */ }
+    })();
+    return () => { cancelled = true; };
+  }, [providerValue, catalogUnavailable]);
+  /** 目录型下拉框的选项：目录 + 当前值（不在目录里时补一条，绝不静默丢）。 */
+  const catalogOptions = (which: 'providers' | 'models'): { value: string; label: string }[] => {
+    const provider = (providerValue ?? '').trim();
+    const rows = which === 'providers' ? catalogProviders : (catalogModels[provider] ?? []);
+    const current = fieldValue(which === 'providers' ? 'provider' : 'model');
+    const out = rows.map(r => ({ value: r.id, label: r.name === r.id ? r.id : `${r.id} — ${r.name}` }));
+    if (current !== '' && !out.some(o => o.value === current)) {
+      out.unshift({ value: current, label: `${current}（不在当前目录里）` });
+    }
+    return out;
+  };
+
   const save = async (): Promise<void> => {
     if (anyInvalid) return;
     setBusy(true);
@@ -830,6 +902,21 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
         t={t}
         onChange={spec => setField(f.key, spec)}
       />
+    ) : f.kind === 'catalog' && !catalogUnavailable ? (
+      <select
+        className={inputClass}
+        id={fieldId}
+        value={fieldValue(f.key)}
+        disabled={!editable || busy}
+        onChange={e => setField(f.key, e.target.value)}
+      >
+        <option value="">{(f.catalog ?? 'providers') === 'providers'
+          ? '（跟随部署默认）'
+          : ((providerValue ?? '').trim() === '' ? '（先选 provider）' : '（跟随部署默认）')}</option>
+        {catalogOptions(f.catalog ?? 'providers').map(opt => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
     ) : f.kind === 'select' ? (
       <select
         className={inputClass}
