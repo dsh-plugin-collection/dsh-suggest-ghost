@@ -278,7 +278,12 @@ try {
         const cs = ov == null ? null : getComputedStyle(ov);
         g.style.cssText = ['position:fixed', 'pointer-events:none', 'white-space:pre-wrap', 'word-break:break-word',
           'z-index:2147483646', 'background:transparent',
-          'left:' + Math.round(ir.left) + 'px', 'top:' + Math.round(ir.bottom + 2) + 'px',
+          // ⚠️ 必须锚在**产品 overlay 自己的盒子**上，不是"输入框下沿 + 2"：
+          //   上一版锚到输入框下沿，而 overlay 盒子比文字高（实测图高 192、文字只占上部），
+          //   于是重建的那行字落到裁切框**外面** ⇒ 断言 B 完美(0) 而 C 全是 0 ——
+          //   这正好是"断言各测各的、没人问'字还在框里吗'"的又一形态。
+          'left:' + Math.round((${''}window.__r.overlay() ? window.__r.overlay().getBoundingClientRect().left : ir.left)) + 'px',
+          'top:' + Math.round((window.__r.overlay() ? window.__r.overlay().getBoundingClientRect().top : ir.bottom + 2)) + 'px',
           'width:' + Math.round(ir.width) + 'px',
           'font:' + (cs ? cs.font : '14px -apple-system'),
           'color:' + (cs ? cs.color : '#9aa0a6'),
