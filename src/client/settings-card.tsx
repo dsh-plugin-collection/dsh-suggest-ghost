@@ -81,8 +81,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'pair',
     label: { zh: '输入字节上限', en: 'Input byte cap' },
     hint: {
-      zh: '最终框架化用户提示的最大 UTF-8 字节数',
-      en: 'Max UTF-8 bytes of the final framed user prompt',
+      zh: '生成建议时最多取用多少上下文（字节）。调大更准，但更慢也更费 token。',
+      en: 'How much context (in bytes) suggestions may use. Larger is more accurate but slower and costs more.',
     },
     kind: 'number',
     section: 'llm',
@@ -93,8 +93,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'pair',
     label: { zh: '输出令牌上限', en: 'Output token cap' },
     hint: {
-      zh: '建议生成的最大输出 token（推理模型留足预算，如 512）',
-      en: 'Max output tokens per suggestion (leave headroom for reasoning models, e.g. 512)',
+      zh: '单条建议最多生成多少 token。推理模型要给足余量，太小会生成不出内容。',
+      en: 'Max tokens per suggestion. Give reasoning models headroom, or they may return nothing.',
     },
     kind: 'number',
     section: 'llm',
@@ -114,8 +114,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'pair',
     label: { zh: '参考回合数', en: 'Recent turns referenced' },
     hint: {
-      zh: '转录尾部保留的最近完成回合数（默认 3；旧回合由「长会话摘要」保留关键信息）',
-      en: 'Completed turns kept from the transcript tail (default 3; older turns preserved via summary)',
+      zh: '参考最近多少个回合的对话。调大上下文更完整，调小更快。',
+      en: 'How many recent turns are used as context. More is richer, fewer is faster.',
     },
     kind: 'number',
     section: 'llm',
@@ -125,8 +125,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'maxTranscriptChars',
     label: { zh: '转录字符预算', en: 'Transcript character budget' },
     hint: {
-      zh: '发送给建议模型的转录字符上限',
-      en: 'Max transcript characters sent to the suggestion model',
+      zh: '送进模型的对话记录最多多长（字符），超出会被裁掉。',
+      en: 'Max characters of conversation history sent to the model; the rest is trimmed.',
     },
     kind: 'number',
     section: 'llm',
@@ -136,8 +136,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'contextSummaryEnabled',
     label: { zh: '长会话摘要', en: 'Long session summary' },
     hint: {
-      zh: '开启后，被裁剪的旧消息会提取摘要保留关键上下文（零额外 LLM 成本）',
-      en: 'When on, trimmed old messages are summarized to preserve key context (zero extra LLM cost)',
+      zh: '老旧对话被裁掉时，先把要点压成摘要保留下来（不额外调用模型）。',
+      en: 'When old messages are trimmed, keep their gist as a summary (no extra model calls).',
     },
     kind: 'boolean',
     section: 'llm',
@@ -148,8 +148,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'pair',
     label: { zh: '摘要字符预算', en: 'Summary character budget' },
     hint: {
-      zh: '上下文摘要的最大字符数（仅长会话摘要开启时生效）',
-      en: 'Max characters for the context summary (only when long session summary is on)',
+      zh: '摘要最多保留多少字符。太小会丢要点，太大会挤占正式对话。',
+      en: 'Max summary length. Too small loses details; too large crowds out the conversation.',
     },
     kind: 'number',
     section: 'llm',
@@ -160,8 +160,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'pair',
     label: { zh: '超时（毫秒）', en: 'Timeout (ms)' },
     hint: {
-      zh: '辅助 LLM 请求端到端截止时间',
-      en: 'End-to-end deadline for the auxiliary LLM request',
+      zh: '一次建议最多等多久（毫秒）。网络慢可以调大。',
+      en: 'How long a suggestion request may take (ms). Raise it on slow networks.',
     },
     kind: 'number',
     section: 'llm',
@@ -171,8 +171,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'acceptKey',
     label: { zh: '采纳快捷键', en: 'Accept shortcut' },
     hint: {
-      zh: '点击后按下组合键；支持 Tab、字母/数字、F1-F12、方向键等（两个功能共用）',
-      en: 'Click, then press a key combo; supports Tab, letters/digits, F1-F12, arrows, etc. (shared by both features)',
+      zh: '采纳建议的快捷键。默认 Tab，也可以设成字母、方向键或 F1–F12。',
+      en: 'Key that accepts a suggestion. Tab by default; letters, arrow keys and F1–F12 also work.',
     },
     kind: 'key',
     section: 'llm',
@@ -182,8 +182,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'llmEnabled',
     label: { zh: '启用 LLM 建议', en: 'Enable LLM suggestions' },
     hint: {
-      zh: '关闭后每回合不再调用建议模型（省 token）；历史前缀补全与热度不受影响',
-      en: 'When off, no suggestion model call per turn (saves tokens); history completion and hotness are unaffected',
+      zh: '用模型生成「下一句话」的建议。关掉可省 token，历史补全与热度统计照常工作。',
+      en: 'Generate the next-prompt suggestion with the model. Turning it off saves tokens; history completion and hotness still work.',
     },
     kind: 'boolean',
     section: 'llm',
@@ -193,17 +193,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'streamingDelivery',
     label: { zh: '流式投递建议', en: 'Stream suggestion frames' },
     hint: {
-      // 不粉饰：这条开关买的是观感，不是性能。数字就写在提示里，用户开之前看得见。
-      zh: '开启后，回合结束时客户端开一条 typert 流，建议按净化前缀逐帧推送（字一个个出来）。'
-        + '**默认关闭**：当前路由实测流式收益中位 1.8% / 91ms，且正文增量 p50 只有 2 个 —— '
-        + '也就是说这条买的是观感，不是速度。增量帧不落盘（不写 settings），终帧仍走一次权威推送；'
-        + '中途显示的内容允许被终帧修正或丢弃，采纳只认终帧。老代次拿不到该通道时自动退回整块到达。',
-      en: 'When on, the client opens a typert stream at the turn-end edge and the suggestion arrives as '
-        + 'prefix-safe frames (characters appear progressively). OFF BY DEFAULT: measured gain on the '
-        + 'current route is 1.8% median / 91ms, and content deltas p50 is 2 — this buys the look, not speed. '
-        + 'Incremental frames never persist (no settings write); the final frame still goes through one '
-        + 'authoritative push. Mid-stream text may be revised or dropped by the final frame, and only the '
-        + 'final frame is acceptable. Older kernels without the channel fall back to whole-block delivery.',
+      zh: '让建议文字逐步浮现，而不是一次性整段出现。只影响观感，不改变生成速度。',
+      en: 'Show suggestions appearing gradually instead of all at once. Affects appearance only, not speed.',
     },
     kind: 'boolean',
     section: 'llm',
@@ -218,8 +209,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'route',
     label: { zh: 'Provider', en: 'Provider' },
     hint: {
-      zh: '显式路由；两个都留空 = 跟随部署默认模型（不跟随主会话当前路由）',
-      en: 'Explicit route; leave both empty to follow the deployment default model (not the main session\'s current route)',
+      zh: '建议用哪个模型服务。留空 = 跟随系统默认，但不跟随当前会话。',
+      en: 'Which provider suggestions use. Leave empty to follow the system default (not the current session).',
     },
     kind: 'catalog',
     catalog: 'providers',
@@ -231,8 +222,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'route',
     label: { zh: 'Model', en: 'Model' },
     hint: {
-      zh: '显式路由；只填一个会直接报错（两个必须一起给）。列表按所选 provider 现取（懒加载）',
-      en: 'Explicit route; setting only one of the pair is an error. The list is fetched lazily for the selected provider',
+      zh: '建议用哪个模型。要和上一项成对填写；两项都留空 = 跟随系统默认。',
+      en: 'Which model suggestions use. Fill it together with the provider; leave both empty to follow the system default.',
     },
     kind: 'catalog',
     catalog: 'models',
@@ -244,8 +235,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'route',
     label: { zh: '建议推理档位', en: 'Suggestion reasoning effort' },
     hint: {
-      zh: '「下一条建议」这次调用的推理档位。**默认为空 = 不传 = 沿用该模型自己的默认档位**——档位是按 provider、按 model 声明的，同一份 profile 里 18 个模型有 9 个没声明，给它们带档位会在请求发出之前就被拒。填了当前模型不支持的档位不会让这一轮失败：宿主会退一档（不带档位）重发一次，日志里记 effort_rejected=1。可选值以该模型声明的为准（常见 low / medium / high / xhigh）',
-      en: 'Reasoning effort for the next-prompt suggestion call. EMPTY BY DEFAULT = do not send it = keep whatever default this model has. Efforts are declared per provider and per model — 9 of the 18 models in this profile declare none, and sending one to those is rejected before the request goes out. An effort the model rejects does not lose the turn: the host retries once without it and logs effort_rejected=1. Use the ids this model declares (commonly low / medium / high / xhigh)',
+      zh: '生成建议时的思考强度。留空 = 用模型自己的默认。不同模型可选档位不同，列表里没有可以直接填。',
+      en: 'Thinking effort for suggestions. Empty uses the model default. Available levels differ per model; you can type one if it is not listed.',
     },
     // 目录驱动（#50）：选项来自宿主 llm.resolveModel(provider, model).reasoning.efforts
     // —— 合法集合随模型变，所以不能硬编码；拿不到就退化成文本框（见 renderField）。
@@ -258,12 +249,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'inheritSessionRoute',
     label: { zh: '允许继承会话路由', en: 'Allow inheriting the session route' },
     hint: {
-      zh: '默认关。关掉时未配置的辅助调用跟随部署默认模型；打开则改回「跟随本会话最近一次请求的路由」——'
-        + '这会让补全/建议跟着主会话换模型走，主会话切到一条坏路由时辅助调用会全线失败（#47 的原始故障），'
-        + '只在确实想跟着会话走时才开。失败会以 completion failed 告警出现在日志里。',
-      en: 'Off by default. When off, unconfigured helper calls follow the deployment default model; '
-        + 'when on they inherit this session\'s last request route, so switching the main session to a '
-        + 'failing route breaks every suggestion and completion (#47). Enable only if you really want to track the session.',
+      zh: '关闭时，没有单独指定模型的建议跟随系统默认。一般保持关闭。',
+      en: 'When off, suggestions without their own provider/model follow the system default. Usually keep it off.',
     },
     kind: 'boolean',
     section: 'llm',
@@ -274,8 +261,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'historyEnabled',
     label: { zh: '启用历史补全', en: 'Enable history completion' },
     hint: {
-      zh: '草稿非空时按历史消息前缀补全（打分制：最近优先 + 频次/热度加权）',
-      en: 'Completes the draft from history-message prefixes while typing (scored: recency first, weighted by frequency/heat)',
+      zh: '输入时用你以前说过的话补全后半句。',
+      en: 'Complete what you are typing using things you said before.',
     },
     kind: 'boolean',
     section: 'history',
@@ -285,8 +272,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'historyCrossSession',
     label: { zh: '跨会话搜索', en: 'Cross-session search' },
     hint: {
-      zh: '关=候选仅当前会话；开=并入其他会话的高频历史。热度频次打分不受此开关影响',
-      en: 'Off = candidates from this session only; on = merge frequent history from other sessions. Hotness frequency scoring is unaffected by this switch',
+      zh: '也参考其他会话的历史。关掉则只用当前会话。',
+      en: 'Also draw on your other sessions. Off limits it to the current session.',
     },
     kind: 'boolean',
     section: 'history',
@@ -297,8 +284,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'pair',
     label: { zh: '最大历史条目', en: 'Max history entries' },
     hint: {
-      zh: '最多参考的历史条目数（0 = 不限）',
-      en: 'How many history entries to consider at most (0 = unlimited)',
+      zh: '最多参考多少条历史记录（0 = 不限）。',
+      en: 'How many history entries to draw on (0 = no limit).',
     },
     kind: 'number',
     section: 'history',
@@ -312,8 +299,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     // 以为续写阈值也是 3，实际续写仍按默认 4 判定（2026-10-23 现场）。
     label: { zh: '最少输入字符（历史补全）', en: 'Min typed characters (history)' },
     hint: {
-      zh: '草稿输入多少字符后才触发历史前缀补全（避免过早弹框）',
-      en: 'How many characters must be typed before completion kicks in (avoids popping up too early)',
+      zh: '输入几个字之后才开始补全，避免频繁打扰。',
+      en: 'How many characters to type before completion starts.',
     },
     kind: 'number',
     section: 'history',
@@ -323,8 +310,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'wordAccept',
     label: { zh: '逐词采纳', en: 'Word-by-word accept' },
     hint: {
-      zh: '幽灵显示时按 → 每次采纳一个词（中文按词典分词）；Tab 始终整条采纳。对两种建议模式都生效',
-      en: 'While the ghost shows, → accepts one word at a time (Chinese segments via dictionary); Tab always accepts the whole text. Applies to both suggestion modes',
+      zh: '显示建议时，按 → 一次采纳一个词；Tab 始终采纳整条。',
+      en: 'With a suggestion shown, → accepts one word at a time; Tab accepts the whole thing.',
     },
     kind: 'boolean',
     section: 'history',
@@ -335,8 +322,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'inlineEnabled',
     label: { zh: '停顿续写', en: 'Pause completion' },
     hint: {
-      zh: '输入停顿后由 LLM 续写草稿（历史补全未命中时生效）',
-      en: 'LLM continues the draft after a typing pause (when history completion misses)',
+      zh: '你停下来时，由模型接着往下写。',
+      en: 'Let the model continue your draft when you pause.',
     },
     kind: 'boolean',
     section: 'inline',
@@ -347,8 +334,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'pair',
     label: { zh: '停顿时长', en: 'Pause duration' },
     hint: {
-      zh: '停止输入多久后触发续写（毫秒）',
-      en: 'How long to pause before triggering completion (ms)',
+      zh: '停下多久之后才开始续写（毫秒）。',
+      en: 'How long to pause before continuation starts (ms).',
     },
     kind: 'number',
     section: 'inline',
@@ -359,8 +346,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'pair',
     label: { zh: '最少输入字符（停顿续写）', en: 'Min typed characters (pause)' },
     hint: {
-      zh: '草稿输入多少字符后才触发停顿续写（与历史补全的阈值各自独立）',
-      en: 'How many characters must be typed before completion triggers',
+      zh: '至少输入几个字才会触发续写。',
+      en: 'Minimum characters before continuation can trigger.',
     },
     kind: 'number',
     section: 'inline',
@@ -371,8 +358,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'pair',
     label: { zh: '续写长度上限', en: 'Completion length cap' },
     hint: {
-      zh: '续写可见字符上限（超出按词边界截断）',
-      en: 'Max visible characters of the completion (truncated at word boundary)',
+      zh: '续写最多显示多少字，超出按词截断。',
+      en: 'Max length of the continuation; longer output is cut at a word boundary.',
     },
     kind: 'number',
     section: 'inline',
@@ -383,8 +370,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     group: 'pair',
     label: { zh: '续写推理档位', en: 'Completion reasoning effort' },
     hint: {
-      zh: '停顿续写这次调用的推理档位。**默认为空 = 不传 = 沿用该模型自己的默认档位**。续写在用户停手等待的路径上，比建议更慢不起，所以这里更值得试低档位；填了模型没声明的档位会退一档重发一次，日志记 effort_rejected=1',
-      en: 'Reasoning effort for the pause-completion call. EMPTY BY DEFAULT = do not send it = keep this model\'s own default. Completion sits on the path the user is waiting on, so it is the better candidate for a lower effort; an effort the model does not declare triggers one retry without it, logged as effort_rejected=1',
+      zh: '续写时的思考强度。留空 = 用模型默认。这里通常选低档，等待更短。',
+      en: 'Thinking effort for continuation. Empty uses the model default; a low level usually feels snappier.',
     },
     // 目录驱动（#50）：选项来自宿主 resolveModel 的该模型合法档位；拿不到退化文本框
     kind: 'catalog',
@@ -397,8 +384,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'languageMode',
     label: { zh: '建议语言', en: 'Suggestion language' },
     hint: {
-      zh: '自动：结合界面语言与消息内容推断；指定：始终使用所选语言',
-      en: 'Auto: infer from UI locale and message content; Specified: always use the selected language',
+      zh: '自动：根据界面语言和你的输入判断；指定：固定使用所选语言。',
+      en: 'Auto follows the interface language and what you type; a fixed choice always uses that language.',
     },
     kind: 'select',
     section: 'language',
@@ -420,8 +407,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'uiLocaleWeight',
     label: { zh: '界面语言权重', en: 'UI language weight' },
     hint: {
-      zh: '自动模式下界面语言的影响力（0-500）；值越大越倾向界面语言，0 = 完全忽略界面语言',
-      en: 'Influence of the UI locale in auto mode (0-500); higher = stronger preference for UI language, 0 = ignore UI locale entirely',
+      zh: '「自动」时界面语言的分量（0–500）。越大越贴近界面语言，0 = 完全不看界面。',
+      en: 'In Auto mode, how much the interface language counts (0–500). 0 ignores it entirely.',
     },
     kind: 'number',
     section: 'language',
