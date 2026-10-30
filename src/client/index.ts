@@ -2768,41 +2768,58 @@ function applyBody(ctx: Context): void {
   // 为什么不注入 `ctx.modelDirectories`：那是另一个插件注册的客户端服务，在本卡的 fibre 里拿不到
   // （注入回调根本不执行 ⇒ 连一行日志都没有，我为此白等一轮）。直调宿主方法少一层依赖、少一个失败模式。
   {
-    const remoteRoot = remoteOf(ctx) as unknown as {
-      session?: { modelCatalog?: () => Promise<{ ok?: boolean; value?: { groups?: readonly RawModelCatalogGroup[] } }> };
-    };
-    const sessionFace = remoteRoot?.session;
-    const call = sessionFace?.modelCatalog;
-    officialCatalogLoader = (): void => {
-      if (officialCatalogInflight !== null) return;
-      if (typeof call !== 'function') {
-        officialCatalogDiag = '该版本未暴露 modelCatalog 接口';
-        console.info('[dsh-suggest-ghost] modelCatalog: remote.session.modelCatalog unavailable');
-        return;
-      }
-      officialCatalogInflight = (async () => {
-        try {
-          const response = await call.call(sessionFace);
-          if (response?.ok !== true) {
-            officialCatalogDiag = `宿主未返回目录（ok=${String(response?.ok)}）`;
-            console.info(`[dsh-suggest-ghost] modelCatalog: ${officialCatalogDiag}`);
-            return;
-          }
-          const groups = mapOfficialGroups(response.value?.groups);
-          officialGroups = groups;
-          const withReasoning = groups.reduce((n, g) => n + g.models.filter((m: OfficialModelGroup['models'][number]) => m.reasoning !== undefined).length, 0);
-          officialCatalogDiag = `${groups.length} 组 / ${groups.reduce((n, g) => n + g.models.length, 0)} 模型 / 其中 ${withReasoning} 个带档位`;
-          console.info(`[dsh-suggest-ghost] modelCatalog: ${officialCatalogDiag}`);
-          officialCatalogListener?.();
-        } catch (error: unknown) {
-          console.info(`[dsh-suggest-ghost] modelCatalog failed: ${String((error as Error)?.message ?? error).slice(0, 90)}`);
-        } finally {
-          officialCatalogInflight = null;
+    // ⚠️ 必须**动态**注入 `remote.session` 这个能力面：
+    //   ① 我们模块级的 inject 里没有它（只有 remote.settings）⇒ `remote.session` 根本没挂上，
+    //      之前那条"直调"永远拿不到方法；官方 picker 的静态 inject 里有 "remote.session"。
+    //   ② 但不能加进模块级 inject —— 老内核可能没这个面，会**把整个插件 park 死**（#116 的教训）。
+    //      cordis 的 `ctx.inject([...], cb)` 是可选依赖，拿不到就不执行，插件照常跑。
+    ctx.inject(['remote.session'], (sessionScope) => {
+      const remoteRoot = (sessionScope.get('remote') ?? remoteOf(ctx)) as unknown as {
+        session?: { modelCatalog?: () => Promise<{ ok?: boolean; value?: { groups?: readonly RawModelCatalogGroup[] } }> };
+      };
+      const sessionFace = remoteRoot?.session;
+      const call = sessionFace?.modelCatalog;
+      officialCatalogLoader = (): void => {
+        if (officialCatalogInflight !== null) return;
+        if (typeof call !== 'function') {
+          officialCatalogDiag = '该版本未暴露 remote.session.modelCatalog';
+          console.info('[dsh-suggest-ghost] modelCatalog: remote.session.modelCatalog unavailable');
+          return;
         }
-      })();
-    };
+        officialCatalogInflight = (async () => {
+          try {
+            const response = await call.call(sessionFace);
+            if (response?.ok !== true) {
+              officialCatalogDiag = `宿主未返回目录（ok=${String(response?.ok)}）`;
+              console.info(`[dsh-suggest-ghost] modelCatalog: ${officialCatalogDiag}`);
+              return;
+            }
+            const groups = mapOfficialGroups(response.value?.groups);
+            officialGroups = groups;
+            const withReasoning = groups.reduce((n, g) => n + g.models.filter((m: OfficialModelGroup['models'][number]) => m.reasoning !== undefined).length, 0);
+            officialCatalogDiag = `${groups.length} 组 / ${groups.reduce((n, g) => n + g.models.length, 0)} 模型 / 其中 ${withReasoning} 个带档位`;
+            console.info(`[dsh-suggest-ghost] modelCatalog: ${officialCatalogDiag}`);
+            officialCatalogListener?.();
+          } catch (error: unknown) {
+            // catch 分支也必须写诊断：此前只打 console ⇒ 界面上"什么都没有"，
+            // 于是分不清"没数据"和"调用抛错"（我们为此多绕了一轮）。
+            officialCatalogDiag = `调用失败：${String((error as Error)?.message ?? error).slice(0, 60)}`;
+            console.info(`[dsh-suggest-ghost] modelCatalog failed: ${officialCatalogDiag}`);
+          } finally {
+            officialCatalogInflight = null;
+          }
+        })();
+      };
+      officialCatalogLoader();
+      ctx.effect(() => () => {
+        officialCatalogReader = null;
+        officialCatalogLoader = null;
+        officialCatalogListener = null;
+        officialGroups = null;
+        officialCatalogDiag = null;
+      });
+    });
     officialCatalogReader = () => (officialGroups !== null ? officialGroups : (officialCatalogLoader?.(), null));
-    officialCatalogLoader();
     ctx.effect(() => () => {
       officialCatalogReader = null;
       officialCatalogLoader = null;
