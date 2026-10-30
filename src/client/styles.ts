@@ -76,10 +76,15 @@ const COMPONENTS = [
   /* ==================== 底部操作栏 ==================== */
   '.sgc-footer{justify-content:flex-end;align-items:center;gap:8px;padding-top:16px;display:flex}',
   '.sgc-status{flex:1;min-width:0;color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:1.5}',
-  '.sgc-discard,.sgc-save{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:var(--dsw-radius-md,8px);padding:5px 14px;font-size:13px;line-height:1.5}',
-  '.sgc-discard{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);background:none}',
-  '.sgc-discard:hover:not(:disabled){color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-dimmed)}',
-  '.sgc-save{background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-layer-3)}',
+  // 底部操作栏按钮：**照官方 Button 的口径**（此前用错 token ⇒ 与官方观感不一致的根源）
+  //   官方主按钮：background:--dsw-alias-button-primary-fill / color:--dsw-alias-label-primary-foreground / font-weight:500
+  //   官方次按钮(ghost)：background:--dsw-alias-button-ghost-active-fill + inset 边框
+  // 旧实现把 `label-primary`（正文色）当底色、`bg-layer-3` 当文字色 —— 那是反色按钮，官方不这么画；
+  // 尺寸也从 13px/5px 对齐到官方 14px/22px 行高。
+  '.sgc-discard,.sgc-save{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:6px 14px;font-size:14px;line-height:22px;display:inline-flex;align-items:center;justify-content:center;min-height:34px}',
+  '.sgc-discard{background:var(--dsw-alias-button-ghost-active-fill);color:var(--dsw-alias-label-primary);box-shadow:inset 0 0 0 1px var(--dsw-alias-button-ghost-active-border)}',
+  '.sgc-discard:hover:not(:disabled){background:var(--dsw-alias-button-floating-hover)}',
+  '.sgc-save{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font-weight:500}',
   '.sgc-save:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}',
   '.sgc-save:disabled,.sgc-discard:disabled{opacity:.4;cursor:default}',
   '.sgc-save:focus-visible,.sgc-discard:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
