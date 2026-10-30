@@ -2698,7 +2698,18 @@ function applyBody(ctx: Context): void {
                 name: 'plugins.bundle.config',
                 key: 'dsh-suggest-ghost',
                 locale: 'dsh-suggest-ghost',
-                inject: () => ({ scope: formScope, locale, surface: 'detail' as const }),
+                // ⚠️ 两个入口（详情页 / 设置对话框）必须传同样的一组目录能力：
+                // 只给其中一个传过 ⇒ 另一个入口会静默退回 HTTP 目录（此前详情页就是这样，
+                // 表现为"档位永远文本框，而且连诊断都不显示"）。
+                inject: () => ({
+                  scope: formScope, locale, surface: 'detail' as const,
+                  modelCatalog: () => officialCatalogReader?.() ?? null,
+                  modelCatalogDiag: () => officialCatalogDiag,
+                  modelCatalogSubscribe: (listener: () => void) => {
+                    officialCatalogListener = listener;
+                    return () => { if (officialCatalogListener === listener) officialCatalogListener = null; };
+                  },
+                }),
               }, SuggestGhostCard),
             ),
           ),
