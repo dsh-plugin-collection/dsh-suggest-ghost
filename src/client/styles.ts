@@ -23,7 +23,9 @@ const COMPONENTS = [
 
   /* ==================== 字段 ==================== */
   '.sgc-field{display:flex;flex-direction:column;gap:6px;padding:12px 0}',
-  '.sgc-routePair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}',
+  // 路由三栏：provider | model | 档位（档位合法集由 model 决定 ⇒ 必须同栏）
+  '.sgc-routePair{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}',
+  '@media (max-width:1100px){.sgc-routePair{grid-template-columns:repeat(2,minmax(0,1fr))}}',
   '@media (max-width:720px){.sgc-routePair{grid-template-columns:minmax(0,1fr)}}',
   '.sgc-fieldHead{display:flex;align-items:center;gap:8px}',
   '.sgc-label-group{display:flex;align-items:center;gap:4px;flex:1;min-width:0}',

@@ -1066,13 +1066,17 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
       <section className="sgc-section" aria-labelledby="sgc-section-llm">
         <h3 className="sgc-section-heading" id="sgc-section-llm">{t.sectionLlm}</h3>
         <div className={SECTION_LAYOUT.llm === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{llmFields.map((f) => {
-            if (f.key === 'model') return null;
+            if (f.key === 'model' || f.key === 'suggestionReasoningEffort') return null;
             if (f.key === 'provider') {
               const modelField = llmFields.find((x) => x.key === 'model');
+              const effortField = llmFields.find((x) => x.key === 'suggestionReasoningEffort');
               return (
                 <div key="sgc-route-pair" className="sgc-routePair">
                   {renderField(f)}
                   {modelField === undefined ? null : renderField(modelField)}
+                  {/* 档位与模型同栏：它的合法集合由 model 决定（宿主 resolveModel 解析），
+                      放在同一行才看得出三者是一个整体（用户明确要求）。 */}
+                  {effortField === undefined ? null : renderField(effortField)}
                 </div>
               );
             }
