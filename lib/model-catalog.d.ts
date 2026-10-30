@@ -33,6 +33,19 @@ export interface CatalogRow {
 export interface CatalogSources {
     providers(): unknown;
     models(provider: string): unknown;
+    /**
+     * 精确 provider/model 的元数据（宿主 `llm.resolveModel`）；返回 `{reasoning:{efforts,defaultEffort}}`。
+     *
+     * ⚠️ 档位**不在** `models()` 的行里（那些行只有 id/name，实测如此），必须走这条解析。
+     * 解析失败/无该模型由调用方按"空数组"处理。
+     */
+    efforts(provider: string, model: string): unknown;
+}
+/** 档位行：`id` + `name`，可带 `description`（宿主 `LlmReasoningEffortInfo` 的超集投影）。 */
+export interface CatalogEffortRow {
+    readonly id: string;
+    readonly name: string;
+    readonly description?: string;
 }
 /**
  * 白名单投影：数组 → `[{id,name}]`，去重、按 id 稳定排序、截断到上限。
@@ -43,6 +56,8 @@ export interface CatalogSources {
 export declare function normalizeCatalogRows(rows: unknown): CatalogRow[];
 /** 查询参数里的 provider 也要过同一套字符集约束；不合法就当没传（返回空目录）。 */
 export declare function sanitizeProviderParam(raw: string | null | undefined): string | null;
+/** `?efforts=<provider>|<model>` 的第二段：与 provider 同一套字符集约束。 */
+export declare function sanitizeModelParam(raw: string | null | undefined): string | null;
 /** 只用到 `writeHead`/`end` 的最小响应面（便于单测喂假对象）。 */
 interface ResponseLike {
     writeHead(status: number, headers: Record<string, string>): void;

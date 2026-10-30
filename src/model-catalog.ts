@@ -37,6 +37,13 @@ export interface CatalogRow {
 export interface CatalogSources {
   providers(): unknown;
   models(provider: string): unknown;
+  /**
+   * 精确 provider/model 的元数据（宿主 `llm.resolveModel`）；返回 `{reasoning:{efforts,defaultEffort}}`。
+   *
+   * ⚠️ 档位**不在** `models()` 的行里（那些行只有 id/name，实测如此），必须走这条解析。
+   * 解析失败/无该模型由调用方按"空数组"处理。
+   */
+  efforts(provider: string, model: string): unknown;
 }
 
 /** 一行是不是 `{id,name}` 形状的非空字符串对；不是就整行丢弃（不做部分保留）。 */
@@ -51,6 +58,33 @@ function pickRow(value: unknown): CatalogRow | null {
   // 脏数据当合法 id 传回宿主服务。
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/.test(id)) return null;
   return { id, name };
+}
+
+/** 档位行：`id` + `name`，可带 `description`（宿主 `LlmReasoningEffortInfo` 的超集投影）。 */
+export interface CatalogEffortRow {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string;
+}
+
+/**
+ * 档位行投影：**只读 id / name / description**，其余键一律丢弃。
+ *
+ * 与 `pickRow` 同一条纪律：不经白名单就没有字段能带出容器外 —— 这条路由不经鉴权
+ * （#40 第 6 条），"构造上拿不到"必须由投影保证，而不是由"源里现在没有那字段"保证。
+ */
+function pickEffortRow(value: unknown): CatalogEffortRow | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const row = value as { id?: unknown; name?: unknown; description?: unknown };
+  if (typeof row.id !== 'string' || row.id.trim() === '') return null;
+  const id = row.id.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/.test(id)) return null;
+  const name = typeof row.name === 'string' && row.name.trim() !== '' ? row.name.trim() : id;
+  const out: { id: string; name: string; description?: string } = { id, name };
+  if (typeof row.description === 'string' && row.description.trim() !== '') {
+    out.description = row.description.trim().slice(0, 200);
+  }
+  return out;
 }
 
 /**
@@ -79,6 +113,13 @@ export function sanitizeProviderParam(raw: string | null | undefined): string | 
   const trimmed = raw.trim();
   if (trimmed === '' || !/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/.test(trimmed)) return null;
   return trimmed;
+}
+
+/** `?efforts=<provider>|<model>` 的第二段：与 provider 同一套字符集约束。 */
+export function sanitizeModelParam(raw: string | null | undefined): string | null {
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  if (trimmed === '') return null;
+  return /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/.test(trimmed) ? trimmed : null;
 }
 
 /** 只用到 `writeHead`/`end` 的最小响应面（便于单测喂假对象）。 */
@@ -134,11 +175,50 @@ export function createModelCatalogHandler(deps: {
       return;
     }
     let wanted: string | null = null;
+    let effortPair: { provider: string; model: string } | null = null;
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
-      wanted = sanitizeProviderParam(url.searchParams.get('models'));
+      // 档位分支优先：`?efforts=<provider>|<model>`（换模型必须重解析 ⇒ 不做跨模型缓存）
+      const rawEfforts = url.searchParams.get('efforts');
+      if (rawEfforts !== null) {
+        const sep = rawEfforts.indexOf('|');
+        const p = sanitizeProviderParam(sep < 0 ? null : rawEfforts.slice(0, sep));
+        const m = sanitizeModelParam(sep < 0 ? null : rawEfforts.slice(sep + 1));
+        effortPair = p !== null && m !== null ? { provider: p, model: m } : null;
+      }
+      wanted = effortPair === null ? sanitizeProviderParam(url.searchParams.get('models')) : null;
     } catch {
       wanted = null;
+    }
+    if (effortPair !== null) {
+      const { provider, model } = effortPair;
+      // ⚠️ 这里**不能**走 `safeRows`：它会把结果按 `{id,name}` 归一化，而我们要的是
+      // 宿主 `resolveModel` 返回的整个元数据（档位在里面）。所以自己 try/catch，
+      // 同样"取不到 ⇒ 空数组 + 200、响应体不带错误文本、不回显入参"。
+      void (async () => {
+        // 显式命名形状：`sources.efforts` 返回 unknown，直接 `as typeof info` 会被推成 never。
+        type ResolvedInfo = { reasoning?: { efforts?: unknown; defaultEffort?: unknown } } | null;
+        let info: ResolvedInfo = null;
+        try {
+          info = (await deps.sources.efforts(provider, model)) as ResolvedInfo;
+        } catch {
+          deps.logger?.warn?.(`dsh-suggest-ghost: model catalog section "efforts" unavailable `
+            + `(${provider}/${model})`);
+        }
+        const list: unknown[] = Array.isArray(info?.reasoning?.efforts)
+          ? (info!.reasoning!.efforts as unknown[])
+          : [];
+        const efforts = list
+          .map(pickEffortRow)
+          .filter((row): row is CatalogEffortRow => row !== null)
+          .slice(0, CATALOG_MAX_ROWS);
+        const rawDefault = info?.reasoning?.defaultEffort;
+        const defaultEffort = sanitizeModelParam(typeof rawDefault === 'string' ? rawDefault : null);
+        send(res, 200, defaultEffort === null
+          ? { version: 1, efforts }
+          : { version: 1, efforts, defaultEffort });
+      })();
+      return;
     }
     if (wanted !== null) {
       const provider = wanted;

@@ -3068,6 +3068,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     const sources = {
       providers: () => llm?.listProviders?.() ?? [],
       models: (provider: string) => llm?.listModels?.(provider) ?? [],
+      // 档位不在 listModels 的行里（实测行只有 id/name）⇒ 必须走精确 provider/model 的解析。
+      efforts: (provider: string, model: string) =>
+        (llm as unknown as { resolveModel?: (p: string, m: string) => unknown })?.resolveModel?.(provider, model) ?? null,
     };
     try {
       server.register({

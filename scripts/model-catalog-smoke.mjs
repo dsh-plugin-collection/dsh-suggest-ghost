@@ -206,5 +206,68 @@ check('3b 目录模块本身零宿主依赖（纯函数，拿不到会话面）'
     `model-catalog 引入了宿主包 ⇒ 它就可能拿到会话面：\n${src.split('\n').filter(l => /require\(|from /.test(l)).join('\n')}`);
 });
 
+// ── 4) 档位分支（#50）：同样的三层口径 ─────────────────────────────
+await check('4a 档位投影：只放行 id/name/description，投毒字段一个都不吐', async () => {
+  const handler = createModelCatalogHandler({ sources: {
+    providers: () => [], models: () => [],
+    efforts: () => ({
+      id: 'qfmodel', draft: 'SECRET-DRAFT', sessionId: 'session-abc',
+      reasoning: {
+        defaultEffort: 'medium',
+        efforts: [
+          { id: 'low', name: 'Low', draft: 'SECRET', sessionId: 'session-abc' },
+          { id: 'medium', name: 'Med', description: '中' },
+        ],
+      },
+    }),
+  } });
+  const box = await call(handler, 'GET', `${MODEL_OPTIONS_PATH}?efforts=qoder-route|qfmodel`);
+  assert.equal(box.status, 200);
+  const body = JSON.parse(box.body);
+  assert.deepEqual(body.efforts.map((e) => e.id), ['low', 'medium']);
+  assert.equal(body.defaultEffort, 'medium');
+  assert.ok(!/SECRET|session-|draft/.test(box.body), `泄漏了会话派生数据：${box.body}`);
+});
+
+await check('4b 档位：源抛错 ⇒ 空数组 + 200（不 500、响应体不带错误文本）', async () => {
+  const handler = createModelCatalogHandler({ sources: {
+    providers: () => [], models: () => [],
+    efforts: () => { throw new Error('boom SECRET'); },
+  } });
+  const box = await call(handler, 'GET', `${MODEL_OPTIONS_PATH}?efforts=p|m`);
+  assert.equal(box.status, 200);
+  assert.deepEqual(JSON.parse(box.body).efforts, []);
+  assert.ok(!box.body.includes('boom'), `响应体带了错误文本：${box.body}`);
+});
+
+await check('4c 档位：参数不合法 ⇒ 退化成 provider 目录（不 500、不调用源）', async () => {
+  let called = 0;
+  const handler = createModelCatalogHandler({ sources: {
+    providers: () => PROVIDERS, models: () => [],
+    efforts: () => { called += 1; return null; },
+  } });
+  for (const bad of ['../../etc|', '|', 'p|', '|m', 'p|../../etc']) {
+    const box = await call(handler, 'GET', `${MODEL_OPTIONS_PATH}?efforts=${encodeURIComponent(bad)}`);
+    assert.equal(box.status, 200, `${bad} → ${box.status}`);
+    assert.ok(JSON.parse(box.body).providers !== undefined, `${bad} 没退化成 providers：${box.body}`);
+  }
+  assert.equal(called, 0, '参数不合法时仍然调用了档位源');
+});
+
+await check('4d 访问记录：档位分支只碰 efforts，不碰 providers/models', async () => {
+  const touched = new Set();
+  const base = {
+    providers: () => [], models: () => [],
+    efforts: () => ({ reasoning: { efforts: [{ id: 'low', name: 'Low' }] } }),
+  };
+  const sources = new Proxy(base, {
+    get(target, key) { if (typeof key === 'string') touched.add(key); return target[key]; },
+  });
+  const handler = createModelCatalogHandler({ sources });
+  const box = await call(handler, 'GET', `${MODEL_OPTIONS_PATH}?efforts=p|m`);
+  assert.deepEqual([...touched].sort(), ['efforts'], `多碰了：${[...touched].join(',')}`);
+  assert.deepEqual(JSON.parse(box.body).efforts.map((e) => e.id), ['low']);
+});
+
 console.log(`\n${failed === 0 ? '✅' : '❌'} model-catalog-smoke: ${failed === 0 ? '目录路由判据全过（构造性安全口径）' : `${failed} 项失败`}`);
 process.exit(failed === 0 ? 0 : 1);

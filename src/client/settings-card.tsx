@@ -64,7 +64,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
    *  - `models`：**按 provider 懒加载** —— 只有当前选中的 provider 才发一次请求，
    *    不一次拉全部（gitea-dispatch 同款口径）
    */
-  readonly catalog?: 'providers' | 'models';
+  readonly catalog?: 'providers' | 'models' | 'efforts';
   /** select 控件的选项列表（仅 kind='select' 时使用）。 */
   readonly options?: ReadonlyArray<{ readonly value: string; readonly label: Bilingual }>;
 }> = [
@@ -203,10 +203,10 @@ export const GHOST_FIELDS: ReadonlyArray<{
       zh: '「下一条建议」这次调用的推理档位。**默认为空 = 不传 = 沿用该模型自己的默认档位**——档位是按 provider、按 model 声明的，同一份 profile 里 18 个模型有 9 个没声明，给它们带档位会在请求发出之前就被拒。填了当前模型不支持的档位不会让这一轮失败：宿主会退一档（不带档位）重发一次，日志里记 effort_rejected=1。可选值以该模型声明的为准（常见 low / medium / high / xhigh）',
       en: 'Reasoning effort for the next-prompt suggestion call. EMPTY BY DEFAULT = do not send it = keep whatever default this model has. Efforts are declared per provider and per model — 9 of the 18 models in this profile declare none, and sending one to those is rejected before the request goes out. An effort the model rejects does not lose the turn: the host retries once without it and logs effort_rejected=1. Use the ids this model declares (commonly low / medium / high / xhigh)',
     },
-    // 文本框而不是 select：档位 id 是**适配器私有**的（本机 profile 里同一份
-    // models[] 下同时有 low/medium/high/xhigh/max/none/off 六种集合），任何硬编码
-    // 下拉都会把「换个模型/换个 adapter 的合法档位」变成选不出来的值。
-    kind: 'text',
+    // 目录驱动（#50）：选项来自宿主 llm.resolveModel(provider, model).reasoning.efforts
+    // —— 合法集合随模型变，所以不能硬编码；拿不到就退化成文本框（见 renderField）。
+    kind: 'catalog',
+    catalog: 'efforts',
     section: 'llm',
     writable: true,
   },
@@ -775,6 +775,11 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
   const [catalogProviders, setCatalogProviders] = useState<readonly { id: string; name: string }[]>([]);
   const [catalogModels, setCatalogModels] = useState<Record<string, readonly { id: string; name: string }[]>>({});
   const [catalogUnavailable, setCatalogUnavailable] = useState(false);
+  /** 档位目录：键 `${provider}|${model}`（换模型必须重解析，不跨模型复用）。 */
+  const [catalogEfforts, setCatalogEfforts] = useState<Record<string, {
+    efforts: readonly { id: string; name: string; description?: string }[];
+    defaultEffort?: string;
+  }>>({});
   const providerValue = fieldValue('provider');
   useEffect(() => {
     let cancelled = false;
@@ -813,12 +818,55 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
     })();
     return () => { cancelled = true; };
   }, [providerValue, catalogUnavailable]);
-  /** 目录型下拉框的选项：目录 + 当前值（不在目录里时补一条，绝不静默丢）。 */
-  const catalogOptions = (which: 'providers' | 'models'): { value: string; label: string }[] => {
+  const modelValue = fieldValue('model');
+  // 档位：provider 与 model 都选定才拉一次（懒加载）；拿不到 ⇒ 该字段退化成文本框。
+  useEffect(() => {
     const provider = (providerValue ?? '').trim();
-    const rows = which === 'providers' ? catalogProviders : (catalogModels[provider] ?? []);
-    const current = fieldValue(which === 'providers' ? 'provider' : 'model');
-    const out = rows.map(r => ({ value: r.id, label: r.name === r.id ? r.id : `${r.id} — ${r.name}` }));
+    const model = (modelValue ?? '').trim();
+    if (provider === '' || model === '' || catalogUnavailable) return;
+    const key = `${provider}|${model}`;
+    if (catalogEfforts[key] !== undefined) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${CATALOG_PATH}?efforts=${encodeURIComponent(key)}`, { method: 'GET' });
+        if (!res.ok) return;
+        const body = await res.json() as { efforts?: unknown; defaultEffort?: unknown };
+        if (cancelled) return;
+        setCatalogEfforts(prev => ({
+          ...prev,
+          [key]: {
+            efforts: Array.isArray(body.efforts)
+              ? body.efforts as { id: string; name: string; description?: string }[]
+              : [],
+            defaultEffort: typeof body.defaultEffort === 'string' ? body.defaultEffort : undefined,
+          },
+        }));
+      } catch { /* 拉不到：保持文本框 */ }
+    })();
+    return () => { cancelled = true; };
+  }, [providerValue, modelValue, catalogUnavailable, catalogEfforts]);
+  /** 目录型下拉框的选项：目录 + 当前值（不在目录里时补一条，绝不静默丢）。 */
+  const catalogOptions = (
+    which: 'providers' | 'models' | 'efforts',
+    currentValue: string,
+  ): { value: string; label: string }[] => {
+    const provider = (providerValue ?? '').trim();
+    const model = (modelValue ?? '').trim();
+    const effortKey = `${provider}|${model}`;
+    const rows: readonly { id: string; name: string; description?: string }[] = which === 'providers'
+      ? catalogProviders
+      : which === 'models'
+        ? (catalogModels[provider] ?? [])
+        : (catalogEfforts[effortKey]?.efforts ?? []);
+    const current = currentValue;
+    const defaultEffort = which === 'efforts' ? catalogEfforts[effortKey]?.defaultEffort : undefined;
+    const out = rows.map((r) => {
+      const base = r.name === r.id ? r.id : `${r.id} — ${r.name}`;
+      const desc = typeof r.description === 'string' ? ` · ${r.description}` : '';
+      const mark = defaultEffort === r.id ? '（默认）' : '';
+      return { value: r.id, label: `${base}${desc}${mark}` };
+    });;
     if (current !== '' && !out.some(o => o.value === current)) {
       out.unshift({ value: current, label: `${current}（不在当前目录里）` });
     }
@@ -902,7 +950,8 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
         t={t}
         onChange={spec => setField(f.key, spec)}
       />
-    ) : f.kind === 'catalog' && !catalogUnavailable ? (
+    ) : f.kind === 'catalog' && !catalogUnavailable
+      && (f.catalog !== 'efforts' || catalogOptions('efforts', fieldValue(f.key)).length > 0) ? (
       <select
         className={inputClass}
         id={fieldId}
@@ -912,8 +961,10 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
       >
         <option value="">{(f.catalog ?? 'providers') === 'providers'
           ? '（跟随部署默认）'
-          : ((providerValue ?? '').trim() === '' ? '（先选 provider）' : '（跟随部署默认）')}</option>
-        {catalogOptions(f.catalog ?? 'providers').map(opt => (
+          : (f.catalog ?? '') === 'efforts'
+            ? '（不传，沿用模型默认）'
+            : ((providerValue ?? '').trim() === '' ? '（先选 provider）' : '（跟随部署默认）')}</option>
+        {catalogOptions(f.catalog ?? 'providers', fieldValue(f.key)).map(opt => (
           <option key={opt.value} value={opt.value}>{opt.label}</option>
         ))}
       </select>
