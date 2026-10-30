@@ -538,6 +538,8 @@ export interface SuggestGhostCardProps {
    * 返回 null / 抛错 ⇒ 退回 HTTP 目录；HTTP 也拿不到 ⇒ 退回文本框。
    */
   modelCatalog?: () => readonly OfficialModelGroup[] | null;
+  /** 目录规模诊断（宿主返回了多少组/模型/带档位的），退化时直接显示给用户看。 */
+  modelCatalogDiag?: () => string | null;
   /** 官方目录加载/刷新后的通知（订阅后卡片据此重渲染）。 */
   modelCatalogSubscribe?: (listener: () => void) => () => void;
 }
@@ -765,7 +767,7 @@ function HotnessSection({ scope, pushRaw, hotRaw, writable, busy, lang, t, uiLoc
 /** 设置卡片：读取/编辑/保存 suggest-ghost 命名空间。
  * 裸表单 + section 分组布局（llm / history 两个 section + 可折叠的热度管理），
  * 文案跟随宿主界面语言（locale 缺失回退中文），语言切换实时重渲染。 */
-export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCatalogSubscribe }: SuggestGhostCardProps): ReactElement | null {
+export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCatalogDiag, modelCatalogSubscribe }: SuggestGhostCardProps): ReactElement | null {
   // 样式注入（幂等；卸载时随组件清理）。
   useEffect(() => injectStyles(), []);
   const lang = useGhostT(locale);
@@ -1083,11 +1085,14 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
     ) : (
       <input
         className={inputClass}
-        placeholder={f.catalog === 'efforts' && effortFallback === 'stale'
-          ? '（宿主未提供档位目录：重启一次后本栏会变下拉）'
-          : (f.catalog === 'efforts' && effortFallback === 'empty'
-            ? '（该模型未声明推理档位，可手填）'
-            : '')}
+        placeholder={(() => {
+          if (f.catalog !== 'efforts') return '';
+          const diag = typeof modelCatalogDiag === 'function' ? modelCatalogDiag() : null;
+          const tail = diag === null || diag === undefined ? '' : `｜目录 ${diag}`;
+          if (effortFallback === 'stale') return `（宿主未提供档位目录：重启一次后本栏会变下拉）${tail}`;
+          if (effortFallback === 'empty') return `（该模型未声明推理档位，可手填）${tail}`;
+          return '';
+        })()}
         id={fieldId}
         type="text"
         {...(f.kind === 'number' ? { inputMode: 'numeric' as const } : {})}

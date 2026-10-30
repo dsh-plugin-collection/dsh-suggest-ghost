@@ -135,6 +135,8 @@ function mapOfficialGroups(groups: readonly RawModelCatalogGroup[] | undefined):
 
 /** 官方目录缓存；加载完成前为 null。 */
 let officialGroups: OfficialModelGroup[] | null = null;
+/** 目录规模诊断（直接显示在卡片上，省得用户去开 Console）：`groups/models/withReasoning`。 */
+let officialCatalogDiag: string | null = null;
 /** 正在加载中（防重复请求）。 */
 let officialCatalogInflight: Promise<void> | null = null;
 /** 官方目录读取器；未挂上时为 null。 */
@@ -2733,6 +2735,7 @@ function applyBody(ctx: Context): void {
     inject: () => ({
       scope: cardScope, locale, surface: 'settings' as const,
       modelCatalog: () => officialCatalogReader?.() ?? null,
+      modelCatalogDiag: () => officialCatalogDiag,
       modelCatalogSubscribe: (listener: () => void) => { officialCatalogListener = listener; return () => { if (officialCatalogListener === listener) officialCatalogListener = null; }; },
     }),
   }, SuggestGhostCard));
@@ -2762,6 +2765,7 @@ function applyBody(ctx: Context): void {
     officialCatalogLoader = (): void => {
       if (officialCatalogInflight !== null) return;
       if (typeof call !== 'function') {
+        officialCatalogDiag = '该版本未暴露 modelCatalog 接口';
         console.info('[dsh-suggest-ghost] modelCatalog: remote.session.modelCatalog unavailable');
         return;
       }
@@ -2769,14 +2773,15 @@ function applyBody(ctx: Context): void {
         try {
           const response = await call.call(sessionFace);
           if (response?.ok !== true) {
-            console.info(`[dsh-suggest-ghost] modelCatalog: not ok ok=${String(response?.ok)}`);
+            officialCatalogDiag = `宿主未返回目录（ok=${String(response?.ok)}）`;
+            console.info(`[dsh-suggest-ghost] modelCatalog: ${officialCatalogDiag}`);
             return;
           }
           const groups = mapOfficialGroups(response.value?.groups);
           officialGroups = groups;
           const withReasoning = groups.reduce((n, g) => n + g.models.filter((m: OfficialModelGroup['models'][number]) => m.reasoning !== undefined).length, 0);
-          console.info(`[dsh-suggest-ghost] modelCatalog: groups=${groups.length} `
-            + `models=${groups.reduce((n, g) => n + g.models.length, 0)} withReasoning=${withReasoning}`);
+          officialCatalogDiag = `${groups.length} 组 / ${groups.reduce((n, g) => n + g.models.length, 0)} 模型 / 其中 ${withReasoning} 个带档位`;
+          console.info(`[dsh-suggest-ghost] modelCatalog: ${officialCatalogDiag}`);
           officialCatalogListener?.();
         } catch (error: unknown) {
           console.info(`[dsh-suggest-ghost] modelCatalog failed: ${String((error as Error)?.message ?? error).slice(0, 90)}`);
@@ -2792,6 +2797,7 @@ function applyBody(ctx: Context): void {
       officialCatalogLoader = null;
       officialCatalogListener = null;
       officialGroups = null;
+      officialCatalogDiag = null;
     });
   };  if (typeof disposeSection === 'function') {
     ctx.effect(() => () => {
