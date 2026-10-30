@@ -96,8 +96,51 @@ import {
 import { OpsWriteQueue, type OpsWriteKind } from './ops-write-queue.js';
 import { SuggestGhostCard, type OfficialModelGroup } from './settings-card.js';
 
-/** 官方模型目录读取器（`ctx.modelDirectories` 适配）；未挂上时为 null。 */
+/** 宿主 `session.modelCatalog()` 的原始行（只声明要读的字段）。 */
+interface RawModelCatalogModel {
+  readonly id?: unknown; readonly name?: unknown;
+  readonly reasoning?: {
+    readonly efforts?: readonly { id?: unknown; name?: unknown; description?: unknown }[];
+    readonly defaultEffort?: unknown;
+  };
+}
+interface RawModelCatalogGroup { readonly id?: unknown; readonly name?: unknown; readonly models?: readonly RawModelCatalogModel[] }
+
+/** 宿主目录 → 卡片最小形状（白名单：只放行 id/name/description）。 */
+function mapOfficialGroups(groups: readonly RawModelCatalogGroup[] | undefined): OfficialModelGroup[] {
+  const out: OfficialModelGroup[] = [];
+  for (const group of groups ?? []) {
+    if (typeof group.id !== 'string' || group.id === '') continue;
+    const models: { id: string; name: string; reasoning?: NonNullable<OfficialModelGroup['models'][number]['reasoning']> }[] = [];
+    for (const model of group.models ?? []) {
+      if (typeof model.id !== 'string' || model.id === '') continue;
+      const efforts = (model.reasoning?.efforts ?? []).flatMap((effort) => {
+        if (typeof effort.id !== 'string' || effort.id === '') return [];
+        const name = typeof effort.name === 'string' && effort.name !== '' ? effort.name : effort.id;
+        return [typeof effort.description === 'string' && effort.description !== ''
+          ? { id: effort.id, name, description: effort.description }
+          : { id: effort.id, name }];
+      });
+      const defaultEffort = typeof model.reasoning?.defaultEffort === 'string' ? model.reasoning.defaultEffort : undefined;
+      models.push({
+        id: model.id,
+        name: typeof model.name === 'string' && model.name !== '' ? model.name : model.id,
+        ...(model.reasoning === undefined ? {} : { reasoning: { efforts, ...(defaultEffort === undefined ? {} : { defaultEffort }) } }),
+      });
+    }
+    out.push({ id: group.id, name: typeof group.name === 'string' && group.name !== '' ? group.name : group.id, models });
+  }
+  return out;
+}
+
+/** 官方目录缓存；加载完成前为 null。 */
+let officialGroups: OfficialModelGroup[] | null = null;
+/** 正在加载中（防重复请求）。 */
+let officialCatalogInflight: Promise<void> | null = null;
+/** 官方目录读取器；未挂上时为 null。 */
 let officialCatalogReader: (() => readonly OfficialModelGroup[] | null) | null = null;
+/** 触发一次加载（卡片读不到时会催一次）。 */
+let officialCatalogLoader: (() => void) | null = null;
 
 /** 目录加载/刷新后通知卡片重渲染（`store.subscribe` 的转发器）；未挂上时为 null。 */
 let officialCatalogListener: (() => void) | null = null;
@@ -2702,89 +2745,55 @@ function applyBody(ctx: Context): void {
   //
   // ⚠️ 我第一版读的是 `service.value` —— 服务对象上**没有**这个属性，所以永远拿到 null
   //    ⇒ 悄悄退化到自建路由 ⇒ 档位恒空。这是"按猜的接口写代码"的代价。
-  ctx.inject(['modelDirectories'], (catalogScope) => {
-    interface RawEffort { readonly id?: unknown; readonly name?: unknown; readonly description?: unknown }
-    interface RawModel {
-      readonly id?: unknown; readonly name?: unknown;
-      readonly reasoning?: { readonly efforts?: readonly RawEffort[]; readonly defaultEffort?: unknown };
-    }
-    interface RawGroup { readonly id?: unknown; readonly name?: unknown; readonly models?: readonly RawModel[] }
-    const service = (catalogScope as unknown as {
-      modelDirectories?: {
-        readonly catalog?: {
-          readonly store?: {
-            getSnapshot?: () => { readonly value?: { readonly groups?: readonly RawGroup[] } | null } | undefined;
-            subscribe?: (listener: () => void) => (() => void) | undefined;
-          };
-        };
-      };
-    }).modelDirectories;
-    const store = service?.catalog?.store;
-    if (store?.getSnapshot === undefined) {
-      // 三种"不可用"要能分开：服务没挂 / 服务在但没有 catalog / catalog 在但没有 store。
-      console.info('[dsh-suggest-ghost] modelDirectories breakpoint: '
-        + `service=${service === undefined ? 'missing' : 'ok'} `
-        + `catalog=${service?.catalog === undefined ? 'missing' : 'ok'} `
-        + `store=${store === undefined ? 'missing' : 'ok'}`);
-      return;
-    }
-    let lastDiag = '';
-    officialCatalogReader = () => {
-      const snapshot = store.getSnapshot?.();
-      const value = snapshot?.value;
-      // 一行诊断：卡片的目录到底拿到没有、多大、某个具体模型有没有 reasoning。
-      // 只在"形状变化"时打，避免每帧刷屏。
-      const groupsRaw = Array.isArray(value?.groups) ? value.groups : [];
-      const diag = `status=${String((snapshot as { status?: unknown })?.status)} `
-        + `groups=${groupsRaw.length} `
-        + `models=${groupsRaw.reduce((n: number, g: RawGroup) => n + (Array.isArray(g.models) ? g.models.length : 0), 0)} `
-        + `withReasoning=${groupsRaw.reduce((n: number, g: RawGroup) =>
-          n + (Array.isArray(g.models) ? g.models.filter((m) => m?.reasoning !== undefined).length : 0), 0)}`;
-      if (diag !== lastDiag) {
-        lastDiag = diag;
-        console.info(`[dsh-suggest-ghost] catalog snapshot ${diag}`);
-      }
-      if (value === null || value === undefined) return null;
-      const groups: OfficialModelGroup[] = [];
-      for (const group of value.groups ?? []) {
-        if (typeof group.id !== 'string' || group.id === '') continue;
-        const models: { id: string; name: string; reasoning?: NonNullable<OfficialModelGroup['models'][number]['reasoning']> }[] = [];
-        for (const model of group.models ?? []) {
-          if (typeof model.id !== 'string' || model.id === '') continue;
-          const efforts = (model.reasoning?.efforts ?? []).flatMap((effort) => {
-            if (typeof effort.id !== 'string' || effort.id === '') return [];
-            const name = typeof effort.name === 'string' && effort.name !== '' ? effort.name : effort.id;
-            return [typeof effort.description === 'string' && effort.description !== ''
-              ? { id: effort.id, name, description: effort.description }
-              : { id: effort.id, name }];
-          });
-          const defaultEffort = typeof model.reasoning?.defaultEffort === 'string'
-            ? model.reasoning.defaultEffort
-            : undefined;
-          models.push({
-            id: model.id,
-            name: typeof model.name === 'string' && model.name !== '' ? model.name : model.id,
-            ...(model.reasoning === undefined
-              ? {}
-              : { reasoning: { efforts, ...(defaultEffort === undefined ? {} : { defaultEffort }) } }),
-          });
-        }
-        groups.push({
-          id: group.id,
-          name: typeof group.name === 'string' && group.name !== '' ? group.name : group.id,
-          models,
-        });
-      }
-      return groups;
+    // ── 官方同源模型目录：直接调宿主 `remote.session.modelCatalog()` ────────────
+  //
+  // 官方模型选择器用的就是这条（`dsh-client-ui-model-selection` → `ctx.remote.session.modelCatalog()`），
+  // 返回 { ok, value: { groups: [{ id, name, models: [{ id, name, reasoning }] }] } }：
+  // groups[].id = provider 路由 id、models[].id = model id、models[].reasoning = { efforts, defaultEffort }。
+  //
+  // 为什么不注入 `ctx.modelDirectories`：那是另一个插件注册的客户端服务，在本卡的 fibre 里拿不到
+  // （注入回调根本不执行 ⇒ 连一行日志都没有，我为此白等一轮）。直调宿主方法少一层依赖、少一个失败模式。
+  {
+    const remoteRoot = remoteOf(ctx) as unknown as {
+      session?: { modelCatalog?: () => Promise<{ ok?: boolean; value?: { groups?: readonly RawModelCatalogGroup[] } }> };
     };
-    const unsubscribe = store.subscribe?.(() => { officialCatalogListener?.(); });
+    const sessionFace = remoteRoot?.session;
+    const call = sessionFace?.modelCatalog;
+    officialCatalogLoader = (): void => {
+      if (officialCatalogInflight !== null) return;
+      if (typeof call !== 'function') {
+        console.info('[dsh-suggest-ghost] modelCatalog: remote.session.modelCatalog unavailable');
+        return;
+      }
+      officialCatalogInflight = (async () => {
+        try {
+          const response = await call.call(sessionFace);
+          if (response?.ok !== true) {
+            console.info(`[dsh-suggest-ghost] modelCatalog: not ok ok=${String(response?.ok)}`);
+            return;
+          }
+          const groups = mapOfficialGroups(response.value?.groups);
+          officialGroups = groups;
+          const withReasoning = groups.reduce((n, g) => n + g.models.filter((m: OfficialModelGroup['models'][number]) => m.reasoning !== undefined).length, 0);
+          console.info(`[dsh-suggest-ghost] modelCatalog: groups=${groups.length} `
+            + `models=${groups.reduce((n, g) => n + g.models.length, 0)} withReasoning=${withReasoning}`);
+          officialCatalogListener?.();
+        } catch (error: unknown) {
+          console.info(`[dsh-suggest-ghost] modelCatalog failed: ${String((error as Error)?.message ?? error).slice(0, 90)}`);
+        } finally {
+          officialCatalogInflight = null;
+        }
+      })();
+    };
+    officialCatalogReader = () => (officialGroups !== null ? officialGroups : (officialCatalogLoader?.(), null));
+    officialCatalogLoader();
     ctx.effect(() => () => {
       officialCatalogReader = null;
+      officialCatalogLoader = null;
       officialCatalogListener = null;
-      unsubscribe?.();
+      officialGroups = null;
     });
-  });
-  if (typeof disposeSection === 'function') {
+  };  if (typeof disposeSection === 'function') {
     ctx.effect(() => () => {
       disposeSection();
       cardScope.dispose();
