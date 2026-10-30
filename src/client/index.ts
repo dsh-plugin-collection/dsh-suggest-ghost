@@ -2721,12 +2721,29 @@ function applyBody(ctx: Context): void {
     }).modelDirectories;
     const store = service?.catalog?.store;
     if (store?.getSnapshot === undefined) {
-      console.debug('[dsh-suggest-ghost] modelDirectories.catalog unavailable; fallback to HTTP catalog');
+      // 三种"不可用"要能分开：服务没挂 / 服务在但没有 catalog / catalog 在但没有 store。
+      console.info('[dsh-suggest-ghost] modelDirectories breakpoint: '
+        + `service=${service === undefined ? 'missing' : 'ok'} `
+        + `catalog=${service?.catalog === undefined ? 'missing' : 'ok'} `
+        + `store=${store === undefined ? 'missing' : 'ok'}`);
       return;
     }
+    let lastDiag = '';
     officialCatalogReader = () => {
       const snapshot = store.getSnapshot?.();
       const value = snapshot?.value;
+      // 一行诊断：卡片的目录到底拿到没有、多大、某个具体模型有没有 reasoning。
+      // 只在"形状变化"时打，避免每帧刷屏。
+      const groupsRaw = Array.isArray(value?.groups) ? value.groups : [];
+      const diag = `status=${String((snapshot as { status?: unknown })?.status)} `
+        + `groups=${groupsRaw.length} `
+        + `models=${groupsRaw.reduce((n: number, g: RawGroup) => n + (Array.isArray(g.models) ? g.models.length : 0), 0)} `
+        + `withReasoning=${groupsRaw.reduce((n: number, g: RawGroup) =>
+          n + (Array.isArray(g.models) ? g.models.filter((m) => m?.reasoning !== undefined).length : 0), 0)}`;
+      if (diag !== lastDiag) {
+        lastDiag = diag;
+        console.info(`[dsh-suggest-ghost] catalog snapshot ${diag}`);
+      }
       if (value === null || value === undefined) return null;
       const groups: OfficialModelGroup[] = [];
       for (const group of value.groups ?? []) {
