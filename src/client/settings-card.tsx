@@ -518,6 +518,26 @@ export type GhostStrings = { [K in keyof typeof zhStrings]: (typeof zhStrings)[K
 const GHOST_STRINGS: Record<GhostLang, GhostStrings> = { zh: zhStrings, en: enStrings };
 
 /** 卡片组件 props：由槽位注册的 inject 提供。 */
+/**
+ * 官方同源模型目录的一行（来自客户端服务 `ctx.modelDirectories`）。
+ *
+ * 与设置页的模型选择器**同一份数据**：`groups[].id` 就是 provider 路由 id、
+ * `models[].id` 就是 model id（已核实官方代码里 `group.id === selection.provider`），
+ * `models[].reasoning` 带每个模型的 `efforts` / `defaultEffort`。
+ */
+export interface OfficialModelGroup {
+  readonly id: string;
+  readonly name: string;
+  readonly models: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+    readonly reasoning?: {
+      readonly efforts?: ReadonlyArray<{ id: string; name: string; description?: string }>;
+      readonly defaultEffort?: string;
+    };
+  }>;
+}
+
 export interface SuggestGhostCardProps {
   scope: PluginSettingsScope<ScopeSnapshot>;
   /** 宿主 locale 服务 face（可选增强；缺失或旧宿主回退中文）。 */
@@ -525,6 +545,12 @@ export interface SuggestGhostCardProps {
   /** 卡片所在表面：详情页（detail）或设置对话框（settings）。
    *  详情页显示「在设置中显示」开关；设置页不显示。 */
   surface?: 'detail' | 'settings';
+  /**
+   * 官方模型目录读取器（`ctx.modelDirectories` 适配）。**优先于**自建 HTTP 目录：
+   * 与设置页同一份数据、含每模型 efforts、且不需要那条不经鉴权的路由。
+   * 返回 null / 抛错 ⇒ 退回 HTTP 目录；HTTP 也拿不到 ⇒ 退回文本框。
+   */
+  modelCatalog?: () => readonly OfficialModelGroup[] | null;
 }
 
 /** 会话状态快照的值类型。 */
@@ -737,7 +763,7 @@ function HotnessSection({ scope, pushRaw, writable, busy, lang, t, uiLocale }: {
 /** 设置卡片：读取/编辑/保存 suggest-ghost 命名空间。
  * 裸表单 + section 分组布局（llm / history 两个 section + 可折叠的热度管理），
  * 文案跟随宿主界面语言（locale 缺失回退中文），语言切换实时重渲染。 */
-export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardProps): ReactElement | null {
+export function SuggestGhostCard({ scope, locale, surface, modelCatalog }: SuggestGhostCardProps): ReactElement | null {
   // 样式注入（幂等；卸载时随组件清理）。
   useEffect(() => injectStyles(), []);
   const lang = useGhostT(locale);
@@ -813,9 +839,24 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
     defaultEffort?: string;
   }>>({});
   const providerValue = fieldValue('provider');
+  /**
+   * 官方同源目录（`ctx.modelDirectories`）。三个目录查询**都优先用它**：
+   * provider 列表、model 列表、每个模型的 efforts —— 一处数据源，三处复用。
+   * 读不到（老内核 / 服务未挂）时全部退回自建 HTTP 目录。
+   */
+  const officialGroups: readonly OfficialModelGroup[] = (() => {
+    try {
+      const groups = typeof modelCatalog === 'function' ? modelCatalog() : null;
+      return Array.isArray(groups) && groups.length > 0 ? groups : [];
+    } catch { return []; }
+  })();
+  const officialProviders = officialGroups.map((g) => ({ id: g.id, name: g.name }));
+  const officialModelsOf = (provider: string): readonly { id: string; name: string }[] =>
+    (officialGroups.find((g) => g.id === provider)?.models ?? []).map((m) => ({ id: m.id, name: m.name }));
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      if (officialProviders.length > 0) { setCatalogProviders(officialProviders); return; }
       try {
         const res = await fetch(CATALOG_PATH, { method: 'GET' });
         if (!res.ok) { setCatalogUnavailable(true); return; }
@@ -835,6 +876,8 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
   useEffect(() => {
     const provider = (providerValue ?? '').trim();
     if (provider === '' || catalogUnavailable || catalogModels[provider] !== undefined) return;
+    const fromOfficial = officialModelsOf(provider);
+    if (fromOfficial.length > 0) { setCatalogModels(prev => ({ ...prev, [provider]: [...fromOfficial] })); return; }
     let cancelled = false;
     void (async () => {
       try {
@@ -858,6 +901,19 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
     if (provider === '' || model === '' || catalogUnavailable) return;
     const key = `${provider}|${model}`;
     if (catalogEfforts[key] !== undefined) return;
+    const officialReasoning = officialGroups
+      .find((g) => g.id === provider)?.models.find((m) => m.id === model)?.reasoning;
+    if (officialReasoning !== undefined) {
+      const list = Array.isArray(officialReasoning.efforts) ? officialReasoning.efforts : [];
+      setEffortFallback(list.length === 0 ? 'empty' : null);
+      if (list.length > 0) {
+        setCatalogEfforts(prev => ({ ...prev, [key]: {
+          efforts: list.map((e) => ({ id: e.id, name: e.name, description: e.description })),
+          defaultEffort: typeof officialReasoning.defaultEffort === 'string' ? officialReasoning.defaultEffort : undefined,
+        } }));
+      }
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
