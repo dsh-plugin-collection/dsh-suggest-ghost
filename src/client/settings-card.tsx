@@ -800,6 +800,13 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
   const [catalogProviders, setCatalogProviders] = useState<readonly { id: string; name: string }[]>([]);
   const [catalogModels, setCatalogModels] = useState<Record<string, readonly { id: string; name: string }[]>>({});
   const [catalogUnavailable, setCatalogUnavailable] = useState(false);
+  /**
+   * 档位为何退化（只在**已选定 provider+model** 时有意义）：
+   * - `stale`：宿主答的是 providers 载荷 ⇒ 这台宿主还没有档位分支（需重启，#120）
+   * - `empty`：宿主明确说该模型没有可选档位
+   * 两者都保持文本框，但**把原因写在框里**，别让人以为坏了。
+   */
+  const [effortFallback, setEffortFallback] = useState<'stale' | 'empty' | null>(null);
   /** 档位目录：键 `${provider}|${model}`（换模型必须重解析，不跨模型复用）。 */
   const [catalogEfforts, setCatalogEfforts] = useState<Record<string, {
     efforts: readonly { id: string; name: string; description?: string }[];
@@ -856,8 +863,13 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
       try {
         const res = await fetch(`${CATALOG_PATH}?efforts=${encodeURIComponent(key)}`, { method: 'GET' });
         if (!res.ok) return;
-        const body = await res.json() as { efforts?: unknown; defaultEffort?: unknown };
+        const body = await res.json() as { efforts?: unknown; defaultEffort?: unknown; providers?: unknown };
         if (cancelled) return;
+        // 旧宿主会把未知参数当没传 ⇒ 回 providers 载荷。这跟"模型没档位"是两件事，
+        // 混在一起用户只能猜；分开记，下面写进 placeholder。
+        if (Array.isArray(body.providers)) { setEffortFallback('stale'); return; }
+        if (!Array.isArray(body.efforts) || body.efforts.length === 0) { setEffortFallback('empty'); return; }
+        setEffortFallback(null);
         setCatalogEfforts(prev => ({
           ...prev,
           [key]: {
@@ -1007,6 +1019,11 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
     ) : (
       <input
         className={inputClass}
+        placeholder={f.catalog === 'efforts' && effortFallback === 'stale'
+          ? '（宿主未提供档位目录：重启一次后本栏会变下拉）'
+          : (f.catalog === 'efforts' && effortFallback === 'empty'
+            ? '（该模型未声明推理档位，可手填）'
+            : '')}
         id={fieldId}
         type="text"
         {...(f.kind === 'number' ? { inputMode: 'numeric' as const } : {})}
