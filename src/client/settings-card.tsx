@@ -923,7 +923,6 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
       setBusy(false);
     }
   };
-  const discard = (): void => setEdits({});
 
   const renderField = (f: (typeof GHOST_FIELDS)[number]): ReactElement => {
     const invalid = fieldInvalid(f);
@@ -1165,7 +1164,6 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
         <button className="sgc-save" disabled={!writable || busy || !isDirty || anyInvalid} onClick={() => void save()}>
           {busy ? t.saving : t.save}
         </button>
-        <button className="sgc-discard" disabled={!isDirty || busy} onClick={discard}>{t.discard}</button>
         {saved && <span className="sgc-status" role="status">{t.saved}</span>}
       </div>
     </div>

@@ -82,13 +82,11 @@ const COMPONENTS = [
   //   官方次按钮(ghost)：background:--dsw-alias-button-ghost-active-fill + inset 边框
   // 旧实现把 `label-primary`（正文色）当底色、`bg-layer-3` 当文字色 —— 那是反色按钮，官方不这么画；
   // 尺寸也从 13px/5px 对齐到官方 14px/22px 行高。
-  '.sgc-discard,.sgc-save{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:6px 14px;font-size:14px;line-height:22px;display:inline-flex;align-items:center;justify-content:center;min-height:34px}',
-  '.sgc-discard{background:var(--dsw-alias-button-ghost-active-fill);color:var(--dsw-alias-label-primary);box-shadow:inset 0 0 0 1px var(--dsw-alias-button-ghost-active-border)}',
-  '.sgc-discard:hover:not(:disabled){background:var(--dsw-alias-button-floating-hover)}',
+  '.sgc-save{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:6px 14px;font-size:14px;line-height:22px;display:inline-flex;align-items:center;justify-content:center;min-height:34px}',
   '.sgc-save{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font-weight:500}',
   '.sgc-save:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}',
-  '.sgc-save:disabled,.sgc-discard:disabled{opacity:.4;cursor:default}',
-  '.sgc-save:focus-visible,.sgc-discard:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+  '.sgc-save:disabled{opacity:.4;cursor:default}',
+  '.sgc-save:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
 
   /* ==================== 热度管理分组 ==================== */
   /* 折叠式 section 标题按钮：外观对齐 .sgc-section-heading（13px/600/primary），可点击展开 */
