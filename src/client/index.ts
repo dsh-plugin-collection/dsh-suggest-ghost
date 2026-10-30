@@ -98,6 +98,9 @@ import { SuggestGhostCard, type OfficialModelGroup } from './settings-card.js';
 
 /** 官方模型目录读取器（`ctx.modelDirectories` 适配）；未挂上时为 null。 */
 let officialCatalogReader: (() => readonly OfficialModelGroup[] | null) | null = null;
+
+/** 目录加载/刷新后通知卡片重渲染（`store.subscribe` 的转发器）；未挂上时为 null。 */
+let officialCatalogListener: (() => void) | null = null;
 import type { PluginSettingsScope } from './settings-scope.js';
 import type { LocaleFaceLike } from './useGhostT.js';
 
@@ -2684,17 +2687,21 @@ function applyBody(ctx: Context): void {
     // PluginSettingsScope），这里用 remote.settings 适配出同形状的最小面：
     // 0.1.7 已无 settingsScope 服务，而卡片逻辑（读快照 / 订阅变更 / 写字段）
     // 与代次无关，不必改卡片本体。
-    inject: () => ({ scope: cardScope, locale, surface: 'settings' as const, modelCatalog: () => officialCatalogReader?.() ?? null }),
+    inject: () => ({
+      scope: cardScope, locale, surface: 'settings' as const,
+      modelCatalog: () => officialCatalogReader?.() ?? null,
+      modelCatalogSubscribe: (listener: () => void) => { officialCatalogListener = listener; return () => { if (officialCatalogListener === listener) officialCatalogListener = null; }; },
+    }),
   }, SuggestGhostCard));
   // ── 官方同源模型目录（#116 后续）：优先于自建 HTTP 目录 ─────────────────
   //
-  // `ctx.modelDirectories` 是设置页模型选择器用的同一个客户端服务：`groups[].id` 就是
-  // provider 路由 id、`models[].id` 就是 model id、`models[].reasoning` 带 efforts/defaultEffort
-  // （官方代码里 `group.id === selection.provider` 已核实）。三个净收益：
-  //   ① 与官方同一份数据、同一套标签（含"当前模型未提供推理等级"的空态语义）
-  //   ② **不需要**那条不经鉴权的目录路由（#40 第 6 条的风险面直接消失）
-  //   ③ 目录变化不依赖重启宿主（路由注册才依赖，#120）
-  // 服务不存在（老内核/未挂）时读取器保持 null，卡片自动退回 HTTP 目录，再退回文本框。
+  // 数据在 `ctx.modelDirectories` 这个客户端服务里，**真正的读取点是 `catalog.store`**：
+  //   svc.catalog.store.getSnapshot() → { value: { groups: [{id,name,models:[{id,name,reasoning}]}] } | null }
+  // `groups[].id` 就是 provider 路由 id、`models[].id` 就是 model id（官方 `group.id === selection.provider`），
+  // `models[].reasoning` 带 efforts/defaultEffort。服务构造时已 `catalog.load()`，加载完成后 `store` 会变。
+  //
+  // ⚠️ 我第一版读的是 `service.value` —— 服务对象上**没有**这个属性，所以永远拿到 null
+  //    ⇒ 悄悄退化到自建路由 ⇒ 档位恒空。这是"按猜的接口写代码"的代价。
   ctx.inject(['modelDirectories'], (catalogScope) => {
     interface RawEffort { readonly id?: unknown; readonly name?: unknown; readonly description?: unknown }
     interface RawModel {
@@ -2703,16 +2710,23 @@ function applyBody(ctx: Context): void {
     }
     interface RawGroup { readonly id?: unknown; readonly name?: unknown; readonly models?: readonly RawModel[] }
     const service = (catalogScope as unknown as {
-      modelDirectories?: { readonly value?: { readonly groups?: readonly RawGroup[] } | null };
+      modelDirectories?: {
+        readonly catalog?: {
+          readonly store?: {
+            getSnapshot?: () => { readonly value?: { readonly groups?: readonly RawGroup[] } | null } | undefined;
+            subscribe?: (listener: () => void) => (() => void) | undefined;
+          };
+        };
+      };
     }).modelDirectories;
-    if (service === undefined) {
-      // 服务没挂（老内核 / 该表面未提供）⇒ 保持 null，卡片退回自建 HTTP 目录。
-      // 一行 debug 便于现场判断"哪一层退化"，默认阈值下不刷屏。
-      console.debug('[dsh-suggest-ghost] modelDirectories unavailable; fallback to HTTP catalog');
+    const store = service?.catalog?.store;
+    if (store?.getSnapshot === undefined) {
+      console.debug('[dsh-suggest-ghost] modelDirectories.catalog unavailable; fallback to HTTP catalog');
       return;
     }
     officialCatalogReader = () => {
-      const value = service.value;
+      const snapshot = store.getSnapshot?.();
+      const value = snapshot?.value;
       if (value === null || value === undefined) return null;
       const groups: OfficialModelGroup[] = [];
       for (const group of value.groups ?? []) {
@@ -2746,7 +2760,12 @@ function applyBody(ctx: Context): void {
       }
       return groups;
     };
-    ctx.effect(() => () => { officialCatalogReader = null; });
+    const unsubscribe = store.subscribe?.(() => { officialCatalogListener?.(); });
+    ctx.effect(() => () => {
+      officialCatalogReader = null;
+      officialCatalogListener = null;
+      unsubscribe?.();
+    });
   });
   if (typeof disposeSection === 'function') {
     ctx.effect(() => () => {

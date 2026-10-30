@@ -538,6 +538,8 @@ export interface SuggestGhostCardProps {
    * 返回 null / 抛错 ⇒ 退回 HTTP 目录；HTTP 也拿不到 ⇒ 退回文本框。
    */
   modelCatalog?: () => readonly OfficialModelGroup[] | null;
+  /** 官方目录加载/刷新后的通知（订阅后卡片据此重渲染）。 */
+  modelCatalogSubscribe?: (listener: () => void) => () => void;
 }
 
 /** 会话状态快照的值类型。 */
@@ -750,7 +752,7 @@ function HotnessSection({ scope, pushRaw, writable, busy, lang, t, uiLocale }: {
 /** 设置卡片：读取/编辑/保存 suggest-ghost 命名空间。
  * 裸表单 + section 分组布局（llm / history 两个 section + 可折叠的热度管理），
  * 文案跟随宿主界面语言（locale 缺失回退中文），语言切换实时重渲染。 */
-export function SuggestGhostCard({ scope, locale, surface, modelCatalog }: SuggestGhostCardProps): ReactElement | null {
+export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCatalogSubscribe }: SuggestGhostCardProps): ReactElement | null {
   // 样式注入（幂等；卸载时随组件清理）。
   useEffect(() => injectStyles(), []);
   const lang = useGhostT(locale);
@@ -825,6 +827,12 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog }: Sugge
     efforts: readonly { id: string; name: string; description?: string }[];
     defaultEffort?: string;
   }>>({});
+  // 官方目录是**异步加载**的（服务构造时 load，完成后 store 才变）⇒ 订阅它，变化就重渲染。
+  const [, bumpCatalog] = useState(0);
+  useEffect(() => {
+    if (typeof modelCatalogSubscribe !== 'function') return undefined;
+    return modelCatalogSubscribe(() => bumpCatalog((n) => n + 1));
+  }, [modelCatalogSubscribe]);
   const providerValue = fieldValue('provider');
   /**
    * 官方同源目录（`ctx.modelDirectories`）。三个目录查询**都优先用它**：
