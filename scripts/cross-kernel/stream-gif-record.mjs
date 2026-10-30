@@ -21,7 +21,7 @@
  *
  * `frames: [{kind, tPage, chars, text, png}]` —— kind 是 `stream-frame` / `whole-block` /
  * `pre`；每帧的 `tPage` 是页内毫秒。时刻表与"看得出/看不出"的判据写在 stdout 的 JSON 里，
- * 由 `stream-gif-compose.mjs` 消费，不在这里下结论。
+ * 由 `stream-gif-stack.mjs`（`--on/--off` 两跑目录）消费，不在这里下结论。
  *
  * 用法：node scripts/cross-kernel/stream-gif-record.mjs --home ~/xk-gif-0212 --label on \
  *         --rounds 3 --ws ~/xk-gif-ws [--mode wait-ghost]

@@ -355,8 +355,8 @@ hot push coalesced   0     hot push yielded on input   0     ops consumed: compl
 
 ⇒ 本节当时得到的结论是「分母为 0、比例无从谈起」；**§12 的连发编排把它推翻了**：
 按上面更正过的条件造出 1+2 之后，让路在真实宿主里**第一次真的执行了**。两节合读以 §12 为准。
-离线侧 `scripts/hot-yield-smoke.mjs`
-与 `scripts/hot-yield-write-bound-smoke.mjs`（判据③前半句：让路写次数 ≤ 待写变化数）继续钉着性质，
+离线侧 `scripts/hot-yield-smoke.mjs`（**断言 6** 钉住判据③前半句：让路写次数 ≤ 待写变化数；
+**断言 3** 钉后半句：无待写时不写）继续钉着性质，
 但**那不等于真实比例**，两件事在 tracker 上别合并。
 
 ## 12. #63 让路比例：脚本打通了真实宿主，但**量出来的分母是 0**（这是数据，不是失败）

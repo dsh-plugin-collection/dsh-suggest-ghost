@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 ### 新增
 
+- **流式的"中间帧有没有上屏"落成负数结论**（task-47，台账 FINDINGS §19）：把观测换成**两条独立通道**
+  （8ms tick 直接读 `overlay.textContent` + 挂在 `documentElement` 的 MutationObserver），且**在发问之前**就打开
+  —— §18 只挂了一个 observer、还挂在 overlay 自己身上等它出现才装（`moLog` 恒为 1），所以"中间那一格当时是不是这几个字"
+  在 §18 里是**假设**不是观测。实测 11 回合（交付 4 回合 + 同会话复用对照 3 回合 + 旧脚本 4 回合）：
+  - **F（`data-stream-frames` × console 留痕）11/11 逐格全等**（`chars` 相等、`t` 差 ≤5ms）⇒ #113 那条留痕判据继续成立
+  - **F2（DOM 帧 × 观测样本）0/11**：中间帧的 `chars` 在样本里**一次都没出现** —— 新会话的回合里帧窗口内 overlay 处于
+    `absent`（元素还没进文档）；同会话复用的回合里显示的是**上一轮的旧建议**
+  - **G（中间帧 = 终态前缀）不是观测**：观测到的非空文本**恒为终态全文**，中间长度出现 0 次
+    ⇒ §18 那张 GIF 的中间格只能算"产品渲染能力 + 实测 chars 的**重建**"，不是当时的屏幕（`final-prefix` 兜底没被证伪，但也从未被观测到）
+  - 首绘落后终帧 **177–375ms**、而帧间隔只有 **31–333ms** ⇒ 首绘必然晚于最后一帧
+  - `absent`（不在文档里）与 `''`（在文档里但没字）**分开记** ⇒ 这条结论成立的前提；装置同批更新
+    `scripts/cross-kernel/stream-replay-{measure.py,record.mjs,gif.py}`
 - **设置卡的 Provider / Model 改成下拉框**（#116 / PR #119），数据来自宿主 llm 服务的
   `listProviders()` / `listModels(provider)`；模型列表**按 provider 懒加载**（选谁才拉谁）。
   - 宿主侧路由 `GET /api/suggest-ghost/options` → `{version,providers}`；`?models=<p>` → `{version,models}`；
@@ -26,8 +38,6 @@ All notable changes to this project will be documented in this file.
   - **未覆盖（别当绿）**：下拉框在**真浏览器里的交互**（懒加载/当前值保留/退化文本框）只有代码路径与构建验证，
     没有断言；0.1.x 上 `webServer` 是否存在未实测，"拿不到就降级"是设计推断
 
-### 新增
-
 - **流式的逐帧痕迹现在回合结束后仍可从 DOM 读到**（#113 / PR #114）：overlay 上写 `data-stream-frames` =
   `[{frame, final, chars, t}]` —— **四个数字、零正文**（隐私口径与既有留痕一致），上限 64，换会话或换回合清空
   （键是 `sessionId|turn`，只看 turn 会把"切到 turn 号相同的另一个会话"误当成同一回合续写）
@@ -41,8 +51,33 @@ All notable changes to this project will be documented in this file.
     （`(?<!hot )push landed` = 0）；默认关时该属性不存在 ⇒ 由常驻链上的新断言守住（`ghost-frame-cell-e2e` PASS 11 / FAIL 0）
   - 驱动 `scripts/stream-frames-dom-e2e.mjs`（要真模型真回合 ⇒ **不进测试链**，`--streaming on|off`）
 
-### 修复
+- **流式投递（幽灵文字逐帧增长）**（#108 / PR #109）：新增设置项 `streamingDelivery`（**默认 `false`**，volatile）。
+  开启后建议正文经**插件自带的 typert 流**逐帧推给浏览器，**增量帧不落盘、不走 `configEditor.edit`**
+  （#36 的验收硬判据：增量帧的 `push landed` 计数恒为 0）；**终帧仍写一次 `_push`** —— 权威态与冷启动/重连/
+  重启语义都挂在这次写上（#56/#88/#93 那一族），不许"顺手优化"掉
+  - 设计选型是 **(c) 客户端自触发的短流**：`running: true→false` 边沿就是开始信号（客户端本来就订阅了会话快照）
+    ⇒ **零往返信令、零落盘**。任务书里 lead 给的 (a)/(b) 两条都没选：(b) 的"开始信号"没有便宜通道
+    （settings 一发就是整档重写 361–2260ms，反而推后首帧），且**客户端拿不到 turn 号** ⇒ 键只到 `sessionId`，
+    回合号由帧带出做归属校验
+  - ⚠️ **一条反直觉的竞态**（第一版实测 7 轮全 0 提前量才抓到）：宿主在本地 `turn/end` **立刻**开始生成，
+    客户端要等会话快照过一趟网络才看到边沿 ⇒ **开流必然晚于 `beginTurn`**。⇒ 所以"此刻没人听"**不能当放弃条件**；
+    正确形状是「**盖章不当闸门 + 晚到者补发当前前缀 + 宽限期挡白算**」，并有冒烟回归钉住
+  - **中间帧只用于视觉增长**：净化走 `prefixSafeClean()` 那一组（`finalOnly` 判据只在终帧成立）⇒
+    **中途显示的内容允许被终帧丢弃**；**采纳只认终帧**（`accept-guard` 不变）
+  - **实测提前量**（0.2.1-rc.2 沙箱、真 GUI、真模型、12 轮、未挑 prompt）：同轮「首帧→终帧」页内时刻差
+    **中位 152ms / p90 529ms**，分布 `55,68,86,116,135,152,156,231,237,529`；每轮帧数 `[2,2,1,2,3,2,3,3,2,2,5]`
+    ⇒ 多帧轮 10/11（1 轮模型空返回不计、1 轮 `content_deltas=1` ⇒ 流式零增益）。对照 task-30 预测的 91ms：**中位略高、方差大**
+  - **写放大未判定**：`writeMs` p90 766(ON) vs 773(OFF) 持平、中位 352 vs 292、建议格写次数 28 vs 23（各 10 次生成）
+    ⇒ n≈10 不足以归因，**既没证明引入也没排除**
+  - ⚠️ **启用前置（决定用户看不看得见）**：**开发态软链安装下通道必然注册失败** —— 动态
+    `import('@deepseek-ai/dsh-typert-protocol')` 按 **realpath** 解析，而宿主树里插件是软链 ⇒ `ERR_MODULE_NOT_FOUND`；
+    **只有打包安装（实体目录在树内）可用**。⇒ 不满足时**不静默**：warn 一行 + 生成行尾 `streaming=1 ready=0 on=1 subs=0`
+  - 护栏进工具：`scripts/stream-leadtime-measure.mjs` 开头断言 `/proc/<pid>/environ` 的 `DSH_HOME` 等于 `--home`
+    否则**拒绝测量**（防误连 live），测量结束再断言真实 `~/.dsh` 内本次痕迹为 0 ⇒ 越界在同一支脚本里当场暴露
+  - 回归：`scripts/stream-hub-smoke.mjs`（13 条断言，含那条竞态）⇒ `test:smoke` 链长 **46 → 47**；
+    `test:e2e` 11 条不退步；client tsc 7 = 基线（**未加 `jsx`、未扩 `include`**，`settings-card.tsx` 的 30 条盲区仍归 #87）
 
+### 修复
 - **辅助调用不再跟着主会话的模型路由漂**（#116 / PR #118）：补全"完全不触发"的真因是路由漂移 ——
   旧 `routeOf` 在未配置 `provider`/`model` 时**继承该会话最近一次请求的路由** ⇒ 主会话切到一条
   401 的路由后，建议/补全的辅助调用全线哑掉（日志：`llm-commandcode … rejected with 401`、
@@ -84,34 +119,6 @@ All notable changes to this project will be documented in this file.
   - 两处被撤回的错判（写进台账 §14.10，防复用）：**`row-missing` 是驱动缺陷不是装载回归**（新工作区不在
     picker 的"最近用过"里，又漏了"关掉重开再判"）；**"无终帧"是合法行为不是帧序违规**（改草稿即撤流 ⇒
     一条流可以提前收尾，权威态仍来自那一次 `_push`），现在只判"收过终帧的流"，无终帧记 `earlyClose`
-
-### 新增
-
-- **流式投递（幽灵文字逐帧增长）**（#108 / PR #109）：新增设置项 `streamingDelivery`（**默认 `false`**，volatile）。
-  开启后建议正文经**插件自带的 typert 流**逐帧推给浏览器，**增量帧不落盘、不走 `configEditor.edit`**
-  （#36 的验收硬判据：增量帧的 `push landed` 计数恒为 0）；**终帧仍写一次 `_push`** —— 权威态与冷启动/重连/
-  重启语义都挂在这次写上（#56/#88/#93 那一族），不许"顺手优化"掉
-  - 设计选型是 **(c) 客户端自触发的短流**：`running: true→false` 边沿就是开始信号（客户端本来就订阅了会话快照）
-    ⇒ **零往返信令、零落盘**。任务书里 lead 给的 (a)/(b) 两条都没选：(b) 的"开始信号"没有便宜通道
-    （settings 一发就是整档重写 361–2260ms，反而推后首帧），且**客户端拿不到 turn 号** ⇒ 键只到 `sessionId`，
-    回合号由帧带出做归属校验
-  - ⚠️ **一条反直觉的竞态**（第一版实测 7 轮全 0 提前量才抓到）：宿主在本地 `turn/end` **立刻**开始生成，
-    客户端要等会话快照过一趟网络才看到边沿 ⇒ **开流必然晚于 `beginTurn`**。⇒ 所以"此刻没人听"**不能当放弃条件**；
-    正确形状是「**盖章不当闸门 + 晚到者补发当前前缀 + 宽限期挡白算**」，并有冒烟回归钉住
-  - **中间帧只用于视觉增长**：净化走 `prefixSafeClean()` 那一组（`finalOnly` 判据只在终帧成立）⇒
-    **中途显示的内容允许被终帧丢弃**；**采纳只认终帧**（`accept-guard` 不变）
-  - **实测提前量**（0.2.1-rc.2 沙箱、真 GUI、真模型、12 轮、未挑 prompt）：同轮「首帧→终帧」页内时刻差
-    **中位 152ms / p90 529ms**，分布 `55,68,86,116,135,152,156,231,237,529`；每轮帧数 `[2,2,1,2,3,2,3,3,2,2,5]`
-    ⇒ 多帧轮 10/11（1 轮模型空返回不计、1 轮 `content_deltas=1` ⇒ 流式零增益）。对照 task-30 预测的 91ms：**中位略高、方差大**
-  - **写放大未判定**：`writeMs` p90 766(ON) vs 773(OFF) 持平、中位 352 vs 292、建议格写次数 28 vs 23（各 10 次生成）
-    ⇒ n≈10 不足以归因，**既没证明引入也没排除**
-  - ⚠️ **启用前置（决定用户看不看得见）**：**开发态软链安装下通道必然注册失败** —— 动态
-    `import('@deepseek-ai/dsh-typert-protocol')` 按 **realpath** 解析，而宿主树里插件是软链 ⇒ `ERR_MODULE_NOT_FOUND`；
-    **只有打包安装（实体目录在树内）可用**。⇒ 不满足时**不静默**：warn 一行 + 生成行尾 `streaming=1 ready=0 on=1 subs=0`
-  - 护栏进工具：`scripts/stream-leadtime-measure.mjs` 开头断言 `/proc/<pid>/environ` 的 `DSH_HOME` 等于 `--home`
-    否则**拒绝测量**（防误连 live），测量结束再断言真实 `~/.dsh` 内本次痕迹为 0 ⇒ 越界在同一支脚本里当场暴露
-  - 回归：`scripts/stream-hub-smoke.mjs`（13 条断言，含那条竞态）⇒ `test:smoke` 链长 **46 → 47**；
-    `test:e2e` 11 条不退步；client tsc 7 = 基线（**未加 `jsx`、未扩 `include`**，`settings-card.tsx` 的 30 条盲区仍归 #87）
 
 
 ## [0.7.0] - 2026-10-27
