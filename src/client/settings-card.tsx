@@ -65,12 +65,20 @@ export const GHOST_FIELDS: ReadonlyArray<{
    *    不一次拉全部（gitea-dispatch 同款口径）
    */
   readonly catalog?: 'providers' | 'models' | 'efforts';
+  /**
+   * 并排分组（`renderFieldRun` 用）：连续的同类分组合进一个网格容器。
+   *
+   * - `'route'`：provider | model | 档位 三栏（档位合法集由 model 决定 ⇒ 必须同栏）
+   * - `'pair'`：两个短字段并排（数字/下拉）；**带长 hint 的开关不分组**，整行更好读
+   */
+  readonly group?: 'route' | 'pair';
   /** select 控件的选项列表（仅 kind='select' 时使用）。 */
   readonly options?: ReadonlyArray<{ readonly value: string; readonly label: Bilingual }>;
 }> = [
   // —— LLM 下一条建议 ——
   {
     key: 'maxInputBytes',
+    group: 'pair',
     label: { zh: '输入字节上限', en: 'Input byte cap' },
     hint: {
       zh: '最终框架化用户提示的最大 UTF-8 字节数',
@@ -82,6 +90,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'maxOutputTokens',
+    group: 'pair',
     label: { zh: '输出令牌上限', en: 'Output token cap' },
     hint: {
       zh: '建议生成的最大输出 token（推理模型留足预算，如 512）',
@@ -93,6 +102,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'maxSuggestionChars',
+    group: 'pair',
     label: { zh: '建议字符上限', en: 'Suggestion character cap' },
     hint: { zh: '幽灵文本可见字符数上限', en: 'Max visible characters of the ghost text' },
     kind: 'number',
@@ -101,6 +111,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'maxRecentTurns',
+    group: 'pair',
     label: { zh: '参考回合数', en: 'Recent turns referenced' },
     hint: {
       zh: '转录尾部保留的最近完成回合数（默认 3；旧回合由「长会话摘要」保留关键信息）',
@@ -134,6 +145,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'contextSummaryChars',
+    group: 'pair',
     label: { zh: '摘要字符预算', en: 'Summary character budget' },
     hint: {
       zh: '上下文摘要的最大字符数（仅长会话摘要开启时生效）',
@@ -145,6 +157,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'timeoutMs',
+    group: 'pair',
     label: { zh: '超时（毫秒）', en: 'Timeout (ms)' },
     hint: {
       zh: '辅助 LLM 请求端到端截止时间',
@@ -196,25 +209,13 @@ export const GHOST_FIELDS: ReadonlyArray<{
     section: 'llm',
     writable: true,
   },
-  {
-    key: 'suggestionReasoningEffort',
-    label: { zh: '建议推理档位', en: 'Suggestion reasoning effort' },
-    hint: {
-      zh: '「下一条建议」这次调用的推理档位。**默认为空 = 不传 = 沿用该模型自己的默认档位**——档位是按 provider、按 model 声明的，同一份 profile 里 18 个模型有 9 个没声明，给它们带档位会在请求发出之前就被拒。填了当前模型不支持的档位不会让这一轮失败：宿主会退一档（不带档位）重发一次，日志里记 effort_rejected=1。可选值以该模型声明的为准（常见 low / medium / high / xhigh）',
-      en: 'Reasoning effort for the next-prompt suggestion call. EMPTY BY DEFAULT = do not send it = keep whatever default this model has. Efforts are declared per provider and per model — 9 of the 18 models in this profile declare none, and sending one to those is rejected before the request goes out. An effort the model rejects does not lose the turn: the host retries once without it and logs effort_rejected=1. Use the ids this model declares (commonly low / medium / high / xhigh)',
-    },
-    // 目录驱动（#50）：选项来自宿主 llm.resolveModel(provider, model).reasoning.efforts
-    // —— 合法集合随模型变，所以不能硬编码；拿不到就退化成文本框（见 renderField）。
-    kind: 'catalog',
-    catalog: 'efforts',
-    section: 'llm',
-    writable: true,
-  },
+
   // ⚠️ 这两条 hint 原文写的是「留空继承主请求路由」—— 那正是 #47 的故障语义（主会话换到
   // 一条 401 的路由，建议与补全全部跟着漂过去）。留空现在的含义是**跟随部署默认**
   // （GUI 头部选的那条），要旧行为得显式打开下面那个开关。文案跟着语义走，不然界面在骗人。
   {
     key: 'provider',
+    group: 'route',
     label: { zh: 'Provider', en: 'Provider' },
     hint: {
       zh: '显式路由；两个都留空 = 跟随部署默认模型（不跟随主会话当前路由）',
@@ -227,6 +228,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'model',
+    group: 'route',
     label: { zh: 'Model', en: 'Model' },
     hint: {
       zh: '显式路由；只填一个会直接报错（两个必须一起给）。列表按所选 provider 现取（懒加载）',
@@ -234,6 +236,21 @@ export const GHOST_FIELDS: ReadonlyArray<{
     },
     kind: 'catalog',
     catalog: 'models',
+    section: 'llm',
+    writable: true,
+  },
+  {
+    key: 'suggestionReasoningEffort',
+    group: 'route',
+    label: { zh: '建议推理档位', en: 'Suggestion reasoning effort' },
+    hint: {
+      zh: '「下一条建议」这次调用的推理档位。**默认为空 = 不传 = 沿用该模型自己的默认档位**——档位是按 provider、按 model 声明的，同一份 profile 里 18 个模型有 9 个没声明，给它们带档位会在请求发出之前就被拒。填了当前模型不支持的档位不会让这一轮失败：宿主会退一档（不带档位）重发一次，日志里记 effort_rejected=1。可选值以该模型声明的为准（常见 low / medium / high / xhigh）',
+      en: 'Reasoning effort for the next-prompt suggestion call. EMPTY BY DEFAULT = do not send it = keep whatever default this model has. Efforts are declared per provider and per model — 9 of the 18 models in this profile declare none, and sending one to those is rejected before the request goes out. An effort the model rejects does not lose the turn: the host retries once without it and logs effort_rejected=1. Use the ids this model declares (commonly low / medium / high / xhigh)',
+    },
+    // 目录驱动（#50）：选项来自宿主 llm.resolveModel(provider, model).reasoning.efforts
+    // —— 合法集合随模型变，所以不能硬编码；拿不到就退化成文本框（见 renderField）。
+    kind: 'catalog',
+    catalog: 'efforts',
     section: 'llm',
     writable: true,
   },
@@ -277,6 +294,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'historyMaxEntries',
+    group: 'pair',
     label: { zh: '最大历史条目', en: 'Max history entries' },
     hint: {
       zh: '最多参考的历史条目数（0 = 不限）',
@@ -288,6 +306,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'historyMinChars',
+    group: 'pair',
     // label 必须带模式名：卡片里 `historyMinChars` 与 `inlineMinChars` 曾共用
     // 「最少输入字符」，两个 section 各出现一次——用户改了「历史」那个（存成 3），
     // 以为续写阈值也是 3，实际续写仍按默认 4 判定（2026-10-23 现场）。
@@ -325,6 +344,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'inlineDelayMs',
+    group: 'pair',
     label: { zh: '停顿时长', en: 'Pause duration' },
     hint: {
       zh: '停止输入多久后触发续写（毫秒）',
@@ -336,6 +356,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'inlineMinChars',
+    group: 'pair',
     label: { zh: '最少输入字符（停顿续写）', en: 'Min typed characters (pause)' },
     hint: {
       zh: '草稿输入多少字符后才触发停顿续写（与历史补全的阈值各自独立）',
@@ -347,6 +368,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'inlineMaxChars',
+    group: 'pair',
     label: { zh: '续写长度上限', en: 'Completion length cap' },
     hint: {
       zh: '续写可见字符上限（超出按词边界截断）',
@@ -358,12 +380,15 @@ export const GHOST_FIELDS: ReadonlyArray<{
   },
   {
     key: 'completionReasoningEffort',
+    group: 'pair',
     label: { zh: '续写推理档位', en: 'Completion reasoning effort' },
     hint: {
       zh: '停顿续写这次调用的推理档位。**默认为空 = 不传 = 沿用该模型自己的默认档位**。续写在用户停手等待的路径上，比建议更慢不起，所以这里更值得试低档位；填了模型没声明的档位会退一档重发一次，日志记 effort_rejected=1',
       en: 'Reasoning effort for the pause-completion call. EMPTY BY DEFAULT = do not send it = keep this model\'s own default. Completion sits on the path the user is waiting on, so it is the better candidate for a lower effort; an effort the model does not declare triggers one retry without it, logged as effort_rejected=1',
     },
-    kind: 'text',
+    // 目录驱动（#50）：选项来自宿主 resolveModel 的该模型合法档位；拿不到退化文本框
+    kind: 'catalog',
+    catalog: 'efforts',
     section: 'inline',
     writable: true,
   },
@@ -1021,6 +1046,33 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
     );
   };
 
+  /**
+   * 按 `group` 把**连续**字段合进一个网格容器；未分组的字段照旧独自一行。
+   *
+   * 分组是"排版"决策，不是"语义"决策：字段的读写、校验、懒加载全都不受影响。
+   * 规则：短控件（数字/下拉）成对；**带长 hint 的开关不分组**（两栏会把说明挤成窄条）。
+   */
+  const renderFieldRun = (fields: ReadonlyArray<(typeof GHOST_FIELDS)[number]>): ReactElement[] => {
+    const out: ReactElement[] = [];
+    let i = 0;
+    while (i < fields.length) {
+      const head = fields[i]!;
+      if (head.group === undefined) { out.push(renderField(head)); i += 1; continue; }
+      const run = [head];
+      while (i + run.length < fields.length && fields[i + run.length]?.group === head.group) {
+        run.push(fields[i + run.length]!);
+      }
+      out.push(
+        <div key={`sgc-group-${head.group}-${head.key}`}
+          className={head.group === 'route' ? 'sgc-routePair' : 'sgc-pair'}>
+          {run.map((f) => renderField(f))}
+        </div>,
+      );
+      i += run.length;
+    }
+    return out;
+  };
+
   const llmFields = GHOST_FIELDS.filter(f => f.section === 'llm');
   const historyFields = GHOST_FIELDS.filter(f => f.section === 'history');
   const inlineFields = GHOST_FIELDS.filter(f => f.section === 'inline');
@@ -1065,35 +1117,20 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
       )}
       <section className="sgc-section" aria-labelledby="sgc-section-llm">
         <h3 className="sgc-section-heading" id="sgc-section-llm">{t.sectionLlm}</h3>
-        <div className={SECTION_LAYOUT.llm === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{llmFields.map((f) => {
-            if (f.key === 'model' || f.key === 'suggestionReasoningEffort') return null;
-            if (f.key === 'provider') {
-              const modelField = llmFields.find((x) => x.key === 'model');
-              const effortField = llmFields.find((x) => x.key === 'suggestionReasoningEffort');
-              return (
-                <div key="sgc-route-pair" className="sgc-routePair">
-                  {renderField(f)}
-                  {modelField === undefined ? null : renderField(modelField)}
-                  {/* 档位与模型同栏：它的合法集合由 model 决定（宿主 resolveModel 解析），
-                      放在同一行才看得出三者是一个整体（用户明确要求）。 */}
-                  {effortField === undefined ? null : renderField(effortField)}
-                </div>
-              );
-            }
-            return renderField(f);
-          })}</div>
+        <div className={SECTION_LAYOUT.llm === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{renderFieldRun(llmFields)}
+        </div>
       </section>
       <section className="sgc-section" aria-labelledby="sgc-section-history">
         <h3 className="sgc-section-heading" id="sgc-section-history">{t.sectionHistory}</h3>
-        <div className={SECTION_LAYOUT.history === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{historyFields.map(renderField)}</div>
+        <div className={SECTION_LAYOUT.history === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{renderFieldRun(historyFields)}</div>
       </section>
       <section className="sgc-section" aria-labelledby="sgc-section-inline">
         <h3 className="sgc-section-heading" id="sgc-section-inline">{t.sectionInline}</h3>
-        <div className={SECTION_LAYOUT.inline === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{inlineFields.map(renderField)}</div>
+        <div className={SECTION_LAYOUT.inline === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{renderFieldRun(inlineFields)}</div>
       </section>
       <section className="sgc-section" aria-labelledby="sgc-section-language">
         <h3 className="sgc-section-heading" id="sgc-section-language">{t.sectionLanguage}</h3>
-        <div className={SECTION_LAYOUT.language === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{languageFields.map(renderField)}</div>
+        <div className={SECTION_LAYOUT.language === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{renderFieldRun(languageFields)}</div>
       </section>
       <section className="sgc-section" aria-labelledby="sgc-section-hotness">
         <button
