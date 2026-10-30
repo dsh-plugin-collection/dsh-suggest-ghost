@@ -1014,7 +1014,19 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
       )}
       <section className="sgc-section" aria-labelledby="sgc-section-llm">
         <h3 className="sgc-section-heading" id="sgc-section-llm">{t.sectionLlm}</h3>
-        <div className={SECTION_LAYOUT.llm === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{llmFields.map(renderField)}</div>
+        <div className={SECTION_LAYOUT.llm === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{llmFields.map((f) => {
+            if (f.key === 'model') return null;
+            if (f.key === 'provider') {
+              const modelField = llmFields.find((x) => x.key === 'model');
+              return (
+                <div key="sgc-route-pair" className="sgc-routePair">
+                  {renderField(f)}
+                  {modelField === undefined ? null : renderField(modelField)}
+                </div>
+              );
+            }
+            return renderField(f);
+          })}</div>
       </section>
       <section className="sgc-section" aria-labelledby="sgc-section-history">
         <h3 className="sgc-section-heading" id="sgc-section-history">{t.sectionHistory}</h3>

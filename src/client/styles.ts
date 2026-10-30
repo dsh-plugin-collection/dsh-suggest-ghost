@@ -23,6 +23,8 @@ const COMPONENTS = [
 
   /* ==================== 字段 ==================== */
   '.sgc-field{display:flex;flex-direction:column;gap:6px;padding:12px 0}',
+  '.sgc-routePair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}',
+  '@media (max-width:720px){.sgc-routePair{grid-template-columns:minmax(0,1fr)}}',
   '.sgc-fieldHead{display:flex;align-items:center;gap:8px}',
   '.sgc-label-group{display:flex;align-items:center;gap:4px;flex:1;min-width:0}',
   '.sgc-label{min-width:0;color:var(--dsw-alias-label-primary);flex:1;font-size:13px;font-weight:500;line-height:1.5}',
