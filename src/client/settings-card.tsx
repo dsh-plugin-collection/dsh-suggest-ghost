@@ -606,10 +606,12 @@ interface HotPushEntry {
 /** 热度管理分组：列表（固定/删除）、新增、清空。操作经 `_ops` 通道**即时生效**
  * （scope.set 直接写入，不进卡片的暂存/保存流程）；列表数据来自 `_push`
  * 实时推送，host 消费后回推最新状态，本组件随订阅无刷新重渲染。 */
-function HotnessSection({ scope, pushRaw, writable, busy, lang, t, uiLocale }: {
+function HotnessSection({ scope, pushRaw, hotRaw, writable, busy, lang, t, uiLocale }: {
   scope: PluginSettingsScope<Record<string, unknown>>;
   /** 当前 `_push` 字段原始值（由卡片从 scope 快照透传）。 */
   pushRaw: unknown;
+  /** 热度假设：`#36` 起热度住在独立的 `_hot` 格（旧宿主塞在 `_push.hot` 里，作为回退）。 */
+  hotRaw: unknown;
   writable: boolean;
   busy: boolean;
   lang: GhostLang;
@@ -629,15 +631,26 @@ function HotnessSection({ scope, pushRaw, writable, busy, lang, t, uiLocale }: {
   }, [confirmClear]);
 
   const disabled = !writable || busy;
-  let hot: readonly HotPushEntry[] = [];
-  let total = 0;
-  if (typeof pushRaw === 'string' && pushRaw !== '' && pushRaw !== 'null') {
+  /**
+   * 解析一格载荷（`{hot, total}`）。残缺/非字符串一律返回 null。
+   *
+   * ⚠️ 这里曾经只读 `_push`：`#36` 把热度拆到独立 `_hot` 格之后，卡片仍然盯着
+   * `_push.hot` ⇒ **永远读到空**，界面上表现为"共 0 条"，且刷新/重启都救不回来
+   * （宿主明明一直在写 `_hot`）。所以顺序必须是：**先 `_hot`，再 `_push`（旧宿主）**。
+   */
+  const parseHotCell = (raw: unknown): { hot?: HotPushEntry[]; total?: number } | null => {
+    if (typeof raw !== 'string' || raw === '' || raw === 'null') return null;
     try {
-      const parsed = JSON.parse(pushRaw) as { hot?: HotPushEntry[] | null; total?: number };
-      if (Array.isArray(parsed.hot)) hot = parsed.hot;
-      if (typeof parsed.total === 'number') total = parsed.total;
-    } catch { /* 残缺推送：展示空列表，等下一次推送自愈 */ }
-  }
+      return JSON.parse(raw) as { hot?: HotPushEntry[]; total?: number };
+    } catch {
+      return null;
+    }
+  };
+  const hotCell = parseHotCell(hotRaw);
+  const pushCell = parseHotCell(pushRaw);
+  const hotSource = hotCell ?? pushCell;
+  let hot: readonly HotPushEntry[] = Array.isArray(hotSource?.hot) ? hotSource.hot : [];
+  let total = typeof hotSource?.total === 'number' ? hotSource.total : 0;
   if (!Number.isFinite(total) || total < hot.length) total = hot.length;
 
   /** 发送一批管理操作（幂等协议；rev 仅用于 client 侧递增）。 */
@@ -1216,6 +1229,7 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
             <HotnessSection
               scope={scope}
               pushRaw={value._push}
+              hotRaw={value._hot}
               writable={writable}
               busy={busy}
               lang={lang}
