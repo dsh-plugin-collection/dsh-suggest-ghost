@@ -604,7 +604,7 @@ patch 文件只是盖配置**（dev-sandbox 建的沙箱副本同理）。
 **依赖必须能按普通 Node 解析找到**（2026-10-27 实测，别按「宿主反正有」想当然）：把探针
 `node_modules` 摘掉、只用软链挂进 profile 树时，宿主直接抛
 `probe-rs (dsh-probe-rs): failed to import: Error [ERR_MODULE_NOT_FOUND]: Cannot find
-package '@deepseek-ai/dsh-typert-protocol' imported from /home/wujue/tmp/probe-rs/lib/host.js`；
+package '@deepseek-ai/dsh-typert-protocol' imported from ~/tmp/probe-rs/lib/host.js`；
 把探针**实体拷进** `profiles/web/node_modules/` 并在同一 node_modules 里放上
 `@deepseek-ai/dsh-typert-protocol` 之后，同一个包立刻正常挂载。⇒ 结论：
 `@deepseek-ai/dsh-typert-protocol` 要进插件的 `dependencies` 并随 profile 正常安装；
@@ -640,7 +640,7 @@ const done = ctx.inject(['remote.probeRs'], (child) => useIt(child.remote.probeR
 - 一元返回 `{ok, value}` **信封**（`:1829-1836`），不是裸值；流**同步**返回
   `ClientStreamHandle`（`:1843-1850`，`AsyncIterable` + `send`/`end`/`dispose`）。
 
-### 实测到的生命周期语义（沙箱 0.2.1-rc.2，探针在 `/home/wujue/tmp/probe-rs`）
+### 实测到的生命周期语义（沙箱 0.2.1-rc.2，探针在 `~/tmp/probe-rs`）
 
 | 场景 | 客户端现象 | 宿主侧 |
 |---|---|---|
@@ -674,7 +674,7 @@ const done = ctx.inject(['remote.probeRs'], (child) => useIt(child.remote.probeR
   只认 `<root>/packages/**` 里注册的包，且注册要求该包**有 TS 源码**——已发布的
   `dsh-typert-protocol` 不含 `src/`（2026-10-27 实跑两条都失败，见 #36 第四节）。
   SRC 兜底不需要它，代价是宿主侧不校验入参。
-- 探针不进测试链：`/home/wujue/tmp/probe-rs/{src/host.ts,src/client.ts,build.mjs,drive.mjs}`
+- 探针不进测试链：`~/tmp/probe-rs/{src/host.ts,src/client.ts,build.mjs,drive.mjs}`
   是临时件，随沙箱一并清理；要复现就按上面三段写法重建。
 
 ## 上游待确认
