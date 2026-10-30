@@ -74,8 +74,9 @@ const COMPONENTS = [
   '.sgc-readOnly{color:var(--dsw-alias-label-tertiary);margin:12px 0 0;font-size:12px;line-height:1.5}',
 
   /* ==================== 底部操作栏 ==================== */
-  '.sgc-footer{justify-content:flex-end;align-items:center;gap:8px;padding-top:16px;display:flex}',
-  '.sgc-status{flex:1;min-width:0;color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:1.5}',
+  // 官方 SettingsForm 的 footer 是**左对齐**（按钮在内容下方靠左），不是右下角；状态文字用 margin-left:auto 顶到最右。
+  '.sgc-footer{align-items:center;gap:8px;padding-top:16px;display:flex;justify-content:flex-start;flex-wrap:wrap}',
+  '.sgc-status{margin-left:auto;min-width:0;color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:1.5}',
   // 底部操作栏按钮：**照官方 Button 的口径**（此前用错 token ⇒ 与官方观感不一致的根源）
   //   官方主按钮：background:--dsw-alias-button-primary-fill / color:--dsw-alias-label-primary-foreground / font-weight:500
   //   官方次按钮(ghost)：background:--dsw-alias-button-ghost-active-fill + inset 边框

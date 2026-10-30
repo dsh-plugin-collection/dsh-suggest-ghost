@@ -1159,11 +1159,14 @@ export function SuggestGhostCard({ scope, locale, surface }: SuggestGhostCardPro
         )}
       </section>
       <div className="sgc-footer">
-        {saved && <span className="sgc-status" role="status">{t.saved}</span>}
-        <button className="sgc-discard" disabled={!isDirty || busy} onClick={discard}>{t.discard}</button>
+      {/* 底部操作栏：**照官方 SettingsForm 的排布** —— 按钮靠左、状态文字推到最右。
+          官方只有一个「保存」（`onDiscard` 在卸载时自动触发，界面上没有"放弃修改"按钮）；
+          我们保留放弃修改（本卡在详情页里，用户未必会"离开页面"），但排在保存之后、同一条左对齐队里。 */}
         <button className="sgc-save" disabled={!writable || busy || !isDirty || anyInvalid} onClick={() => void save()}>
           {busy ? t.saving : t.save}
         </button>
+        <button className="sgc-discard" disabled={!isDirty || busy} onClick={discard}>{t.discard}</button>
+        {saved && <span className="sgc-status" role="status">{t.saved}</span>}
       </div>
     </div>
   );
