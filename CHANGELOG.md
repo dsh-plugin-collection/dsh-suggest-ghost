@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-10-30
 ### 新增
 
 - **流式的"中间帧有没有上屏"落成负数结论**（task-47，台账 FINDINGS §19）：把观测换成**两条独立通道**
