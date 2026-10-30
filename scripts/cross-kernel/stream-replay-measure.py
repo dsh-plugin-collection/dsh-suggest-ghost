@@ -46,6 +46,30 @@ def ink(path, xlo=0, xhi=None, ywin=None):
     return n, span, (w, h)
 
 
+def ink_cols(path, ywin, xlo=100, xhi=None):
+    """逐列墨迹计数（与 {@link ink} 同一判据：偏离背景众数的像素）。
+
+    ⚠️ 为什么 D 必须用它：**同一行里本来就有宿主 UI**（输入框下边框是一条贯穿
+    整宽的水平线）。直接量"这一行的墨迹跨度"会量到那条线 ⇒ 3 字符与 18 字符都读
+    2740（§19 实测），D 于是恒失败 —— 失败的是判据，不是被测对象。
+    解法：拿**起点格（overlay 置空）**的逐列计数当底，只数"这一格多出来的列"。
+    """
+    im = Image.open(path).convert('RGB')
+    w, h = im.size
+    px = im.load()
+    from collections import Counter
+    bg = Counter(px[x, y] for y in range(0, h, 3) for x in range(0, w, 3)).most_common(1)[0][0]
+    lo = max(0, xlo)
+    hi = w if xhi is None else min(w, xhi)
+    cols = [0] * (hi - lo)
+    for y in range(max(0, ywin[0]), min(h, ywin[1])):
+        for x in range(lo, hi):
+            r, g, b = px[x, y]
+            if abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2]) > 90:
+                cols[x - lo] += 1
+    return cols, lo
+
+
 def main(outdir):
     rec = json.load(open(os.path.join(outdir, 'record.json')))
     # 兼容 replay 记录：cells 字段名不同（shots），起点格 png 以 -blank 结尾
@@ -91,14 +115,20 @@ def main(outdir):
             mr = c.get('measureRect')
             cw = win(mr) if mr else yw
             cnt, span, _ = ink(os.path.join(outdir, c['png']), xlo=100, ywin=cw)
-            f_meas.append({**c, 'ink': cnt, 'span': span})
+            # D 的跨度：逐列相减（帧 − 起点格），只数这一格**新增**的列
+            fcols, xlo = ink_cols(os.path.join(outdir, c['png']), cw)
+            bcols, _ = ink_cols(os.path.join(outdir, blank['png']), cw)
+            diff = [i for i in range(min(len(fcols), len(bcols))) if fcols[i] > bcols[i] + 2]
+            span_new = (max(diff) - min(diff) + 1) if diff else 0
+            f_meas.append({**c, 'ink': cnt, 'span': span, 'span_new': span_new,
+                           'cols_new': len(diff)})
         real_cnt, real_span, _ = ink(os.path.join(outdir, r['pngReal']))
         # C：墨迹单调不减（前缀式增长允许相等，不允许下降超过 2%）
         seq = [m['ink'] for m in f_meas]
         mono = all(seq[i + 1] >= seq[i] * 0.98 for i in range(len(seq) - 1))
         # D：跨度与 chars 同向（末帧跨度必须明显大于首帧，且顺序与 chars 一致）
         ch = [m['chars'] for m in f_meas]
-        sp = [m['span'] for m in f_meas]
+        sp = [m['span_new'] for m in f_meas]
         span_ok = (sp[-1] > sp[0] * 1.12) if ch[-1] > ch[0] else (sp[-1] >= sp[0] * 0.9)
         results.append({
             'round': r['round'], 'verdict': 'ok',
@@ -107,6 +137,8 @@ def main(outdir):
             'C_ink_sequence': seq, 'C_monotonic': mono,
             'C_first_above_floor': (seq[0] > 800 if seq else False),
             'D_span_sequence': sp, 'D_chars_sequence': ch, 'D_span_grows_with_chars': bool(span_ok),
+            'D_span_raw_sequence': [m['span'] for m in f_meas],
+            'D_cols_new_sequence': [m['cols_new'] for m in f_meas],
             'real_ghost_ink': real_cnt, 'real_ghost_span': real_span, 'image_size': size,
         })
     print(json.dumps(results, ensure_ascii=False, indent=1))

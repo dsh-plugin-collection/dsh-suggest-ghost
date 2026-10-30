@@ -8,12 +8,17 @@
   {
    "png": "scripts/cross-kernel/out/replay/r1-01-f1c7.png",
    "durMs": 260,
-   "label": "轮1 增长步 1  t=+0ms  7 字符"
+   "label": "轮1 增长步 1 · 重建（屏幕上未出现）  t=+0ms  7 字符  终态前缀"
   },
   {
-   "png": "scripts/cross-kernel/out/replay/r1-02-f2c11.png",
-   "durMs": 1495,
-   "label": "轮1 终帧（权威）  t=+71ms  11 字符"
+   "png": "scripts/cross-kernel/out/replay/r1-02-f2c16.png",
+   "durMs": 394,
+   "label": "轮1 增长步 2 · 重建（屏幕上未出现）  t=+82ms  16 字符  实测（+312ms 后）"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r1-03-f3c16.png",
+   "durMs": 260,
+   "label": "轮1 终帧（权威）  t=+117ms  16 字符  实测（+277ms 后）"
   },
   {
    "png": "scripts/cross-kernel/out/replay/r2-00-blank.png",
@@ -21,19 +26,14 @@
    "label": "轮2 起点 · 产品 overlay 置空"
   },
   {
-   "png": "scripts/cross-kernel/out/replay/r2-01-f1c5.png",
+   "png": "scripts/cross-kernel/out/replay/r2-01-f1c9.png",
    "durMs": 260,
-   "label": "轮2 增长步 1  t=+0ms  5 字符"
+   "label": "轮2 增长步 1 · 重建（屏幕上未出现）  t=+0ms  9 字符  终态前缀"
   },
   {
-   "png": "scripts/cross-kernel/out/replay/r2-02-f2c9.png",
-   "durMs": 1600,
-   "label": "轮2 增长步 2  t=+76ms  9 字符"
-  },
-  {
-   "png": "scripts/cross-kernel/out/replay/r2-03-f3c9.png",
-   "durMs": 758,
-   "label": "轮2 终帧（权威）  t=+112ms  9 字符"
+   "png": "scripts/cross-kernel/out/replay/r2-02-f2c19.png",
+   "durMs": 360,
+   "label": "轮2 终帧（权威）  t=+75ms  19 字符  实测（+184ms 后）"
   },
   {
    "png": "scripts/cross-kernel/out/replay/r3-00-blank.png",
@@ -41,19 +41,29 @@
    "label": "轮3 起点 · 产品 overlay 置空"
   },
   {
-   "png": "scripts/cross-kernel/out/replay/r3-01-f1c11.png",
+   "png": "scripts/cross-kernel/out/replay/r3-01-f1c9.png",
    "durMs": 260,
-   "label": "轮3 增长步 1  t=+0ms  11 字符"
+   "label": "轮3 增长步 1 · 重建（屏幕上未出现）  t=+0ms  9 字符  终态前缀"
   },
   {
-   "png": "scripts/cross-kernel/out/replay/r3-02-f2c23.png",
-   "durMs": 1389,
-   "label": "轮3 增长步 2  t=+66ms  23 字符"
+   "png": "scripts/cross-kernel/out/replay/r3-02-f2c13.png",
+   "durMs": 399,
+   "label": "轮3 终帧（权威）  t=+83ms  13 字符  实测（+202ms 后）"
   },
   {
-   "png": "scripts/cross-kernel/out/replay/r3-03-f3c23.png",
-   "durMs": 611,
-   "label": "轮3 终帧（权威）  t=+95ms  23 字符"
+   "png": "scripts/cross-kernel/out/replay/r4-00-blank.png",
+   "durMs": 260,
+   "label": "轮4 起点 · 产品 overlay 置空"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r4-01-f1c3.png",
+   "durMs": 260,
+   "label": "轮4 增长步 1 · 重建（屏幕上未出现）  t=+0ms  3 字符  终态前缀"
+  },
+  {
+   "png": "scripts/cross-kernel/out/replay/r4-02-f2c16.png",
+   "durMs": 1600,
+   "label": "轮4 终帧（权威）  t=+333ms  16 字符  实测（+187ms 后）"
   },
   {
    "png": "loop",

@@ -1360,3 +1360,121 @@ E（回读交付的 GIF）：帧数=格数+1 ✓ 最大偏差 9ms ✓ 时长不�
   `moLog` 恒为 1）⇒ 中间帧内容走的是 `final-prefix` 兜底，已在 `record.json` 逐格标 `textSource`。
   要拿到"逐帧真实文本"，需要在 overlay 创建**之前**就挂上观察（或产品侧留正文钩子，那违反零正文）。
 - 0.1.7-rc.2 / 0.1.2-rc.1 未用这条重放路重做。
+
+## 19. 逐样本观测（task-47）：**中间帧没有上屏** —— §18 那张图的中间格是"重建"，不是"当时屏幕"（2026-10-29，基线 `721fcf6`）
+
+问题来自 review：§18 只挂了一个 MutationObserver，而且挂在 overlay 自己身上、等它出现才装
+（`moLog` 恒为 1）。所以"中间那一格当时是不是这几个字"在 §18 里是**假设**，不是观测。
+
+本轮把观测换成两条独立通道，并在**发问之前**就打开，结论是：**帧到了客户端、也留下了可读痕迹，
+但中间态一次都没有被画到屏幕上**。§18 的中间格因此只能算"产品渲染能力 + 实测 chars 的重建"。
+
+### 19.1 观测装置（两条通道，都先于发问）
+
+| 通道 | 做法 | 它能回答 |
+|---|---|---|
+| tick | `setInterval` 8ms 读 `overlay.textContent` + `display`/`data-shown` + `performance.now()` | 那一刻**屏幕上这块 DOM 里是什么字**（不依赖任何事件到达） |
+| mo | `MutationObserver` 挂 `documentElement`（childList/subtree/characterData），回调里只读一次当前状态 | 确有变化，并在两次 tick 之间补点 |
+
+两条通道的样本都带 `src`，按 `text`+`display` 去重（所以"一直是同一个状态"只会留一条，
+这解释了样本数为什么常常只有 2 条）。观测在回合结束、几何测量与回填**之前**停止，
+所以回填写进去的文本不会被记成"观测"。
+
+`absent`（overlay 不在文档里）与 `''`（在文档里但没字）**分开记**，这一点是下面结论成立的前提。
+
+### 19.2 实测：F 全过，F2 一条都不成立
+
+本次交付记录 4 回合（另有一次 3 回合的同会话复用对照、一次 4 回合的旧脚本运行，合计 11 回合）：
+
+| 轮 | DOM 帧 chars | 首绘（相对首帧） | 首绘落后终帧 | 观测到的非空文本 |
+|---|---|---|---|---|
+| 1 | 7 → 16 → 16（终帧） | +394ms | 277ms | 16 = 终态全文 |
+| 2 | 9 → 19（终帧） | +259ms | 184ms | 19 = 终态全文 |
+| 3 | 9 → 13（终帧） | +285ms | 202ms | 13 = 终态全文 |
+| 4 | 3 → 16（终帧） | +520ms | 187ms | 16 = 终态全文 |
+
+- **F（`data-stream-frames` × console 留痕）11/11 全等**：逐格 `chars` 相等、`t` 差 ≤5ms（一次 1ms）。
+  这一列一直成立，本轮没有变化。
+- **F2（DOM 帧 × 观测样本）0/11**：中间帧的 `chars` 在样本里**找不到**对应状态。
+  新会话的回合里，帧窗口内 overlay 处于 `absent`（元素还没进文档）；
+  同会话复用的回合里，帧窗口内它显示的是**上一轮的旧建议**，新文本同样没有出现。
+- **G（"中间帧 = 终态前缀"）**：观测到的非空文本**恒为终态全文**（长度与终态一致），
+  中间长度出现过 0 次。⇒ §18 的 `final-prefix` 兜底没有被推翻成"错"，
+  但它也确实不是观测：它只是"按实测 chars 取终态前缀"这个构造的定义。
+- 首绘落后终帧 **177–375ms**（11 回合区间），而帧间隔只有 **31–333ms** ⇒ 首绘必然晚于最后一帧。
+
+### 19.3 这意味着什么
+
+1. **图的口径必须再收一格。** §18 的每格已标"`textSource=observed|final-prefix`"，但读者仍会以为
+   "中间格 = 当时屏幕上就是这样"。本轮证据说：中间格**在屏幕上没有出现过**。所以
+   `stream-replay-gif.py` 现在把中间格直接标成 `增长步 N · 重建（屏幕上未出现）`，
+   图头口径写"中间格按实测 chars 重建；8ms 采样逐样本观测：中间帧未上屏，首绘落后终帧 177–375ms"。
+   交付物仍是那张 `streaming-0.2.1-rc.2-replay.gif`（`record.json` 里记 `supersedes`）。
+2. **对 #108 的意义（可见收益在这条路上是 0）。** 流式帧的价值一直是"字一个个出来"，
+   而本轮 11 个真实回合里，用户看到的第一次画面已经是终态文本，且比终帧晚 176–375ms。
+   这与 #108 记录的"提前量中位 91ms"不矛盾：那 91ms 是**帧到达 vs 整块到达**的差，
+   本轮说的是**帧到达 vs 上屏**。两者相加的读法是：帧虽然早到，但上屏被推迟到终态之后。
+3. **这不是"§18 的图错了"。** 两张图仍然是产品代码在渲染（回填的是产品 overlay 自身的
+   `textContent`），断言 A–E 全过（见 19.4）。变的是它证明的**命题**：
+   从"产品逐帧长这样"降为"产品渲染这串字符长这样"。
+
+### 19.4 判据自身一处缺陷（D 一直在量输入框边框）
+
+D 断言"文字像素水平跨度与 chars 同向"。本轮 4 个回合里 `raw span` 恒为 **2740**（= 裁切宽 −100），
+对 5 字符与 18 字符完全一样，D 于是恒失败。原因：这一行里**本来就有宿主的输入框下边框**
+（一条贯穿整宽的水平线），"这一行的墨迹跨度"量到的是它。
+
+修法：先算**起点格（overlay 置空）**的逐列墨迹，再算每格的逐列墨迹，**只数这一格多出来的列**
+（`fcols[i] > bcols[i] + 2`），跨度取这些列的外接框。修完 D 通过，数值回到与字符数同向：
+轮1 `336 → 838`、轮2 `448 → 788`、轮3 `157 → 341`、轮4 `112 → 840`
+（raw 仍是 2738–2740，两条都留在 `record.json` 里对照）。
+
+同一类错的第三次形态（前两次在 §17.3、§18.3）：**判据要量被测对象，不能量"这一行里还有什么"**。
+
+### 19.5 断言全表（本次交付）
+
+| 断言 | 结果 | 载体 |
+|---|---|---|
+| A clip 与文字行相交 | 4/4 | `record.json` 的 `clip` 与 `measureRect` |
+| B 置空格墨迹 | 27 像素（阈值 600） | 起点格 PNG，逐像素局部对比度 |
+| C 逐帧墨迹单调不减 | 4/4，且首格 > 800 | 同上 |
+| D 跨度与 chars 同向（逐列相减） | 4/4 | 同上 |
+| E 回读交付的 GIF | PASS（13 格 + 1 循环帧、最大偏差 9ms、时长不全等、合成后起点格为空） | `stream-replay-verify-gif.py` |
+| F DOM × 留痕 | 11/11 全等（chars 与 t） | `record.json` 的 `F.rows` |
+| F2 DOM × 观测 | **0/11**（见 19.2） | `record.json` 的 `F2.rows` |
+| G "中间帧=终态前缀" | 观测到的非空文本恒为终态全文，中间长度 0 次 | `record.json` 的 `G.rows` |
+
+### 19.6 未判定
+
+- **"中间帧为什么不上屏"的成因没有证死。** 三条候选都没排除：
+  (a) 帧时刻客户端 `streamFrameFor(currentId)` 为 null（会话 id 归属/快照时序）；
+  (b) 帧进了 `render()` 但被"内容未变"的 key 判定跳过；
+  (c) 确有 `show()` 但被 60/300/900ms 的错峰补渲染覆盖（源码 `src/client/index.ts` 的
+      `scheduleDeferredRenders`）。
+  已排除的一条：**不只是 attach 竞态** —— 同会话复用两轮时 overlay 已在文档里，
+  中间帧同样没有上屏。
+  要证死需要在产品侧给 `ghostContent()`/`render()` 加一行"本次取到的是哪一帧、早退原因"的留痕，
+  那是产品改动，须单独走 PR（本轮不动 `src/**`）。
+- **8ms 采样的分辨率边界**：短于 ~8ms 的闪现会被合并掉。本轮的帧窗口是 31–154ms，
+  不可能整个窗口都落在盲区里，但"绝对没有过一帧"这句只在 8ms 分辨率上成立。
+- **0.1.7-rc.2 / 0.1.2-rc.1 未用这条重放路重做**（与 §18.5 同）。
+
+### 19.7 复跑
+
+```bash
+export DSH_SUGGEST_GHOST_TRACE=debug
+# 沙箱（0.2.1-rc.2）：见 docs/cross-kernel-shots/README.md 的四步；插件目录要补 node_modules 内链（§18.4）
+node scripts/cross-kernel/stream-replay-record.mjs --home ~/xk-replay-0212 --ws ~/xk-replay-ws --rounds 4
+# 同会话复用对照（隔离"每轮新建会话"的影响）：加 --reuse 1
+python3 scripts/cross-kernel/stream-replay-measure.py scripts/cross-kernel/out/replay      # A–D
+python3 scripts/cross-kernel/stream-replay-gif.py scripts/cross-kernel/out/replay \
+  docs/cross-kernel-shots/streaming-0.2.1-rc.2-replay.gif
+python3 scripts/cross-kernel/stream-replay-verify-gif.py scripts/cross-kernel/out/replay \
+  docs/cross-kernel-shots/streaming-0.2.1-rc.2-replay.gif                                  # E
+```
+
+沙箱形状（本轮补记，不是产品缺陷）：新建的沙箱 home 里 `agent-default-model` 若指向
+`commandcode`，该 provider 的 bundle 在 0.2.1-rc.2 树里解析不到（`prune-bundles` 会把它丢掉），
+表现为**回合根本不产生建议**（`no adapter registered for provider "commandcode"`）或
+**建议恒被过滤**。本轮把沙箱那份 profile 改成同机 `qoder-route/efficient` 后回归正常
+（模型 id 必须在该 provider 的 `models` 里已声明，否则报 `Model is unavailable`）。
