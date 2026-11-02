@@ -294,6 +294,36 @@ function treeStamp(root) {
   return { mtimeMs, entries, launcher };
 }
 
+/**
+ * 这一代的内核**按哪份声明**判准入（`engines.dsh` 单独决定 / 只认 peer / 未判定）。
+ *
+ * 判据取自**被测那一代自己的** app-boot 源码，与 `gate-matrix.mjs:classifyGateSource`
+ * 同一个信号（`function unmetRequirements(` 存在 ⇒ 该代实现了 engines-first 的准入），
+ * **不按版本号字符串猜**：`startsWith('0.2.1')` 那种写法在 0.2.2 线上会把"读 engines.dsh"
+ * 的代次标成 `peer-only`——而 gate-matrix 的对照突变体（`engines.dsh: '>=9.0.0'` 必须被拒）
+ * 才是这件事的真凭据。这里只做**标注**，判定仍由 gate-matrix 那条子进程闸负责（本文件末尾）。
+ *
+ * @param {string} root 被测代次的内核树根。
+ * @returns {{judgedBy: string, readsEnginesDsh: boolean|null, scope: string}}
+ */
+function engineGateSemantics(root) {
+  const indexPath = join(root, 'node_modules', '@deepseek-ai', 'dsh-app-boot', 'lib', 'index.js');
+  let source;
+  try { source = readFileSync(indexPath, 'utf8'); }
+  catch {
+    return {
+      judgedBy: 'unknown', readsEnginesDsh: null,
+      scope: '该树没有 dsh-app-boot/lib/index.js ⇒ 本代是否读 engines.dsh 未判定（gate-matrix 会报 absent/未判定）',
+    };
+  }
+  if (!/\bfunction evaluatePluginCompatibility\b/.test(source)) {
+    return { judgedBy: 'none', readsEnginesDsh: false, scope: '该代 app-boot 不导出 evaluatePluginCompatibility ⇒ 这一代没有准入闸' };
+  }
+  return /function unmetRequirements\s*\(/.test(source)
+    ? { judgedBy: 'engines.dsh', readsEnginesDsh: true, scope: 'engines.dsh 单独决定（engines-first 的 unmetRequirements），peer 被忽略' }
+    : { judgedBy: 'peer-only', readsEnginesDsh: false, scope: '该代内核不读 engines.dsh，只认 dsh-* peerDependencies' };
+}
+
 const sameStamp = (a, b) => !!a && !!b && a.mtimeMs === b.mtimeMs && a.entries === b.entries && a.launcher === b.launcher;
 
 
@@ -393,11 +423,17 @@ async function runOne(version) {
     record.projection = { ...registered, shapes, applyRan, loaderMounted };
 
     // 双判语义标注：这一代的内核到底按哪份声明判准入。
-    // 实测（gate-runner scripts/cross-kernel/out/gate.json）：只有 0.2.1-rc.2 的
-    // evaluatePluginCompatibility 读 engines.dsh；其余 readsEnginesDsh=false。
-    record.semanticsContract = (runtime ?? '').startsWith('0.2.1')
-      ? { judgedBy: 'engines.dsh', readsEnginesDsh: true, scope: 'engines.dsh 单独决定（0.2.1 起）' }
-      : { judgedBy: 'peer-only', readsEnginesDsh: false, scope: '该代内核不读 engines.dsh，只认 dsh-* peerDependencies（≤0.2.0）' };
+    // 实测分水岭（gate-runner scripts/cross-kernel/out/gate.json）：0.2.1-rc.2 起才读
+    // engines.dsh，其余 readsEnginesDsh=false。
+    // ⚠️ 这里原先写的是 `(runtime ?? '').startsWith('0.2.1')` ——那是**字符串前缀猜语义**：
+    // 它把"读 engines.dsh"绑死在 `0.2.1` 这个字面量上，于是 0.2.2-alpha.2 会被标成
+    // `peer-only`，而 0.2.2 的 app-boot 明明走 engines-first（`unmetRequirements` 里
+    // `if (Object.hasOwn(engines, "dsh"))` 先于 peer 分支，实测见 0.2.1-rc.4 树
+    // `dsh-app-boot/lib/index.js:279-297`）。改成与 gate-matrix 同一个源码信号，
+    // 取不到就标 `unknown` 并写进 note —— **不猜**（skill §4：符号/字符串探测只作降级，
+    // 判定权在 gate-matrix 那条带对照突变体的子进程闸）。
+    record.semanticsContract = engineGateSemantics(root);
+    if (record.semanticsContract.judgedBy === 'unknown') record.notes.push(record.semanticsContract.scope);
 
     // 「peer 枚举里没有这一代」**不等于**「声明不支持这一代」，别把它写成缺陷。
     // 本仓 peer 写的是 `^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2`；

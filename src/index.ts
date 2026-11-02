@@ -3024,14 +3024,54 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   //    （`dsh-session-projection/lib/types/index.d.ts:41`）。所以**不需要**分代。
   //
   // 回归：`npm run verify:kernels`（七个代次，0.1.1-rc.2 曾在此为红）。
-  ctx.inject(['sessionProjections'], (projectionCtx) => {
+  //
+  // ── issue #121：`register()` 的返回契约在 0.2.2 线上变了 ──────────────────────
+  // 逐字核对发布产物 `@deepseek-ai/dsh-session-projection/lib/types/index.d.ts`：
+  //  - ≤0.2.1-rc.5：`register(definition): () => void`（同步 disposer）。
+  //  - 0.2.2-alpha.2：`register(definition): Promise<ProjectionHandle<S>>`，并新写硬性时序
+  //    「Callers must await registration before publishing consumers; registration may
+  //    perform asynchronous work.」（`lib/index.js:80-105` 的实现是**一个可调用 thenable**：
+  //    函数体是老 disposer，`then/catch/finally` 转发到新那个 `ready` promise。）
+  // 于是这里 `await` 注册结果，让本条 fiber 在注册落定之前不进入 ready —— cordis 的
+  // `_reload()` 是 `await this._execute(this._runner)`（`@deepseek-ai/cordis/lib/index.js:1348-1355`），
+  // 而 `_execute` 对 thenable 返回值走 `effect.then(safeCollect)`（`:1144`），所以 **async 回调会被内核等**；
+  // 反过来，不 await 就只是把 `ready` 的拒绝丢回内核里那条 `setImmediate` 兜底日志。
+  //
+  // ⚠️ 两个**不能顺手做**的动作，都会在某些代次上炸：
+  //  1. 不要把 `await` 的结果 `return` 出去。cordis 对 async 回调的解析值调用
+  //     `safeCollect`：非函数、非 nullish 的**对象**直接 `TypeError("Invalid effect")`
+  //     （cordis `lib/index.js:1137-1139` 抛、`:1141-1144` 选这条分支）⇒ 本条 fiber 被拆掉、插件掉线。
+  //     老代次那个 disposer 是函数，return 它反倒会被收成效应。两种形状行为相反 ⇒
+  //     统一 return 空，注册的生命周期交给内核自己那条 `ctx.effect`
+  //     （`sessionProjections.register()`，alpha.2 `lib/index.js:127` 的 label 就是它）。
+  //  2. 不要按代次挑分支。两代形状用**同一条 `await`** 都成立：await 一个函数（老代次的
+  //     disposer）会原样返回它、不产生调用，也没有副作用。分代只会多一条走错的岔路。
+  //  两条都在 `scripts/projection-register-contract-smoke.mjs` 里有运行时反证（断言 3 / 4，
+  //  另加断言 1/2/5 把"await 到底买到了什么"钉住），跑的是本仓那份 cordis 的真 fiber。
+  //
+  // 影响面**别夸大**（FINDINGS §20.2）：alpha.2 的 `ctx.effect` 是**同步**把单元写进
+  // `registrations` 的（`lib/index.js:127-151`，之后才有 `await Promise.resolve()`），
+  // 所以 issue 里那句"客户端会短暂读到 undefined"只剩一个 microtask 的缺口；
+  // 这条 await 真正买到的是**注册失败的可见性**（不 await 时它只进内核自己那条
+  // `setImmediate` 兜底日志，`lib/index.js:86-92`）与新契约要求的 fiber 就绪时序。
+  //
+  // 未受影响的两条（同 issue）：alpha.2 删掉的是 `SessionProjectionStateMap`，本插件
+  // 只 declare-merge `SessionProjectionMap`（`src/domain.ts:125`），该表在 alpha.2 的
+  // `./types` 出口仍在；`wire` 新增的 `summary?: boolean` 我们**不写**（理由见该处注释）。
+  ctx.inject(['sessionProjections'], async (projectionCtx) => {
     const registry = (projectionCtx as unknown as {
       sessionProjections?: {
-        register: (definition: Record<string, unknown>) => () => void;
+        /**
+         * 跨代次的最小公共形状：老代次给同步 disposer（函数），0.2.2-alpha.2 给
+         * 「可调用 thenable」——既是函数又是 promise。声明成联合而不是只写
+         * `Promise<unknown>`，是为了让「顺手 await 之外的第二种误用（把它当 disposer
+         * 返回/调用）」在类型上也看得见。
+         */
+        register: (definition: Record<string, unknown>) => (() => void) | Promise<unknown>;
       };
     }).sessionProjections;
     if (registry === undefined) return;
-    registry.register({
+    await registry.register({
       key: PROJECTION_KEY,
       init: initSuggestGhostProjection,
       apply: applySuggestGhostProjection,
@@ -3040,6 +3080,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       wire: {
         viewSchema: suggestGhostSchema,
         view: (state: SuggestGhostProjection) => state,
+        // `summary: false`（alpha.2 新键）**故意不写**：客户端历史前缀补全要在这份
+        // 摘要里读到 `hot`，排除出摘要就是砍掉热路径的数据源。要改必须先量过一次
+        // 会话列表 payload 的体积，而不是照搬「视图很小」的猜测。
       },
     });
   });

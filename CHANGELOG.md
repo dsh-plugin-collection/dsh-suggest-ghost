@@ -3,6 +3,77 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### 变更
+
+- **内核 0.2.2 线适配（#121）：投影注册改成 `await`，并把这个契约用运行时断言钉住**
+  - 事实来源是发布产物逐行核对（`@deepseek-ai/dsh-session-projection`）：`0.2.1-rc.5` 及更早
+    `register(def): () => void`；`0.2.2-alpha.2` 起 `register(def): Promise<ProjectionHandle<S>>`，
+    文档新写「Callers must await registration before publishing consumers; registration may perform
+    asynchronous work.」，而实现返回的是**一个可调用 thenable**（函数体 = 老 disposer，
+    `then/catch/finally` 转发到 `ready`，`lib/index.js:80-105`）——**不是**纯粹的 promise
+  - 改法（`src/index.ts` 投影注册处，仓库内**只此一处**，`grep -rn sessionProjections src/` 可核）：
+    `ctx.inject(['sessionProjections'], async (c) => { await registry.register({…}) })`，
+    结构强转的返回类型改成 `(() => void) | Promise<unknown>`。**不按代次分叉**：
+    `await` 一个函数会原样拿到它、不产生调用（新断言 4 实测 `typeof(awaited)=function`、disposer 调用次数 0）
+  - 新增 `npm run verify:register-shape`（`scripts/cross-kernel/projection-register-shape.mjs`）：直接实例化**被测树里那份真 `SessionProjectionRegistry`**，量"返回值是不是可调用 thenable / `await` **之前** `registrations.has(key)` 是不是已经为真 / `await` 给回的是不是 handle / 注册生命周期是不是内核自己挂 `ctx.effect`"。四代实测（alpha.2 退出 0，0.2.1-rc.2 / 0.2.0-rc.2 / 0.1.7-rc.2 各退出 2=不拿 alpha 预期量它）：**四代都是同步可见** ⇒ issue 那句"会短暂读到 undefined"在任何一代都不是既有行为
+  - 两条"顺手会写错"的路现在有反证（新增 `scripts/projection-register-contract-smoke.mjs`，
+    跑的是**本仓那份 cordis 的真 fiber 生命周期**，不是 mock；`test:smoke` 链 **50 → 51**）：
+    ① 把 `await` 的结果 `return` 出去 ⇒ cordis `safeCollect` 对"非函数且非 nullish 的对象"抛
+    `Invalid effect`、fiber 转 error 态（**插件直接掉线**，断言 3）⇒ 统一 return 空；
+    ② 不 await ⇒ 注册拒绝只以"未处理拒绝"出现、fiber 仍是就绪态（**问题被藏住**，断言 5a/5b）
+  - **下修 issue 第 1 条的影响评估**（别照抄那句"客户端会短暂读到 undefined"）：alpha.2 的单元在进入
+    `await` **之前**就同步进了 `registrations`（`ctx.effect(...)` 体在 `lib/index.js:127-151`，
+    之后才有 `await Promise.resolve()` ⇒ `:152`），所以 map 层面的缺口只有**一个 microtask**；
+    `await` 真正买到的是**拒绝可见性**与 fiber 就绪时序。新断言 2 用 60ms 只是为了把缺口放大到可观测
+  - **`wire.summary: false` 不采纳**（issue 第 3 条）：客户端历史前缀补全要从这份摘要里读到 `hot`，
+    排除出摘要就是砍掉热路径的数据源。要改必须先量过一次会话列表 payload 体积，而不是照搬"视图很小"的猜测
+  - **`peerDependencies` / `engines.dsh` 都不改**（issue 第 4 条按实测改写，见 FINDINGS §20.4）：
+    内核准入按 `includePrerelease: true`（`dsh-app-boot/lib/index.js` 的 `satisfies()`），
+    `^0.2.0-rc.2` **已覆盖** 0.2.2-alpha.2 —— 用 0.2.1-rc.4 树里那份真的
+    `evaluatePluginCompatibility` 跑本仓 manifest，0.2.1-rc.5 / 0.2.2-alpha.1 / 0.2.2-alpha.2 **全判 MET**；
+    不匹配的只是 **npm 安装面**（`includePrerelease: false`），而 `0.2.2` **正式版**在安装面也匹配。
+    为一根 alpha 线永久放宽 peer，等于把"未验证的代次"写进支持声明
+  - **修掉回归脚本一条会误标的判据**：`verify-across-kernels.mjs` 原来用
+    `runtime.startsWith('0.2.1')` 标准入语义 ⇒ 0.2.2-alpha.2 会被标成 `peer-only`，而它实际读
+    `engines.dsh`。改成与 `gate-matrix.mjs` **同一个源码信号**（`function unmetRequirements(` 是否存在），
+    读不到就标 `unknown` 并落进 note —— 不再按字符串前缀猜语义
+  - 跨代次回归 `npm run verify:kernels`（`--no-install --kernel-root ~/dsh-versions`）：
+    **7 代全 GREEN**（0.1.2-rc.1 / 0.1.5-rc.3 / 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2 /
+    **0.2.2-alpha.2 新登**），门禁分面 `[GREEN] 0.2.2-alpha.2`；命令退出 2 只来自
+    0.1.2-rc.1 / 0.1.5-rc.3「该代 app-boot 不导出 evaluator ⇒ 未判定」，属**既有状态**、非本次引入
+  - 对照证据（真宿主，不是推断）：0.2.2-alpha.2 冷启动实例里本插件被**装载并 apply**
+    （`apply called; artifact mtime=2026-10-30T09:05:20.793Z`），而**同一次启动**里
+    `dsh-later@1.10.0` 与两条 `@deepseek-ai/dsh-webhook*@0.2.1-rc.5` 被内核**拒绝装载**
+    ⇒ 那道闸是活的，本插件被放行的原因是 `engines.dsh` 上界 `<0.3.0-0`
+  - **未覆盖（别当绿）**：0.2.2 **正式版**未判定（alpha 不代表 GA，正式版发布后要另登代次重跑）；
+    UI 面（真 GUI"用户看见没看见"）在 0.2.2-alpha.2 上**未判定 —— 卡在模型侧，不在插件**：按 §13.2 完整配方
+    （`--live-nm` 指被测树 + `prune-bundles` + `--deploy` 冷启动）跑三轮，`apply called` ×3、
+    **`Invalid effect` 0**（⇒ §20.3 那条 `await` 在真 alpha.2 宿主上确实没踩 cordis 那个雷）、
+    `hotness restored n=3` 跨重启、`hot push landed` ×17；但 7 次续写全失败
+    （6× `Insufficient Balance` + 1× `no adapter "commandcode"`）⇒ 回合以 `reason.kind='error'` 收场，
+    而建议只在 `turn/end … completed` 时生成（`src/index.ts:2979`）⇒ **建议格一行日志都没有是必然**
+    （`turn/end` 那行属执行者观测、不在保留切片内，切片里可复核的是 `completion failed` ×7 与
+    唯一那次 `push landed rev=1 carriedCompletion=0`＝初始空推），
+    判据①（幽灵文字）与②（真建议 `_push`）**没测到**。物证三张
+    `docs/cross-kernel-shots/0.2.2-alpha.2-UNDET-*.png`（来源与判定都标了，没有 PASS 图就别声称有），
+    复跑配方与**新发现的那一步**（`prune-bundles` 会丢掉第三方 provider，但保留条目仍钉着它 ⇒ 必然 NO_ADAPTER）
+    在同目录 README；`test:e2e` 全链本轮未跑
+  - 类型面 `node scripts/cross-kernel/type-surface.mjs`（FACE A host+client tsc / FACE B 客户端导入可用性，
+    复核物 `out/type.json`）：**7 代全 GREEN**（`red=[] undetermined=[]`）。
+    `0.2.2-alpha.2` host 面 0 错、`novelVsBaseline=[]`；client 面 6 条**逐条都是 baseline（0.2.0-rc.2）就有的种类**
+    （判红条件"出现 baseline 没有的错误种类"，不是"错误数为 0"——别把这两列看反）；另用"整目录换代"口径独立复现一次（`node_modules/@deepseek-ai` 整条软链到
+    0.2.2-alpha.2 那份树：cordis 4.0.6-alpha.1 / cosmokit 1.8.7-alpha.1 / schemastery 3.18.6-alpha.1）
+    ⇒ `tsc -p tsconfig.json --noEmit` 0 错 + `build.mjs` + 两条 client 面 smoke 全过
+    ⇒ issue 第 1/2 条那句"编译当前不 break"是**正面确认**的。
+    ⚠️ 读数纪律（本次真错过一次）：`tsconfig.json` **exclude 了 `src/client`**，手工单跑
+    `tsconfig.client.json` 会报 `TS5097 / --jsx is not set` 一类，**连本仓 baseline 也一样**
+    ——那是调用方式错，不是类型漂移；类型面只认 `type-surface.mjs` 那份 overlay
+  - 记一条**探针自己的坑**（同一个脚本的第一版给出的错答案）：stub 里只 `fn()` 一次就记账，而那三代
+    `register()` 走 `ctx.effect(function* () {…})` —— **生成器调用只得到迭代器、函数体一行没跑**，
+    于是三代全被量成"await 前查不到 key"，恰好"证实"了 issue 那句猜测。照 cordis `_execute()` 的
+    四条分支（函数 / nullish / thenable / `Symbol.iterator`，`lib/index.js:1134-1144`）补上同步 drain
+    之后结论翻转 ⇒ **探针的 stub 少对齐一条分支，量到的就是 stub 自己**（FINDINGS §20.1b）
+
 
 ## [0.8.0] - 2026-10-30
 ### 新增

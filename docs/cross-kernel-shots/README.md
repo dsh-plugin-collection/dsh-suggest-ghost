@@ -157,3 +157,78 @@ python3 scripts/cross-kernel/stream-replay-verify-gif.py scripts/cross-kernel/ou
 沙箱形状（不是产品缺陷）：新建沙箱的 `agent-default-model` 若指向 `commandcode`，
 该 provider 的 bundle 在 0.2.1-rc.2 树里被 `prune-bundles` 丢掉 ⇒ 回合不产生建议或建议恒被过滤。
 改成同机 `qoder-route/efficient`（模型 id 必须在 `models` 里已声明）即可，见 FINDINGS §19.7。
+
+## 0.2.2-alpha.2（2026-10-30，构建 0.8.0，task：Gitea #121 UI 面）——**未判定**
+
+三张图，来源一律 **real-gui**（真内核 `~/dsh-versions/0.2.2-alpha.2` 的 `dsh web` 实例 ·
+真工作区 `~/xk-probe-ws` · 真新建会话 · 真回车），**判据一律未达成**，成因全在模型侧：
+
+| 文件 | 那一轮卡在哪 | 复核物 |
+|---|---|---|
+| `0.2.2-alpha.2-UNDET-env-no-composer-FULLPAGE.png` | lead 的第一轮：沙箱未带 `--live-nm`、未裁 bundles ⇒ 页面没有 composer 区域，**整页**兜底图（不是 composer 裁切） | 该轮 `picker: 没有可用入口`、`composers: []` |
+| `0.2.2-alpha.2-UNDET-empty-composer.png` | 重建沙箱（`--live-nm` + `prune-bundles` + `--deploy` 冷启动）后第一轮：profile 钉的 `provider: commandcode` 的 bundle **不在被测树里**，被 prune 丢弃 ⇒ 回合与续写都打不到模型 | 宿主 `no adapter registered for provider "commandcode"`；会话 `turn/end reason=error code=NO_ADAPTER` |
+| `0.2.2-alpha.2-UNDET-no-model-quota.png` | 把沙箱 profile 的 `agent-default-model` 与 `suggest-ghost` 两条改成被测树自带的 `deepseek-official / deepseek-flash` 后：composer 模型位显示 `DeepSeek-V4.1-Flash High`，**真回合发出去了**，但账号额度 402 ⇒ 没有建议 ⇒ 没有幽灵 | 宿主 `completion failed … Insufficient Balance` ×6；会话 `turn/end … code=QUOTA, status=402` ×3 |
+
+**这三张都不是插件结论**，也不是 `FAIL-插件`：按技能 §1b，模型返回空/失败记在环境上。
+`docs/cross-kernel-shots` 里 0.2.2 这一代**当前没有 PASS 图**，UI 面 = **未判定**。
+
+**为什么"额度不足"会让建议格一行日志都不出**（别误读成"建议通道也报了 402"）：
+两条通道的触发条件不同——
+- **续写格**（`completion`）由**输入**触发 ⇒ 真打到模型 ⇒ 留下 `completion failed … Insufficient Balance` ×6（外加 boot 2 的 `no adapter registered for provider "commandcode"` ×1）；
+- **建议格**（`suggestion`）只在 `turn/end` 且 **`reason.kind === 'completed'`** 时才生成（`src/index.ts:2979`），
+  而这三个回合全部以 `reason.kind === 'error'`（`code=QUOTA, status=402`）收场 ⇒ 建议路径**从未被触发**，
+  所以 `suggestion generated / dropped / failed` **三个计数都是 0**，这是**前置条件没到**，不是"生成了但没显示"。
+⇒ 复跑时要盯的第一行是 `turn/end … kind=completed`，第二行才是 `suggestion generated`。
+
+### 这一代已经判到的（不混进上面）
+
+| 判据 | 结果 | 复核物 |
+|---|---|---|
+| ③ 宿主装配健康 | ✅ | `apply called; artifact mtime=2026-10-30T09:15:39.248Z`（三次启动各一次）；`Invalid effect` **0 命中**；`plugin/lib/index.js` 里 `await registry.register` 在场（跑的是 0.8.0 那份构建） |
+| ⑤ 热表跨重启不回零 | ✅ | 第三次启动 `hotness restored n=3 tableSize=3`；`_hot` `total=3 rev=17`（`volatile-evidence.mjs`，source=`profiles/web/cordis.patch.yml`） |
+| ② 同次 `_push` | ⚪ 未达成（无建议可推） | `_push` `rev=1 final=null frame=null textChars=0 hasSessionId=false` |
+| ④ 设置卡 | ⚪ 只到"插件页出现插件名+描述" | gui-round `settingsCard: {found:true, via:plugins-nav, cardShown:true}`；**未**证到插件自己的表单渲染（§13.4 同一口径） |
+| 流式通道（#109） | ⚪ **仍未判定**（帧没内容可推），但**协议包在 0.2.2 上运行时 import 得动** | 见下面「typert 那条 A/B」 |
+
+**typert 那条 A/B**（同一份产物、同一棵 0.2.2 树，唯一变量 = prune-bundles 补的 `<home>/node_modules` → 被测树软链）：
+
+| 启动 | `<home>/node_modules` | 宿主日志里出现的那一行 |
+|---|---|---|
+| boot 1（建沙箱、未裁 bundles） | 无 | `typert protocol import failed (ERR_MODULE_NOT_FOUND)`（日志第 16 行，**全日志仅此一次**） |
+| boot 2 / boot 3（补软链之后） | 有（指向**树外**的 `~/dsh-versions/0.2.2-alpha.2/node_modules`） | `stream channel registered service=ghostStream`（第 72 / 118 行） |
+
+这一行是**代码门禁**过的判据，不是文案巧合：`src/index.ts:486-493` 里它只在
+`registerGhostStreamService(...)` **返回 true** 时打印，而那个函数只有在
+`await import('@deepseek-ai/dsh-typert-protocol')` **成功**之后才走到 `return true`
+（`src/stream-service.ts:56-67` 失败即 throw ⇒ 走 `stream-register-failed` 那条）。
+client 侧另有 `stream namespace bound` 与 `stream open/closed session=session-255c` 留痕。
+
+⇒ 观测结论：**「软链指向树外 ⇒ 必然 ERR_MODULE_NOT_FOUND」这条约束在本形状上不成立**
+（`src/stream-service.ts:6` 那句话与 `prune-bundles.mjs` 头注释的"逐包软链"警告，
+至少对 `<home>/node_modules` 这一条是过强的）。**未做**的反而是另一件事：
+`streamingDelivery: true` 下的**逐帧提前量**——额度 402 让建议本身没产出，
+所以 #109 的流式效果在 0.2.2-alpha.2 上仍是**未判定**，别把上面这行读成"已验证"。
+
+### 复跑（额度恢复后）
+
+```bash
+# 1) 建沙箱：依赖必须来自被测树（§13.2 第 1 步）
+DSH_SUGGEST_GHOST_TRACE=debug node scripts/dev-sandbox.mjs --home ~/dsh-sbx-xk-0222 \
+  --bin ~/dsh-versions/0.2.2-alpha.2/node_modules/.bin/dsh \
+  --live-nm ~/dsh-versions/0.2.2-alpha.2/node_modules
+# 2) 裁 bundles + 补 <home>/node_modules → 被测树
+node scripts/cross-kernel/prune-bundles.mjs --home ~/dsh-sbx-xk-0222 --tree ~/dsh-versions/0.2.2-alpha.2
+# 3) ⚠️ 本轮新发现的一步：prune 会把 commandcode 这类**第三方 provider** 丢掉，
+#    但保留下来的 agent-default-model / suggest-ghost 条目还钉着它 ⇒ 必然 NO_ADAPTER。
+#    把这两条的 provider/model 改成**被测树自带**的（deepseek-official/deepseek-flash，
+#    或同机 qoder-route/*；见本文件末尾那条"沙箱形状"注记与 FINDINGS §19.7）。
+# 4) 冷启动 + 跑轮（至少 cold1/cold2 两次）
+DSH_SUGGEST_GHOST_TRACE=debug node scripts/dev-sandbox.mjs --home ~/dsh-sbx-xk-0222 --deploy . \
+  --bin ~/dsh-versions/0.2.2-alpha.2/node_modules/.bin/dsh --live-nm ~/dsh-versions/0.2.2-alpha.2/node_modules
+node scripts/cross-kernel/gui-round.mjs --home ~/dsh-sbx-xk-0222 --gen 0.2.2-alpha.2 \
+  --ws ~/xk-probe-ws --label cold1 --shot docs/cross-kernel-shots/0.2.2-alpha.2-PASS-0.8.0-cold1.png
+node scripts/cross-kernel/volatile-evidence.mjs --home ~/dsh-sbx-xk-0222 --gen 0.2.2-alpha.2
+```
+
+判据口径不变：`#dsh-suggest-ghost-overlay` 要 `data-shown=1` **且** `display!=none` **且**文本非空；
+截图裁 `[data-input-scroll]` 外扩 20~30px。宿主日志切片存在 `/tmp/xk-0222-gui-round.log`（本轮三次启动全量）。
