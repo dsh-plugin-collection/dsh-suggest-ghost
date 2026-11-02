@@ -106,17 +106,37 @@ You can also override by id in cordis.patch.yml (as initial values for the above
 
 ## Compatibility
 
-Verified on five kernel generations (`0.1.5`, `0.1.7` and `0.2.0` re-measured 2026-09-29; the rest 2026-09-07):
+**Current status (2026-10-30)**: **six generations are supported** — `0.1.2-rc.1 / 0.1.5-rc.3 /
+0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2`. `0.2.2-alpha.2` is registered in the generation
+table and passes the assembly / admission / type / projection faces, but it is a **prerelease line and
+not a promise about `0.2.2` proper**. `0.1.1-rc.2` was **dropped**: its front end has no
+`remote.settings` service, and cordis parks a whole fiber when a declared inject cannot be resolved —
+the hard-constraint evidence and the control experiment live in `scripts/cross-kernel/FINDINGS.md`.
+Everything below that mentions `0.1.1-rc.2` is historical.
 
-| DSH kernel | peer gate | host entry link | runtime symbols | isolated profile | settings page |
-|---|---|---|---|---|---|
-| `0.1.1-rc.2` | — | ✅ | ✅ 8/8 | ✅ | ✅ |
-| `0.1.2-rc.1` | — | ✅ | ✅ 8/8 | ✅ | ✅ |
-| `0.1.5-rc.3` | — | ✅ | ✅ 10/10 | ✅ | ✅ |
-| `0.1.7-rc.2` | — | ✅ | ✅ 10/10 | ✅ | ✅ |
-| `0.2.0-rc.2` | ✅ | ✅ | ✅ 10/10 | ✅ | ✅ |
+| DSH kernel | admission gate | assembly + projection | type face | UI face (real GUI screenshot) |
+|---|---|---|---|---|
+| `0.1.2-rc.1` | ⚪ no evaluator in this generation ⇒ **undetermined** | ✅ | ✅ | ✅ FINDINGS §13 |
+| `0.1.5-rc.3` | ⚪ same ⇒ **undetermined** | ✅ | ✅ | ✅ FINDINGS §13 |
+| `0.1.7-rc.1` | ✅ peers only | ✅ | ✅ | ✅ FINDINGS §13 |
+| `0.1.7-rc.2` | ✅ peers only | ✅ | ✅ | ✅ FINDINGS §8 / §12 |
+| `0.2.0-rc.2` | ✅ peers only | ✅ | ✅ | ✅ FINDINGS §8 |
+| `0.2.1-rc.2` | ✅ `engines.dsh` decides alone | ✅ | ✅ | ✅ FINDINGS §8 / §12 |
+| `0.2.2-alpha.2` | ✅ `engines.dsh` decides alone | ✅ | ✅ | ⏳ **undetermined** (FINDINGS §20.6 — not green) |
+
+Three reading rules: **undetermined ≠ green** (the first two generations have no gate at all, so an
+assembly GREEN does not prove admission was verified); an enumerated peer list ≠ the kernel's matching
+rule (see the two-calibre note below); and the UI face is the only one that answers "did the user
+actually see it" — it is also the one the other four faces most easily hide.
 
 ### Peer enumeration, and the hard gate that starts at 0.2.0
+
+> ⚠️ **Two different calibres** (measured 2026-10-30, FINDINGS §20.4): the **kernel admission gate**
+> uses `includePrerelease: true`, so `^0.2.0-rc.2` **covers** `0.2.1-rc.5`, `0.2.2-alpha.2` and `0.2.2`;
+> **npm's own peer resolution** does not, so the same range is false for `0.2.2-alpha.x`. Adding an
+> enumeration entry is an **install-side** concern, not an admission one — which is why this repo did
+> **not** widen its peer ranges for an alpha line (that would write an unverified generation into the
+> support claim). When `0.2.2` ships, both calibres cover it automatically.
 
 Peer deps are written as an **explicit generation list** (`^0.1.1-rc.2 || ^0.1.2-rc.1 || … || ^0.2.0-rc.2`) rather than `>=0.1.1-rc.2`: node-semver excludes prereleases from every range unless a comparator carries the same `[major.minor.patch]` tuple, so `^0.1.1-rc.2` is false for `0.1.2-rc.1`, and so is `*` — there is no range form that spans generations. **Every time upstream ships a new rc generation, add another entry here.**
 

@@ -189,6 +189,29 @@ export const KERNEL_GENERATIONS = [
       '分水岭：0.2.1 起 engines.dsh **单独决定**准入（老内核不读它）。' +
       '注意本仓 engines.dsh 的上界 `>=0.2.0-rc.2 <0.3.0-0` 覆盖本代，peer 枚举也含本代。',
   },
+  {
+    // issue #121（内核 0.2.2 适配）登记。登这一代**不是**宣称"支持 0.2.2"，而是让
+    // `register()` 的返回契约变化（同步 disposer → 可调用 thenable / `Promise<ProjectionHandle>`）
+    // 在真内核上显形，而不是停在读 d.ts 那一层。
+    id: '0.2.2-alpha.2',
+    peerRange: '^0.2.0-rc.2',
+    bootModel: 'app-boot',
+    hasAppBoot: true,
+    hasDshBase: true,
+    observedEntries: 331,
+    notes:
+      '树为 npm 扁平布局且**自洽**：`@deepseek-ai` 共 331 项，dsh / dsh-app-boot / dsh-base / ' +
+      'dsh-session / dsh-session-projection 等 11 个被测包**全部 0.2.2-alpha.2**' +
+      '（2026-10-30 现场安装并逐包核对版本，非软链混版树）。' +
+      '`peerRange` 写 `^0.2.0-rc.2` 不是笔误：内核准入按 `includePrerelease: true` 匹配' +
+      '（`dsh-app-boot/lib/index.js` 的 `satisfies()`），该范围**覆盖**本代——用 0.2.1-rc.4 树里' +
+      '那份真的 `evaluatePluginCompatibility` 跑本仓 manifest，0.2.1-rc.5 / 0.2.2-alpha.1 / ' +
+      '0.2.2-alpha.2 全判 MET。' +
+      '⚠️ 但**安装面**（npm/pnpm 自己解 peer，`includePrerelease: false`）不匹配：' +
+      '`^0.2.0-rc.2` 对 0.2.2-alpha.2 返回 false。这是"装不进 workspace"级的约束，' +
+      '**不是**"内核拒绝装载"级的约束，两者不可混（issue #121 第 4 条只说了前一半）。' +
+      '本代是 alpha：**不构成对 0.2.2 正式版的承诺**，正式版发布后要另登一条重跑才有结论。',
+  },
 ];
 
 /** 只要 id 的纯字符串数组（顺序与 KERNEL_GENERATIONS 一致，供 --versions 校验与遍历用）。 */
