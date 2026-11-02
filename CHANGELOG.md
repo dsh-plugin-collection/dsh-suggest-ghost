@@ -3,6 +3,33 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### 清理（合并 #121 之后的一轮，纯文档与注释，功能字节未变）
+
+- **README 那条 peer 例子是过期的**：正文写的是 `^0.1.1-rc.2 || …`，而 `package.json` 里 6 个
+  `@deepseek-ai/dsh-*` peer 今天实际是 `^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2`。
+  改成真串，并把**两套口径**分开写清（逐条实测，非推断）：安装面（npm 解 peer，无 `includePrerelease`）
+  下 `^0.1.2-rc.1` 对 `0.1.5-rc.1`、`*` 对 `0.1.2-rc.1` 全是 false；准入面（内核带 `includePrerelease: true`）
+  下 `^0.1.2-rc.1` **覆盖 0.1.x 全部**、`^0.2.0-rc.2` **覆盖 `>=0.2.0-rc.2 <0.3.0-0` 全部**。
+  ⇒ "每发布一根新 rc 就补一个枚举项"由此降级为**只对安装面成立**；原来那句"正式做法仍是补枚举项"
+  在准入面是错的，正解是代次表登记 + 重跑。中英两份同步改。
+- **FINDINGS 三处过期读数**：顶部被测版本 `0.7.0` → `0.8.0`（并注明 §8–§19 是 0.7.0 的段）；
+  "当前支持 6 代"里 `0.1.5-rc.1` → `0.1.5-rc.**3**`（rc.1 那棵树 2026-10-26 已不存在，§9 记着）；
+  §1 那句"7 个代次里只有 1 个读 `engines.dsh` / 6/7 上不可执行"补今天的分布
+  （**读 engines.dsh 2 个 / 仅 peer 3 个 / 根本没有闸 2 个**，逐代与 `gate-matrix` 一致）。
+  顺手修一处我自己造成的**排版破损**：§1 的更正块引原来插在句子中间，把"在 0.1.1/0.1.2/0.1.5 上
+  连 evaluator 都没有"截断了 —— 现在段落完整、更正另起块引。
+- **`generations.mjs`**：`bootModel` 文档里 `- app-boot：` 那条**重复了两遍**（逐字相同），删一条；
+  `app-boot-mismatched` 加注"表里当前没有条目用它"（rc.1 那棵混版树已被重装成自洽 rc.3），
+  免得后来人照着找一个不存在的形状。
+- **注释里不再写死代次条数**：`src/index.ts` 的"回归：verify:kernels（七个代次…）"与
+  `verify-across-kernels.mjs` 用法行的"全部 7 代"都改成指向代次表本身（条目数会变，注释不该跟着漂）。
+- 仓库卫生：删掉已合并的 `fix/issue-121-projection-register-await`（origin + 本地）；
+  清 `scripts/cross-kernel/.work/`（type-surface 的逐代 overlay，**334 MB**，忽略目录但占盘）；
+  删空的 `wt/`。**`github` 镜像上 `fix/issue-25-reportwrite-crash` 与 `perf/p1b-cache-key` 两条
+  早已并入 main 的分支没动** —— 按本仓规矩不碰镜像，要清请明说。
+- **功能字节未变**（可复核）：`git diff` 里 `src/index.ts` 与 `lib/index.js` 的增删行
+  **全部是注释行**（剥掉 `//` 与 `*` 开头的行后 diff 为空）⇒ 上一轮的 `verify:kernels` 7/7 GREEN
+  仍然是本轮的验收证据，不必重跑。
 ### 变更
 
 - **内核 0.2.2 线适配（#121）：投影注册改成 `await`，并把这个契约用运行时断言钉住**

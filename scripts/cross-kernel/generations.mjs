@@ -69,14 +69,14 @@
  *
  * - `app-boot`：树顶层有 `@deepseek-ai/dsh-app-boot`，可与 dsh-later 脚本一样
  *   直接 `import(<root>/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js)`。
- * - `app-boot`：树顶层有 `@deepseek-ai/dsh-app-boot`，可与 dsh-later 脚本一样
- *   直接 `import(<root>/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js)`。
  * - `app-boot-mismatched`：顶层**有** `dsh-app-boot`（可 import，形状没问题），
- *   但它解析到的版本与被测代次**不同版**。目前只有 `0.1.5-rc.1` 是这种：
+ *   但它解析到的版本与被测代次**不同版**。历史上只有 `0.1.5-rc.1` 是这种：
  *   树是 pnpm 布局，`node_modules/@deepseek-ai/dsh-app-boot` 是指向
  *   `.pnpm/@deepseek-ai+dsh-app-boot@0.1.5-rc.3_.../node_modules/@deepseek-ai/dsh-app-boot`
  *   的**软链**，内容为 **0.1.5-rc.3**，而同树 `dsh` 自己是 0.1.5-rc.1。
  *   跑得起来，但跑的是同代最新补丁的启动器——这条差异必须留痕，不能默默算同版。
+ *   ⚠️ **表里当前没有条目用这一形状**：那棵 rc.1 树已在 2026-10-26 被重装成自洽的 rc.3
+ *   （见 `0.1.5-rc.3` 条目与 FINDINGS §9）。这条形状留着是为了它再次出现时认得出来。
  *
  * **（一棵被三个人先后误判、且归因也判错过的树，留在这里省下下一次）**
  *

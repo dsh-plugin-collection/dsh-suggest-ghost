@@ -3023,7 +3023,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   //    且 0.1.1-rc.2 自己的类型声明本就把 `stateSchema` 列为必填
   //    （`dsh-session-projection/lib/types/index.d.ts:41`）。所以**不需要**分代。
   //
-  // 回归：`npm run verify:kernels`（七个代次，0.1.1-rc.2 曾在此为红）。
+  // 回归：`npm run verify:kernels`（跑 `scripts/cross-kernel/generations.mjs` 那张表；
+  // 0.1.1-rc.2 曾在此为红，后来因 client 的 `remote.settings` 硬约束被删出表，见该文件与 FINDINGS 顶部）。
   //
   // ── issue #121：`register()` 的返回契约在 0.2.2 线上变了 ──────────────────────
   // 逐字核对发布产物 `@deepseek-ai/dsh-session-projection/lib/types/index.d.ts`：

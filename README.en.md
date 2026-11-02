@@ -131,14 +131,21 @@ actually see it" — it is also the one the other four faces most easily hide.
 
 ### Peer enumeration, and the hard gate that starts at 0.2.0
 
-> ⚠️ **Two different calibres** (measured 2026-10-30, FINDINGS §20.4): the **kernel admission gate**
-> uses `includePrerelease: true`, so `^0.2.0-rc.2` **covers** `0.2.1-rc.5`, `0.2.2-alpha.2` and `0.2.2`;
-> **npm's own peer resolution** does not, so the same range is false for `0.2.2-alpha.x`. Adding an
-> enumeration entry is an **install-side** concern, not an admission one — which is why this repo did
-> **not** widen its peer ranges for an alpha line (that would write an unverified generation into the
-> support claim). When `0.2.2` ships, both calibres cover it automatically.
+Peer deps are written as an **explicit generation list** (`^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 ||
+^0.2.0-rc.2` — all six `@deepseek-ai/dsh-*` peers carry exactly this string) rather than `>=0.1.2-rc.1`.
+The reason splits into two calibres, and they must not be conflated (measured 2026-10-30, FINDINGS §20.4):
 
-Peer deps are written as an **explicit generation list** (`^0.1.1-rc.2 || ^0.1.2-rc.1 || … || ^0.2.0-rc.2`) rather than `>=0.1.1-rc.2`: node-semver excludes prereleases from every range unless a comparator carries the same `[major.minor.patch]` tuple, so `^0.1.1-rc.2` is false for `0.1.2-rc.1`, and so is `*` — there is no range form that spans generations. **Every time upstream ships a new rc generation, add another entry here.**
+- **Install side** (npm/pnpm resolving peers, no `includePrerelease`): node-semver excludes prereleases from
+  every range unless a comparator carries the same `[major.minor.patch]` tuple, so `^0.1.2-rc.1` is false for
+  `0.1.5-rc.1`, and so is `*` — **no range spans generations**, and every new rc needs another entry.
+- **Admission side** (what the kernel actually runs: `semver.satisfies(v, range, { includePrerelease: true })`):
+  measured, `^0.1.2-rc.1` **covers all of 0.1.x** (including `0.1.7-rc.1`), and `^0.2.0-rc.2` covers everything
+  in `>=0.2.0-rc.2 <0.3.0-0` (including `0.2.1-rc.5` and `0.2.2-alpha.2`) — while all of those are false on npm's calibre.
+
+⇒ **"Add an enumeration entry" is an install-side concern, not an admission requirement.** That is why this repo
+did **not** widen its peer ranges for an alpha line (doing so writes an unverified generation into the support
+claim); when `0.2.2` ships both calibres cover it automatically, and the work is one new row in the generation
+table plus a re-run.
 
 **At `0.2.0` this stopped being an install-time hint and became a load-time hard rejection.** While composing a profile the kernel checks each peer with `semver.satisfies(runtimeVersion, range, { includePrerelease: true })` and skips the whole bundle on a miss:
 
@@ -149,8 +156,11 @@ with dsh 0.2.0-rc.2: peerDependencies {…}
 
 Two details worth remembering:
 
-- the gate uses **`includePrerelease: true`**, so `^0.2.0` (without the rc) is false for `0.2.0-rc.2` — the entry must be written as `^0.2.0-rc.2`;
-- `dsh plugin allow-version` grants an **exact-version** exemption, which bypasses the check rather than fixing it. The real fix is still another enumeration entry.
+- the gate passes **`includePrerelease: true`**, but that is not a blank cheque: `^0.2.0` (without the rc) is still
+  false for `0.2.0-rc.2` (false under both calibres) — admitting that generation takes the rc-carrying lower bound;
+- `dsh plugin allow-version` grants an **exact-version** exemption, which bypasses the check rather than fixing it.
+  On the admission side the real fix is registering the generation in `scripts/cross-kernel/generations.mjs` and
+  re-running it; only the install side is fixed by adding an enumeration entry.
 
 ### The 0.1.7 settings rework (the only substantial source change)
 

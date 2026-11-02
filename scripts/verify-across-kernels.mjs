@@ -8,7 +8,7 @@
  *
  * ## 用法
  *
- *     npm run verify:kernels                     # 跑 KERNEL_GENERATIONS 全部 7 代
+ *     npm run verify:kernels                     # 跑 KERNEL_GENERATIONS 的**全部条目**（条数取自那张表，别在这里写死）
  *     node scripts/verify-across-kernels.mjs --no-install --kernel-root ~/dsh-versions
  *     node scripts/verify-across-kernels.mjs --versions 0.1.7-rc.1,0.2.1-rc.2
  *
