@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [0.8.1] - 2026-11-02
 ### 清理（合并 #121 之后的一轮，纯文档与注释，功能字节未变）
 
 - **README 那条 peer 例子是过期的**：正文写的是 `^0.1.1-rc.2 || …`，而 `package.json` 里 6 个
