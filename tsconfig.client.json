@@ -3,17 +3,20 @@
 // ——别用 `pnpm typecheck`：worktree 的 node_modules 是指向主仓的软链，pnpm 的
 // runDepsStatusCheck 会因此报依赖错，与代码无关。
 //
-// 条数**当前 8**（#81 落地后；此前 23，再早这份注释写过「31」并配了一套过期分类——
+// 条数**当前 7**（#81 落地后 8 ⇒ `@types/react` 进 devDeps 后 7；此前 23，再早这份注释写过「31」并配了一套过期分类——
 // 一条过期的自述会把人带去改一行**本来正确**的代码，所以这里改成「数字 + 自取命令」的
 // 写法：数字对不上时，跑一遍命令就知道是注释过期，而不是判据变了）。
 //   ./node_modules/.bin/tsc -p tsconfig.client.json --noEmit 2>&1 | grep -c 'error TS'
 // 逐条归因（① 口径产物 / ② 真实缺陷 / ③ 假象中的真问题）见 Gitea **#34 评论 id 38815**；
-// #81 收口后的 8 条残留：
+// #81 收口后的残留（现 7 条，逐条见下）：
 //   TS5097 ×1  `accept-guard.ts` 的 `./history.ts`——改 `.js` 会断 5 条按 TS 源码直载的
 //              离线冒烟（Node 的 type-stripping 不做 `.js→.ts` 回退，实测 ERR_MODULE_NOT_FOUND）
 //   TS2532 ×2  `chunk.ts`：继承自根配置的 `noUncheckedIndexedAccess` 的保守告警，调用点
 //              已有 `i < parts.length` 守卫 ⇒ 属①，但消它要关共享严格性 ⇒ 不建议，宁改代码
-//   TS2307 / TS7016 / TS6142：`@types/react` 与两个宿主客户端包不在 devDeps（需 lead 排产）
+//   TS2307     两个宿主客户端包（`dsh-client-ui-conversation` 等）不在 devDeps（需 lead 排产）
+//   TS6142     这份诊断配置**没开 `--jsx`**：`settings-card.tsx` 被解析出来却无 JSX 发射选项。
+//              不是「装了就消失」的那条——开 jsx 会照出 30 条真实问题，见 Gitea #87，故刻意不开
+//   （TS7016 已消失：`@types/react` 进 devDeps 之后不再报「找不到模块声明」，见 #85 那条排产决定）
 //   TS2341 / TS18047：**②类真实缺陷，刻意留着不掩盖**（`attach` 被类外调用；
 //              `last.nodeValue` 的不变式类型面看不见）。这两条是「不掩盖真实缺陷」的哨兵，
 //              哪天它们不见了或被换成别的形状，一定要查是不是有人放宽了口径。
