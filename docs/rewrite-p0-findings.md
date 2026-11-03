@@ -67,7 +67,7 @@
                       草稿尾部被补上建议文本（采纳发生）
 ```
 
-`dp 0→1` 恰好发生在 `#5` 这一跳，且同一次按键让幽灵收起、草稿变长 ⇒ 插件的采纳支确实执行了 `preventDefault()`（源码 `#L2444-L2445`）。
+`dp 0→1` 恰好发生在 `#5` 这一跳，且同一次按键让幽灵收起、草稿变长 ⇒ 插件的采纳支确实执行了 `preventDefault()`（源码 `src/client/index.ts#L2437`，逐词支在 `#L2504`）。
 
 ### Measured：无幽灵时 `#5` 仍然在场
 
@@ -91,12 +91,17 @@
 
 | 做法 | 牵动面 | 判定 |
 |---|---|---|
-| **A. 把 `#L2412` 那道门按形态拆开**（`shown === null` 时仍放行 rewrite 支，采纳支保持原样早退） | 焦点判据 `isComposerTarget` / `isComposerElement`（`#L474-L484`，要求 `[data-input-scroll]` 内的 `textarea` 或 `isContentEditable`）必须在 rewrite 支**之前**跑到，否则设置卡片里的按键录制器（`src/client/settings-card.tsx#L570`）会被误触；IME 约定 `#L2411` 必须留在最前（组合期不拦键）；`#L2414-L2417` 的 `activeElement instanceof` 三连同样要共用 | **推荐**。不加监听，清理面不变，时序不变 |
+| **A. 把 `#L2412` 那道门按形态拆开**（`shown === null` 时仍放行 rewrite 支，采纳支保持原样早退） | 焦点判据 `isComposerTarget` / `isComposerElement`（`#L474-L484`，要求 `[data-input-scroll]` 内的 `textarea` 或 `isContentEditable`）必须在 rewrite 支**之前**跑到；IME 约定 `#L2411` 必须留在最前（组合期不拦键）；`#L2414-L2417` 的 `activeElement instanceof` 三连同样要共用 | **推荐**。不加监听，清理面不变，时序不变 |
 | B. 新增一条独立 window keydown 监听 | 要在**同一个** `ctx.effect` 里成对 add/remove（否则就是 `src/index.ts#L968-L976` 记的那条 root 僵尸同族）；要重排注册次序（新监听默认排在插件既有监听之后，与采纳支抢同一键时会晚一步）；卸载/partialReload 面翻倍 | **不做**，A 已覆盖需求 |
 | C. 不用键盘，改走设置卡片/按钮触发 | 与工单「显式用户动作」不冲突，但用户要先移开焦点去点按钮，composer 焦点与 CAS 基线（`src/client/accept-guard.ts#L117`）要重建 | 可作为 A 的补充呈现，不是替代 |
 
 ### 对 P1 的约束
 
+- 工单「客户端唯一的键盘面是 `onKeyDown`」这句要限定：设置卡片的**按键录制器**在录制态也挂一条 window capture keydown
+  （`src/client/settings-card.tsx#L581`，处理器体在 `#L567-L579`，一进来就无条件 `preventDefault()` + `stopPropagation()`，`Escape` 用来取消录制）。
+  本文真 GUI 的监听清单里没有出现它，因为没进录制态 ⇒ 与源码一致，不是它不存在。
+  ⇒ 拆门时 rewrite 支的焦点门要把「焦点在设置卡片里」这种情况挡掉，否则两处抢键；这条也是「为什么不新增一条 window 监听」的第二个理由：
+  新增的那条会与录制器那条争次序，而拆既有门不需要。
 - rewrite 支**不要**调 `renderTraced`/`render`：render 的既有来源是三个 store 订阅 + 会话列表 + 设置事件 + IME 组合（`#L2587-L2631`），键盘不在其中。#21 那次风暴的成因正是「每个来源都调 render × 每次 render 都重置计时器」，判据换成「观察值变化」才压住（`src/client/index.ts#L1957` 的注释记录了这件事）。把按键再接进 render，等于给那条已封口的路重新开一个来源。
   本次实测的旁证（样本小，只作方向不作数值结论）：连打 12 个字符期间 `render-source` 留痕 1 行
   `session=3 input=4 face=0 other=43 total=50`，主导来源是 `other`，`input`（草稿订阅）只占 4。
@@ -238,8 +243,10 @@ active 态 input.overlay={"found":true,…,"size":"156x15","chain":["h0 DIV(data
 - 呈现落位用 `ctx.slots.inject('conversation.input.overlay', …)`，`kind: 'list'`、`scope: 'session'`，
   注册形状 `slots.register({ name, id, order, label }, Component)`；`register` 返回 disposer，必须挂进 `ctx.effect`。
 - overlay 槽的宿主注释是 "Floating entries rendered inside the resident composer card"，DOM 上挂在
-  `[data-composer-overlay]` 容器里，与插件现有 ghost overlay（`#dsh-suggest-ghost-overlay`，`pointer-events:none`）是两套载体：
-  **预览卡要能吃点击**（要「确认替换」按钮），overlay 槽天然满足，自建 `pointer-events:none` 的幽灵节点不满足。
+  `[data-composer-overlay]` 容器里（探针节点的祖先链实测：`SPAN → DIV(data-slot=conversation.input.overlay) → DIV[data-composer-overlay] → …`），
+  与插件现有 ghost overlay（`#dsh-suggest-ghost-overlay`，自带 `pointer-events:none`）是两套载体。
+  探针节点在 GUI 里 `visible:true`（`offsetParent !== null`），但**点击可达性本文没测**（见 NOT-COVERED）：
+  预览卡要放「确认替换」按钮，就得实测能否点得着，不能靠「它是宿主渲染的普通 DOM」推定。
 - `conversation.input.overlay` 在**全部 6 个受支持代次 + 0.2.2-alpha.2 都有**（见上表）⇒ 不需要 overlay 回退路径。
 - 与 #129 的关系：rewrite 的预览浮层与 llm 形态灰字同屏时的优先级，本文未测（见下）。
 
@@ -248,7 +255,9 @@ active 态 input.overlay={"found":true,…,"size":"156x15","chain":["h0 DIV(data
 - **老代次的真 GUI 渲染验证**：静态层（声明 + `renderSlot` 消费点）九棵树全绿，
   真 GUI 注入只在 `0.2.1-rc.5` 跑过。缺的前置：把同一个探针 `--deploy` 进各代次沙箱（`~/dsh-versions/<代>/node_modules/.bin/dsh` 起实例），
   一次约 3~4 分钟/代。工单验收标准里「0.2.1-rc.2+ 与一条 0.1.x 各跑一次」是 P1 实现期的活，本文没替它做。
-- overlay 槽内条目的**尺寸/滚动/焦点行为**（多行卡片会不会把 composer 卡顶开、模态化时谁让位）没测。
+- overlay 槽内条目的**点击可达性**（预览卡要放「确认替换」按钮）：探针节点 `visible:true`（`offsetParent !== null`）是实测，
+  「点得着」不是。缺的前置：在探针组件上挂 `onClick`，用 CDP 真鼠标点它自己的 rect，看回调进不进。
+- overlay 槽内条目的**尺寸/滚动/焦点行为**（多行卡片会不会把 composer 卡顶开、模态在场时谁让位）没测。
 - overlay 与现有 ghost overlay、与 #129 那个「灰字压在已输入文字上」的形态同屏时的表现，没测。
 
 ---
