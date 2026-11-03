@@ -4,6 +4,86 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### 修复
+
+- **LLM 形态不再能在非空草稿上出现（Gitea #129，PR #134）**。`computeGhostContent` 的 LLM 支过去
+  **没有**「草稿为空」的判据，它的成立全靠上游两支的 `return null`（分支顺序：续写 → 历史 → LLM）。
+  而历史支的进入条件是 `settings.historyEnabled && draft.trim() !== ''` ⇒ 用户关掉「启用历史补全」
+  （默认开）之后，非空草稿会直接掉进 LLM 支：该形态的 `anchorText` 是空串（锚在编辑器内容原点，
+  `verify()` 的 llm 支也只校原点），于是**灰字压在用户已输入的文字上**；而采纳是 `buildFullAccept`
+  的 `return content.text`，即**整段覆盖草稿** ⇒ 用户打了一半的话被一条本来不该出现的建议换掉。
+  草稿 CAS 救不了这一条（计算与写入之间草稿没变，判据完全通过；这不是竞态，是形态可达性）。
+  现在守卫加在**该支自己头上**（`decideLlmForm`，不看 `historyEnabled`），「空 / 非空」收敛成
+  `hasUserDraft` 一份拼写、三支共用；命令前缀草稿（`/later +3m `）判为**非空**，依据是历史支今天的
+  实际行为就是「命令前缀段不算可匹配文本、`stripCommandPrefix` 剥完为空即整支终止」，而不是新语义。
+  判据与行为由新冒烟 `scripts/llm-form-guard-smoke.mjs` 钉住（14 条判据 + 4 档行为，跑真 `lib/client.js`
+  配最小 DOM/宿主替身）；三条变异各自打红，其中「把守卫搬到历史支之前」会让**对照场景当场坏掉**
+  （历史补全再也不出东西）⇒ 「守卫必须在这支头上」是行为约束，不是风格。
+  副作用如实记：关掉历史补全 + 草稿非空的用户从此看不到任何建议，这是正确行为（那条建议本来会
+  覆盖他们的输入）。真 GUI 那一档**保持 NOT-COVERED**（沙箱拿不到一条真实建议，见 #136/#139），
+  没有用形状闸冒充行为验证。
+- **零证据会话里语言判定不再自带 `English`（Gitea #125，PR #133）**。`suggestionLanguage` 的两处
+  「无任何证据」早退（无用户消息、以及去噪后全空且无助手回合可回退）过去直接 `return 'English'`，
+  而 UI 语言先验的加成发生在它们**之后** ⇒ 先验在零证据分支上是死代码。新会话必然走这条：
+  `buildTranscript` 在 `lastTurn === 0` 时返回 `undefined`，续写调用侧传的是 `?? []` ⇒
+  **中文界面的新会话里，停顿续写恒出英文**。现在两处早退交给与 `hasUiPrior` 同源的
+  `uiPriorLanguage`（先验命中即返回该语言），并在注释里钉住一条误读出口：`uiLocaleWeight`
+  表达的是「**有**证据时先验值多少」，零证据没有可比较的对象，**把它调成 0 拉不回 English**。
+  代价如实记：界面语言与输入语言不一致的用户（中文界面、习惯写英文提示词）在新会话首轮会收到中文
+  续写，第二轮起有真人证据即可被推翻；显式出路是设 `languageMode`。
+  `scripts/suggestion-language-smoke.mjs` 17 → 23 组，「改前那条必须红」由把早退突变回
+  `return 'English'` 复现（`'English' !== '简体中文'` 当场报原因）。
+
+### 新增
+
+- **`scripts/commit-msg-gate.mjs`（Gitea #128）**：拦 `closes/fixes/resolves/fix/closed` + `#N` 这类
+  **关键字引用**，接进 `check:loop` 第三项。起因是跨仓编号撞车的实测事故：`e1fd49e` 的
+  `(closes #3)` 指的是 Gitea #3（长会话上下文摘要），而该 commit 经镜像进入 `github/main` 后，
+  GitHub 按自己的编号序列把同号的一条**用户功能建议**关成了 completed。闸支持 `--message` /
+  `--range`（范围判据，非「只查末条」）/ `--self-test`，退出码 `0/1/2` 把「违规」与「闸坏了」分开；
+  四条注入断言 + 三个突变（判据永不命中、命中也 `return 0`、只查末条）各自可证伪。
+  历史条目**一条未改写**：全量扫 `425c2ce..HEAD`（392 条）命中 6 条 commit，其中一条是
+  merge commit ⇒ 关键字还有一个「PR 标题」入口，本仓此前没人知道。
+- **`scripts/scaffold-opener-hitrate.mjs`（Gitea #124 的 P0 离线量度）**：判「拿别的会话的第一句
+  当空草稿起稿候选」这条零 token 路 **FAIL**，本机全量 2403 会话 / 8752 条真人消息：
+  top-1 前缀命中 **4.0%**、top-10 11.3%、**opener 新颖率上界 14.6%**（数据上限，与候选排序/宽度无关）、
+  跨项目污染 52.0%、环截断偏差 0%。**故意不接 `test:smoke`**（读真实用户日志、非确定性、分钟级耗时；
+  与 `hot-window-staleness.mjs` 同族处置）。全程只读、只打聚合数与长度分位数，不含任何会话正文。
+  阈值（top-1 ≥ 20%、top-10 ≥ 50%）先写进头注释再看数，防事后挑数；并如实声明本仓**没有采纳率遥测**，
+  20% 是提案线不是实证。
+- **三份核实文档**：`docs/rewrite-p0-findings.md`（#126 的 P0 三条核实：无幽灵按键通道的真实改造面、
+  宿主 composer 槽位面逐代次、候选键真 GUI 实测矩阵）；`docs/scaffold-input-face.md`（#124 的 P1 准入
+  核查：插件可达面只有 `session.header.cwd?: string`，七代次可达链逐字同构 ⇒ 判 CONDITIONAL 放行，
+  并给出「宿主侧分桶、模型不见路径」的最小暴露形态）。
+
+### 文档与读数更正
+
+- `docs/gitea-workflow.md` §2 落三条工单引用纪律（裸 `#N`；要表达「已完成」写 `Gitea #N` 明文 +
+  在 issue 里留带 commit 短链的评论，**评论是关联的权威点，commit 不是**；引用外部仓写全 URL），
+  §4 勘误一条（历史上让人在主仓内建 `wt/`，而 `.gitignore` 没有该条目 ⇒ 未跟踪目录留在 live 副本里，
+  正好叠在「不许 `git add -A`」那条已知风险上），§6 补**第三种**「某串没出现」的失效方式：
+  **遍历方式本身能让整棵目录树隐形**（`grep -r` 不跟随符号链接，而 `~/dsh-versions/<代>` 里
+  `@deepseek-ai/*` 软链与真目录混排；0.1.5-rc.3 上同一字符串 `grep -rl` 得 0、`grep -Rl` 得 4，
+  lead 由此差点登记「那一代宿主没有这个槽」）。同族一条读法坑：分支落后 main 时
+  `git diff origin/main..HEAD` 会把别人已合入的文件列成本分支差异（实测某条只动 4 个文件的分支显示 9 个）
+  ⇒ 判改动面一律用 `git diff <base>..HEAD`。
+- `tsconfig.client.json` 头注释的条数自述过期（写 8、实测 7），按该注释自己定的规矩处理
+  （数字对不上先跑命令，是注释过期不是判据变了）。**归因也一并改对**：TS7016 是随 `@types/react`
+  进 devDeps 自然消失的（#85 那条排产决定的后果），而 **TS6142 与装没装它无关**，是这份诊断配置
+  刻意没开 `--jsx`（开了会照出 30 条真实问题，#87）。
+
+### 已知未修（本轮判出、故意留给后续工单）
+
+- **辅助调用失败对用户完全不可见（Gitea #139）**：停顿续写那条路径**连交付出口都没有**
+  （`decideCompletionSettle` 的失败支 trace 后直接 return，deps 只有 `trace`/`deliver` 两个出口）；
+  下一条建议那条路径**写了 `error` 而客户端不读**（`PushedPayload` 里根本没有这个键）。
+  并且 `_push` 是省略式拼装 ⇒ **`error` 键会被下一次无关推送抹掉，不能当「最近一次失败」的状态源**。
+- **live 的 ghost 路由 12 次调用 12 次被服务端 HTTP 400 拒、零成功（Gitea #136）**：配置面写死了
+  一条不可用的 provider/model；同 boot 另有 2 次是连接超时。建议路径是否存在「一次都没被尝试」的
+  独立问题尚未判死（默认阈值 warn 会把 `suggestion generated/dropped` 静音，"日志里没有"不构成证据）。
+- **语言判定的入参与结论零留痕（Gitea #137）**：`uiLocale` 的「从未捎带 / 上次值残留 / 本次未到」
+  三种形态在现有留痕下同形 ⇒ GUI 不是语言判定的合法代理。
+
 ## [0.8.1] - 2026-11-02
 ### 清理（合并 #121 之后的一轮，纯文档与注释，功能字节未变）
 
