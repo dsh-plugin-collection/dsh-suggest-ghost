@@ -48,7 +48,7 @@ import {
   type FrameHint,
   type FrameLedger,
 } from './accept-guard.js';
-import { alignCompletion, decideInlineForm } from './completion-align.js';
+import { alignCompletion, decideInlineForm, decideLlmForm, hasUserDraft } from './completion-align.js';
 import { buildOpsPayload, createSeqSource } from './ops-envelope.js';
 import { nextAcceptChunk } from './chunk.js';
 import {
@@ -1265,6 +1265,9 @@ function applyBody(ctx: Context): void {
     'accept-gate-word': null,
     'stale-frame': null,
     'form-hold': null,
+    // #129：LLM 形态的进入判据把这一支拦掉了（草稿里有用户已输入的字符）。
+    // 常态槽（`ROUTINE_TRACE_SLOTS`，debug 级）：它每帧都可能成立，不是故障。
+    'llm-form-guard': null,
     'deferred-repaint': null,
     'push-cell': null,
   };
@@ -1287,6 +1290,10 @@ function applyBody(ctx: Context): void {
     'push-cell',
     'inline-arm-cancel',
     'deferred-repaint',
+    // #129：「非空草稿 ⇒ llm 形态不可达」在用户打字的整段时间里**每帧都成立**，
+    // 属常态证据（判据把形态拦掉了），不是故障。留痕只在理由变化时打一行，
+    // 通道走 debug（默认隐藏，Verbose 可见）——与 `tab-abandon` 那类失败告警相反。
+    'llm-form-guard',
   ]);
   /**
    * 打一行留痕（同一理由连续到达只打第一行；**不同理由也每 slot 每 5s 至多一行**，
@@ -1491,7 +1498,9 @@ function applyBody(ctx: Context): void {
   ): GhostContent | null => {
     // 模式 1：草稿非空 → 停顿续写优先（host 推送的 LLM 续写，须与当时草稿
     // 逐字相符且属于当前会话），其次历史前缀补全（即时、无网络）。
-    if (draft.trim() !== '' && settings.inlineEnabled) {
+    // 「非空草稿」三支共用一份判据（`hasUserDraft`，#129）：过去各写各的裸 trim 比较，
+    // 同一份草稿在两支里得到相反结论就是这么活下来的。
+    if (hasUserDraft(draft) && settings.inlineEnabled) {
       const completion = settings.completion;
       // 「宿主推了续写但本帧不显示」是 #15 验收的关键分叉：载荷没到（通道问题）、
       // 到了但归属别的会话、还是到了且属于本会话却与当前草稿不逐字相符（用户在
@@ -1569,7 +1578,7 @@ function applyBody(ctx: Context): void {
       traceClear('form-hold', null);
     }
     // 模式 1：草稿非空 → 历史前缀补全（打分制：新近度为主、频次/热度为辅）。
-    if (settings.historyEnabled && draft.trim() !== '') {
+    if (settings.historyEnabled && hasUserDraft(draft)) {
       // 能落到这里说明「续写这一路」没有把形态扣住（见上面的 form.hold），闸门重新打开。
       traceClear('form-hold', null);
       // 草稿是斜杠命令整行时（如 `/later +3m 我重新部署了…`），用命令名之后
@@ -1615,6 +1624,28 @@ function applyBody(ctx: Context): void {
     // agent 运行中隐藏；建议属于其他会话时隐藏（host 推送按会话标记；运行中
     // 的会话由 running 隐藏，回合结束的推送要么更新建议要么清空，无需再比
     // 对会话快照里已移除的 turnEnds）。
+    //
+    // #129：上面那句「草稿为空」从今往后是**判据**，不再只是注释。过去它靠隐式顺序
+    // 成立——历史支在非空草稿上每条路都 `return`——于是把设置里的「启用历史补全」
+    // 关掉（默认开，一次正常点击）这个前提就消失了：非空草稿直接掉进这一支。而
+    // llm 形态的锚定文本是空串（`overlayShapeOf`：`anchorText: content.kind === 'llm'
+    // ? '' : content.prefix`），灰字从第 0 列画出去、**压在用户正打的字上**；采纳又是
+    // **整段覆盖**草稿（`accept-guard.ts` 的 `buildFullAccept` 对 llm 直接返回 `text`）
+    // ⇒ 用户输入消失。CAS 救不了这一条：草稿在「算」与「写」之间没变时判据完全通过，
+    // 这不是竞态，是形态可达性。
+    // 判据与上面两支同源（`decideLlmForm` 内部就是 `hasUserDraft`），且**不看**
+    // `historyEnabled`——可达性跟着别的功能的开关走正是缺陷本体。守卫加在本支头上，
+    // 不做成「非空草稿一律不出 llm」的上层分叉：那会改变续支/历史支的相对顺序
+    // （#38「同一次生成内形态不得翻转」）。冒烟：`scripts/llm-form-guard-smoke.mjs`。
+    const llmForm = decideLlmForm({ draft, historyEnabled: settings.historyEnabled });
+    if (!llmForm.allow) {
+      // 常态留痕（debug 级，见 ROUTINE_TRACE_SLOTS）：这一支在用户打字的整段时间里
+      // 每帧都成立。只打字符数与开关状态，不打草稿正文（与宿主侧同款隐私约束）。
+      traceOnce('llm-form-guard', llmForm.reason,
+        ` draftChars=${draft.length} historyEnabled=${String(settings.historyEnabled)}`);
+      return null;
+    }
+    traceClear('llm-form-guard', null);
     // 流式增量帧优先（#108，默认关）：帧比 `_push` 早到，这就是这条任务的全部意义。
     // **只用于视觉增长**：帧自带的 frame/final 原样交给采纳链，provisional 帧在
     // accept-guard 里本来就被拒（硬约束 3），所以这里不加任何额外闸门。
