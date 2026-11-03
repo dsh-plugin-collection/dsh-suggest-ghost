@@ -4,3 +4,7 @@ preview/
 # 跨内核验证的临时工作区（type-surface.mjs 会把 src 复制成逐代次的 overlay，
 # 实测 313MB / 11840 个文件）。证据产物在 scripts/cross-kernel/out/，那个要入库。
 scripts/cross-kernel/.work/
+# git worktree 的 checkout 目录（docs/gitea-workflow.md §4）。历史上 §4 让人在主仓内部
+# `worktree add wt/<名字>`，而这里没有 wt/ 条目 ⇒ worktree 以未跟踪目录留在 live 主仓里，
+# 正好叠在「不许 git add -A」那条已知风险上（Gitea #128 的 §4 勘误）。
+wt/

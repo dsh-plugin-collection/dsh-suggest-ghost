@@ -58,7 +58,7 @@
     "test:e2e": "./node_modules/.bin/tsc -p tsconfig.json && node build.mjs && node scripts/ghost-frame-e2e.mjs && node scripts/hmr-write-loop-smoke.mjs && node scripts/pump-hmr-escape-smoke.mjs && node scripts/pump-rearm-smoke.mjs && node scripts/hot-starvation-smoke.mjs && node scripts/hotness-persist-e2e.mjs && node scripts/coldstart-e2e.mjs && node scripts/ghost-frame-cell-e2e.mjs && node scripts/ghost-frame-real-e2e.mjs",
     "preview": "node scripts/preview-card.mjs",
     "replay": "node --experimental-strip-types scripts/replay-history.mjs",
-    "check:loop": "node scripts/gitignore-check.mjs && node scripts/artifact-freshness.mjs",
+    "check:loop": "node scripts/gitignore-check.mjs && node scripts/artifact-freshness.mjs && node scripts/commit-msg-gate.mjs --range origin/main..HEAD",
     "verify:kernels": "node scripts/verify-across-kernels.mjs --no-install --kernel-root ~/dsh-versions",
     "verify:register-shape": "node scripts/cross-kernel/projection-register-shape.mjs --tree ~/dsh-versions/0.2.2-alpha.2",
     "sandbox": "node scripts/dev-sandbox.mjs --watch",

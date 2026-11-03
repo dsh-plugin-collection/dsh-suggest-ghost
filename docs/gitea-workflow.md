@@ -56,6 +56,22 @@ tea api "/repos/<owner>/<repo>/issues/<编号>/comments?limit=100" \
 
 - **只推 `origin`（Gitea），绝不推 `github` remote**。本仓配了两个远端，github 那边是镜像；
   推上去会污染镜像且拿不到 CI/评审。推完确认：`git log --oneline -1 origin/<分支>`。
+- **引用工单一律写裸 `#N`（Gitea 序列），禁用 `closes` / `closed` / `fixes` / `fix` / `resolves` 关键字形式**。
+  commit message 与 **PR 标题**都算 —— Gitea 拿 PR 标题生成 merge commit，实测 `34694d7` 就是这样把
+  `closes #3` 带进 main 的。这道判据已做成闸：`scripts/commit-msg-gate.mjs`，接在 `check:loop` 里扫
+  `origin/main..HEAD`（**范围**判据，不是只查末条 commit）。
+- **要表达「这条工单已完成」⇒ 写 `Gitea #N` 明文 + 在 issue 里留一条带 commit 短链的评论**。
+  评论是本仓关联的**权威点**，commit 不是：commit 会离开本仓的编号空间，评论不会。
+- **引用外部仓（GitHub）的 issue 必须写全 URL**，不写裸编号 —— 裸 `#N` 在两个仓里指向**不同的工单**。
+
+  **这三条的依据**（#128 的根因结论）：两仓工单编号是**两套独立序列**，而 commit 会经镜像传播到
+  另一个编号空间 ⇒ 任何「靠关键字自动关联」的做法在这个拓扑下都不可靠。实测事故：`e1fd49e`
+  写 `(closes #3)` 指的是 Gitea #3「长会话上下文能力」，落到 GitHub 镜像上把同号的 GitHub #3
+  （一条从未实现的功能建议）关成了 `closed this as completed in e1fd49e`。
+  闸只拦**新提交**：全量扫 `425c2ce..HEAD` 共 392 条 commit（根提交除外）命中 6 处、分布在 6 条 commit 上
+  （`34694d7`、`e1fd49e`、`b7a6c1e`、`3a06a6b`、`303ab9c`、`f5dc602`，都在 2026-10-14~20 那几天）
+  ⇒ **历史条目不可变，那 6 处不改写**；
+  判据本身由 `--self-test` 注入自证（见 §6），没有自证的闸不许合。
 - **开 PR 用 `tea pulls create --remote origin --repo <owner>/<repo> --head <分支> --base main`**。
   `--remote origin` 不是可选的：tea 会按 remote 反查登录，缺了它可能挑到另一个 login。
 - **逐条 `git add <文件>`，不许 `git add -A`**：worktree 里的 `node_modules` 是指向主仓的**软链**，
@@ -93,6 +109,13 @@ tea api "/repos/<owner>/<repo>/issues/<编号>/comments?limit=100" \
   git -C <主仓> worktree add -b <分支> wt/<名字> origin/main
   ln -s <主仓>/node_modules wt/<名字>/node_modules
   ```
+
+  ⚠️ **worktree 目录不入库**（#128 的 §4 勘误）：上面这条让人在主仓**内部**建 `wt/<名字>`，
+  而 `.gitignore` 历史上**没有** `wt/` 条目（只有 `node_modules/`、`*.tgz`、`preview/`、
+  `scripts/cross-kernel/.work/`）⇒ 那棵 worktree 以**未跟踪目录**留在 live 主仓里，正好叠在 §2
+  「不许 `git add -A`」那条已知风险上 —— 任何一次 `-A` 都可能把整棵嵌套 worktree 连带进索引。
+  现已补上 `wt/`。本轮实测改用**兄弟目录** `<repo>/../wt/<名字>` 亦可，好处是它根本不在 live 主仓的
+  路径下面，`-A` 那条风险对它天然不成立。
 
 - **worktree 里 `pnpm` 不可用**（软链的 `node_modules` 过不了它的依赖检查），改用直接调二进制：
 
