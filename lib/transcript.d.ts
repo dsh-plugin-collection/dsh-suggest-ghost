@@ -62,13 +62,21 @@ export declare function trimTranscript(pairs: readonly TranscriptPair[], sourceM
  * 6. 推翻先验用**相对比较**（拉丁 vs 该语言侧含先验的总证据），不用绝对阈值：
  *    单条消息得分上限 360，绝对阈值 100 相当于「去噪后拉丁占比 >27.8% 就翻」，
  *    会把「中文但混满路径与仓库名」的任务提示词（占比普遍 52%-61%）整批判成英文。
+ * 7. **零证据时（`pairs` 为空、或去噪后全空且无 assistant 回合可回退）UI 先验视为决定性**，
+ *    `uiLocaleWeight` 在这一支**不参与**：先验命中就返回该语言，没命中才 `English`。
+ *    ⚠️ 别把这条读成「权重可调成 0 关掉先验」—— `uiLocaleWeight` 表达的是「**有**证据时
+ *    先验值多少分」，零证据没有可比较的对象，把权重置 0 拉不回 English（冒烟第 22 组钉住）。
+ *    要绕过语言判定，出路是显式设 `languageMode`（非 `auto` 时 `generate.ts` 直接用指定语言）。
+ *    代价如实记在这里：界面语言与输入语言不一致的用户（中文界面、习惯写英文提示词）在
+ *    新会话首轮会收到中文续写/起稿 —— 这是先验的本意，第二轮起有真人证据即可被英文推翻。
  *
  * 调用方注意：传入的必须是**未经输入预算裁剪**的证据对（`Transcript.evidencePairs`），
  * 而不是喂给模型的那份 `pairs`——裁剪会从最老的对开始丢，短用户消息最先出局。
  *
  * @param pairs - 语言证据对（未经预算裁剪，时间正序）
  * @param uiLocale - client 捎带的 UI 语言（'zh' | 'en' | 'ru' 等）
- * @param uiLocaleWeight - UI 语言先验权重（默认 100；越大越倾向 UI 语言）
+ * @param uiLocaleWeight - UI 语言先验权重（默认 100；越大越倾向 UI 语言）。**只在有证据时**
+ *   参与加权；零证据走要点 7 的早退，本参数被忽略。
  * @param lastLanguage - 上次建议的语言（语言惯性：短消息无足够信号时回退）
  */
 export declare function suggestionLanguage(pairs: readonly TranscriptPair[], uiLocale?: string, uiLocaleWeight?: number, lastLanguage?: string): string;
