@@ -170,8 +170,33 @@ for g in 0.1.2-rc.1 0.1.5-rc.3 0.1.7-rc.1 0.1.7-rc.2 0.2.0-rc.2 0.2.1-rc.2 0.2.1
 done
 ```
 
-输出：每一行都是 `composer.dock=1 input.overlay=1 input.dock=1 input.left=1 input.right=1`
-（live `0.2.1-rc.5` 同样全是 1）。
+输出：九棵树每一行都是 `composer.dock=1 input.overlay=1 input.dock=1 input.left=1 input.right=1`（live `0.2.1-rc.5` 同样全是 1）。
+
+声明侧的原文坐标（逐代次同一份文件、行号随代次漂移，用 `grep -Rn` 抓；`-R` 不是 `-r`，见方法记录第 2 条）：
+
+```
+0.1.2-rc.1    …/dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts:147  'conversation.input.overlay': {
+              …/…/slots.d.ts:152  'conversation.composer.dock': {
+0.1.7-rc.2    …/…/slots.d.ts:220 / :225
+0.2.1-rc.2    …/…/slots.d.ts:301 / :306
+0.2.1-rc.5    …/…/slots.d.ts:307 / :312
+0.2.2-alpha.2 …/…/slots.d.ts:330 / :335
+
+同一文件里还有一行把「composer 卡会渲染哪些槽」钉成类型契约（四代都在，槽集随代次增）：
+  export type ComposerBarProps = PropsRuntime<'conversation.composer.bar'>
+    & PropsRenderSlots<'conversation.input.attachments' | 'conversation.input.overlay' | … | 'conversation.composer.dock'>
+    （0.1.2-rc.1 在 :318、0.1.7-rc.2 在 :489、0.2.1-rc.2 在 :574、0.2.1-rc.5 在 :619、0.2.2-alpha.2 在 :642）
+```
+
+消费点原文（live `0.2.1-rc.5`，`dsh-client-ui-conversation/lib/client.js`）：
+
+```
+19198:  children: renderSlot("conversation.input.overlay", {})
+19362:  children: [variant === "composer" && input !== void 0 && sessionId !== void 0
+              ? renderSlot("conversation.composer.dock", {}) : null, …]
+```
+
+`19362` 那一行的三个条件就是 `conversation.composer.dock` 在 hero 态不渲染的原因（实测对上，见下一节）。
 
 注册形状有官方模板背书（宿主自带的插件开发 skill）：
 
@@ -352,7 +377,7 @@ Tab         spec= Alt+Tab      回读 code= Tab
 
 ⇒ 对 P1：默认键 `Alt+R` 落在「两端都通」那一档，不需要动 `KEY_CODES`。
 
-### 对工单正文的两条纠正
+### 对工单正文的三条纠正
 
 1. **「`Escape` 属宿主 modal 所有权」需要限定条件**。primitives 的两条注释（
    `node_modules/@deepseek-ai/dsh-client-ui-primitives/lib/index.js#L3694` "Give only the top modal Escape and Tab ownership"、
