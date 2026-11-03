@@ -9,6 +9,17 @@
  *     的注入消息（time-context, skill-catalog 等），否则英文注入会污染语言判定。
  *     本测试验证纯函数侧的行为，注入过滤在 generate.ts 的集成测试里覆盖。
  *
+ * 以及 #125 修复的性质（第 18-22 组）：两处**零证据早退**不得携带自己的语言结论——
+ * 新会话（`buildTranscript` 在 `lastTurn === 0` 返回 undefined ⇒ `evidencePairs ?? []`）
+ * 拿到空数组时，UI 先验必须成为决定性依据，`uiLocaleWeight` 在这一支不参与。
+ * 第 23 组是有证据侧的护栏：新增分支不许把 #24 的判据冲掉。
+ *
+ * ⚠️ 两条冒烟读的不是同一份字节码：本脚本 `import` 的是 `../src/transcript.ts`
+ * （`--experimental-strip-types` 直读源码），同族 `scripts/language-evidence-smoke.mjs`
+ * `import` 的是 `../lib/transcript.js`。所以改了 `src/` 必须
+ * `./node_modules/.bin/tsc -p tsconfig.json && node build.mjs` 再跑后者，
+ * 否则测的是旧产物（`docs/gitea-workflow.md` §3 实测踩过）。
+ *
  * 用法：node --experimental-strip-types scripts/suggestion-language-smoke.mjs
  */
 import assert from 'node:assert/strict';
@@ -86,11 +97,14 @@ const pair = (role, text) => ({ role, text });
   assert.equal(result, 'Russian', `俄语 + en-US locale 应返回 Russian，实际: ${result}`);
 }
 
-// ─── 7. 空转录 → 默认 English ─────────────────────────────────────────────
+// ─── 7. 空转录 + 无界面先验 → 默认 English ────────────────────────────────
+// ⚠️ 本条在 #125 里改过判据：原实现「空转录 ⇒ English（无消息可分析）」把界面语言一起
+// 屏蔽了。零证据时 UI 先验是决定性的（见第 18-20 组），所以这里保留的断言收窄成
+// 「**没有**先验可依据时」才回退 English。
 {
   const pairs = [];
-  const result = suggestionLanguage(pairs, 'zh');
-  assert.equal(result, 'English', `空转录应返回 English（无消息可分析），实际: ${result}`);
+  const result = suggestionLanguage(pairs);
+  assert.equal(result, 'English', `空转录 + 缺 uiLocale 应返回 English（无先验可依），实际: ${result}`);
 }
 
 // ─── 8. 只有 assistant 消息，无 user 消息 → 回退到 assistant 语言 ─────────
@@ -217,5 +231,64 @@ const pair = (role, text) => ({ role, text });
   assert.equal(result, 'English', '纯英文证据必须仍能推翻 zh 先验，实际: ' + result);
 }
 
-console.log('✅ suggestionLanguage 17 组用例全部通过');
+// ─── 以下四组：零证据（Gitea #125）────────────────────────────────────────
+// 现场：新会话 `buildTranscript` 在 `lastTurn === 0` 时返回 undefined，调用侧传
+// `transcript?.evidencePairs ?? []` ⇒ 停顿续写拿到的是空数组，命中 `suggestionLanguage`
+// 的两处早退分支（`src/transcript.ts` 里「无 user 且无 assistant 回退」与「去噪后全空且无
+// assistant 回退」）。原实现在这两处直接 `return 'English'`，而 UI 先验加成在其后 ⇒
+// 中文界面的新会话续写恒出英文。这两组用例是那条早退的闸。
+
+// ─── 18. 零证据 + zh 界面 → 简体中文（早退分支必须让先验进来）──────────────
+{
+  const result = suggestionLanguage([], 'zh');
+  assert.equal(result, '简体中文', `pairs=[] + uiLocale='zh' 应返回简体中文，实际: ${result}`);
+}
+
+// ─── 19. 零证据 + ru 界面 → Russian ──────────────────────────────────────
+{
+  const result = suggestionLanguage([], 'ru');
+  assert.equal(result, 'Russian', `pairs=[] + uiLocale='ru' 应返回Russian，实际: ${result}`);
+}
+
+// ─── 20. 零证据 + 无先验的界面（缺失 / en）→ English（既有回退不变）─────────
+{
+  const missing = suggestionLanguage([]);
+  assert.equal(missing, 'English', `pairs=[] + uiLocale 缺失应返回 English，实际: ${missing}`);
+  const en = suggestionLanguage([], 'en');
+  assert.equal(en, 'English', `pairs=[] + uiLocale='en' 应返回 English（英文是默认回退，不是先验），实际: ${en}`);
+  const enUS = suggestionLanguage([], 'en-US');
+  assert.equal(enUS, 'English', `pairs=[] + uiLocale='en-US' 应返回 English，实际: ${enUS}`);
+}
+
+// ─── 21. 第二处早退（去噪后全空、无 assistant 可回退）同样吃先验 ────────────
+// 证据里有 user 消息但全是 URL/路径，stripNoise 后为空，且会话里还没有 assistant 回合
+// （起稿/首轮场景常见）⇒ 命中 `cleanedUser.length === 0` 内的第二处早退。
+{
+  const pairs = [pair('user', 'http://192.168.4.77:3000/a/b/c.go')];
+  const zh = suggestionLanguage(pairs, 'zh');
+  assert.equal(zh, '简体中文', `第二处早退（全噪声证据）+ zh 应返回简体中文，实际: ${zh}`);
+  const ru = suggestionLanguage(pairs, 'ru');
+  assert.equal(ru, 'Russian', `第二处早退（全噪声证据）+ ru 应返回 Russian，实际: ${ru}`);
+  const none = suggestionLanguage(pairs);
+  assert.equal(none, 'English', `第二处早退 + 缺 uiLocale 应返回 English，实际: ${none}`);
+}
+
+// ─── 22. 口径钉住：零证据时 uiLocaleWeight 不参与，调成 0 也拉不回 English ──
+// 「零证据时 UI 先验视为决定性」——权重表达的是「有证据时先验值多少」，零证据没有可比的
+// 对象。这条断言防的是下一个人把权重重新当成门槛（#24 已经把它从门槛里摘出来了）。
+{
+  const zeroWeight = suggestionLanguage([], 'zh', 0);
+  assert.equal(zeroWeight, '简体中文', `零证据 + uiLocaleWeight=0 仍应返回简体中文（先验在这一支不参与加权），实际: ${zeroWeight}`);
+  const zeroWeightRu = suggestionLanguage([], 'ru', 0);
+  assert.equal(zeroWeightRu, 'Russian', `零证据 + uiLocaleWeight=0 仍应返回 Russian，实际: ${zeroWeightRu}`);
+}
+
+// ─── 23. 有真人证据时判据未被零证据分支改动（#24 结论再确认一次）────────────
+{
+  const pairs = [pair('user', '你好，请帮我把这个函数的参数校验补上')];
+  const result = suggestionLanguage(pairs, 'zh', 100);
+  assert.equal(result, '简体中文', `有中文真人证据 + zh 仍应返回简体中文，实际: ${result}`);
+}
+
+console.log('✅ suggestionLanguage 23 组用例全部通过');
 
