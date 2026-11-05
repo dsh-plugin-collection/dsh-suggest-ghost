@@ -14,7 +14,7 @@
 // ## 导入的是 lib/ 不是 src/（本仓红线：冒烟跑的是入库产物）
 // 用法：node scripts/model-route-smoke.mjs
 import assert from 'node:assert/strict';
-import { deploymentRoute, routeOf } from '../lib/generate.js';
+import { deploymentRoute, probeDeploymentRoute, routeOf } from '../lib/generate.js';
 
 let failed = 0;
 const check = (name, fn) => {
@@ -108,19 +108,58 @@ check('⑤ 三条来源全没有 ⇒ 抛错，且错误给出两条出路（不�
   assert.equal(s.box.readCount, 0, '默认关时即使报错也不该读过会话路由');
 });
 
-check('⑥ deploymentRoute：服务在就取，形状不对/没有/抛错一律算"没有"', () => {
+check('⑥ deploymentRoute：按**宿主真实形状**读 currentSelection（#141）', () => {
+  // 现场：宿主 `@deepseek-ai/dsh-agent-default-model` 的公开方法是 `currentSelection()`，
+  // **七代次都没有 `get()`**（grep 实测）。旧冒烟只喂 `{ get }` 形状的替身 ⇒ 等于用
+  // 「插件自己的错误假设」去验「插件自己」，所以它一直是绿的，而线上这条路径从来没通。
+  assert.deepEqual(
+    deploymentRoute({ get: () => ({ currentSelection: () => ({ provider: ' p ', model: 'm' }) }) }),
+    { provider: 'p', model: 'm' },
+    'currentSelection 形状没读到，或没 trim',
+  );
+  // 两种读法都在的时候，以当代表 `currentSelection` 为准。
+  assert.deepEqual(
+    deploymentRoute({
+      get: () => ({
+        currentSelection: () => ({ provider: 'new', model: 'a' }),
+        get: () => ({ provider: 'old', model: 'b' }),
+      }),
+    }),
+    { provider: 'new', model: 'a' },
+    '两种读法都在时应取 currentSelection',
+  );
+});
+
+check('⑥b deploymentRoute：历史/其它形态的 `get()` 仍作兜底', () => {
   assert.deepEqual(deploymentRoute({ get: () => ({ get: () => ({ provider: ' p ', model: 'm' }) }) }),
-    { provider: 'p', model: 'm' }, '没 trim 或没读到');
-  for (const ctx of [
-    { get: () => undefined },
-    { get: () => ({ get: () => undefined }) },
-    { get: () => ({ get: () => ({ provider: '', model: 'm' }) }) },
-    { get: () => ({ get: () => ({ provider: 42, model: null }) }) },
-    { get: () => ({ get: () => { throw new Error('boom'); } }) },
-    {},
-  ]) {
-    assert.equal(deploymentRoute(ctx), undefined, `该判"没有部署默认"：${JSON.stringify(Object.keys(ctx))}`);
+    { provider: 'p', model: 'm' }, 'get 兜底失效（不该为了修 currentSelection 而砍掉旧的）');
+});
+
+check('⑥c 取不到时**理由必须可读**，不许一律压成 undefined', () => {
+  const cases = [
+    [{}, 'service-absent', '整条服务都没有'],
+    [{ get: () => null }, 'service-absent', '服务是 null'],
+    [{ get: () => ({}) }, 'method-absent', '服务在但两种读法都不存在（宿主换 API 形状）'],
+    [{ get: () => ({ currentSelection: () => { throw new Error('boom'); } }) }, 'call-threw', '方法抛错'],
+    [{ get: () => ({ currentSelection: () => undefined }) }, 'value-unusable', '方法返回 undefined'],
+    [{ get: () => ({ currentSelection: () => ({ provider: '', model: 'm' }) }) }, 'value-unusable', 'provider 空'],
+    [{ get: () => ({ currentSelection: () => ({ provider: 42, model: null }) }) }, 'value-unusable', '类型不对'],
+  ];
+  for (const [ctx, reason, why] of cases) {
+    const probe = probeDeploymentRoute(ctx);
+    assert.equal(probe.route, undefined, `该判"没有部署默认"：${why}`);
+    assert.equal(probe.reason, reason, `理由分类不对（${why}）：实得 ${probe.reason}`);
   }
+});
+
+check('⑥d 理由进得了用户可见的报错（no model route 必须带 reason=）', () => {
+  let message = '';
+  try {
+    routeOf(fakeSession(null), { provider: '', model: '' }, undefined, 'method-absent');
+  } catch (error) { message = String(error.message); }
+  assert.match(message, /no model route available/, `报错开头不对：${message}`);
+  assert.match(message, /reason=method-absent/, `报错里没带原因分类（#141 的核心）：${message}`);
+  assert.match(message, /inheritSessionRoute/, '错误里必须点名那个开关');
 });
 
 check('⑦ 隐私/形状：解析结果只有 provider/model 两个字段（不带会话 id、不带正文）', () => {

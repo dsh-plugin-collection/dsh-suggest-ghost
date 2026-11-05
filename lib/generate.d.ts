@@ -274,7 +274,9 @@ export declare function buildTranscript(session: Session, maxRecentTurns: number
 export declare function routeOf(session: Session, config: Config, deployment?: {
     readonly provider: string;
     readonly model: string;
-} | undefined): {
+} | undefined, 
+/** `#141`：`deployment` 为 undefined 时，为什么拿不到（由 {@link probeDeploymentRoute} 给出）。 */
+missReason?: DeploymentRouteMissReason): {
     readonly provider: string;
     readonly model: string;
 };
@@ -284,6 +286,54 @@ export declare function routeOf(session: Session, config: Config, deployment?: {
  * 写得这么防御是因为这条服务不是各代次都有（0.1.x 的组合里可能没有），而拿不到它就是
  * "没有部署默认" —— 不能因为探测本身抛错。形状按 `{ get(): {provider, model} }` 读，
  * 不符就当没有，后面的报错会告诉用户该配什么。
+ */
+/** `deploymentRoute` 取不到部署默认时的**原因分类**（#141：不许再吞成 `undefined`）。 */
+export type DeploymentRouteMissReason = 
+/** 宿主没提供 `agentDefaultModel` 服务（组合里没装）。 */
+'service-absent'
+/** 服务在，但两种已知读法都不存在（宿主换了 API 形状）。 */
+ | 'method-absent'
+/** 方法抛错（服务内部故障）。 */
+ | 'call-threw'
+/** 方法返回了，但形状不对或 provider/model 为空。 */
+ | 'value-unusable';
+export type DeploymentRouteProbe = {
+    readonly route: {
+        readonly provider: string;
+        readonly model: string;
+    };
+    readonly reason: null;
+    readonly via: 'currentSelection' | 'get';
+} | {
+    readonly route: undefined;
+    readonly reason: DeploymentRouteMissReason;
+    readonly via: null;
+};
+/**
+ * 读宿主的**部署默认路由**（`agentDefaultModel`）。
+ *
+ * ## 为什么这条要留两种读法（#141 的现场）
+ *
+ * 宿主服务 `@deepseek-ai/dsh-agent-default-model` 的公开方法是 **`currentSelection()`**，
+ * 而本函数此前只试了 `get()` —— 七代次（0.1.2-rc.1 → 0.2.2-alpha.2）`grep` 实测**都只有
+ * `currentSelection`、都没有 `get`**。后果：凡是不显式配 provider/model 的部署（即
+ * 「跟随部署默认」这条路）**从来没通**，一律落到 `routeOf` 最后那个
+ * 「no model route available」的 throw；而显式配置那条绕开本分支，所以这个 bug 能活很久。
+ *
+ * 两种读法都留：`currentSelection` 是当代表，`get` 是历史/其它宿主形态的兜底。
+ *
+ * ## 为什么不再 `catch {}` 吞掉
+ *
+ * 旧实现把「服务不存在 / 方法不存在 / 抛错 / 值形状不对」四种原因统一压成 `undefined`，
+ * 于是排障时**分不清「宿主没给」和「我们读错了」**——这次就是后者的现场。
+ * 现在原因作为数据返回，由调用方写进失败报文的尾巴（`#97` 那族教训：静默降级最贵）。
+ */
+export declare function probeDeploymentRoute(ctx: {
+    get?: (name: string) => unknown;
+}): DeploymentRouteProbe;
+/**
+ * 部署默认路由的**读取入口**（只关心「有没有」的调用方用它）。
+ * 需要原因时用 {@link probeDeploymentRoute}。
  */
 export declare function deploymentRoute(ctx: {
     get?: (name: string) => unknown;
