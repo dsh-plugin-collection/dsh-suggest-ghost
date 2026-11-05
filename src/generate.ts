@@ -706,6 +706,8 @@ export function routeOf(
   session: Session,
   config: Config,
   deployment?: { readonly provider: string; readonly model: string } | undefined,
+  /** `#141`：`deployment` 为 undefined 时，为什么拿不到（由 {@link probeDeploymentRoute} 给出）。 */
+  missReason?: DeploymentRouteMissReason,
 ): { readonly provider: string; readonly model: string } {
   const provider = (config.provider ?? '').trim();
   const model = (config.model ?? '').trim();
@@ -733,7 +735,12 @@ export function routeOf(
     return { provider: deployment.provider, model: deployment.model };
   }
   throw new Error('dsh-suggest-ghost: no model route available — this host exposes no '
-    + 'agentDefaultModel and inheritance is off by default (#47). '
+    + 'usable agentDefaultModel'
+    // #141：把**为什么读不到**带上（service-absent / method-absent / call-threw / value-unusable）。
+    // 旧实现把这四种原因吞成一个 undefined，排障时分不清「宿主没给」与「我们读错了」——
+    // 而这次恰是后者（调的是 get()，宿主只有 currentSelection()）。不给原因就不许 throw。
+    + (missReason === undefined ? '' : ` (reason=${missReason})`)
+    + ' and inheritance is off by default (#47). '
     + 'Either configure provider and model in the plugin settings, or set inheritSessionRoute: true '
     + 'to follow the session\'s own route (known to drift onto failing routes).');
 }
@@ -745,20 +752,80 @@ export function routeOf(
  * "没有部署默认" —— 不能因为探测本身抛错。形状按 `{ get(): {provider, model} }` 读，
  * 不符就当没有，后面的报错会告诉用户该配什么。
  */
+/** `deploymentRoute` 取不到部署默认时的**原因分类**（#141：不许再吞成 `undefined`）。 */
+export type DeploymentRouteMissReason =
+  /** 宿主没提供 `agentDefaultModel` 服务（组合里没装）。 */
+  | 'service-absent'
+  /** 服务在，但两种已知读法都不存在（宿主换了 API 形状）。 */
+  | 'method-absent'
+  /** 方法抛错（服务内部故障）。 */
+  | 'call-threw'
+  /** 方法返回了，但形状不对或 provider/model 为空。 */
+  | 'value-unusable';
+
+export type DeploymentRouteProbe =
+  | { readonly route: { readonly provider: string; readonly model: string }; readonly reason: null; readonly via: 'currentSelection' | 'get' }
+  | { readonly route: undefined; readonly reason: DeploymentRouteMissReason; readonly via: null };
+
+/**
+ * 读宿主的**部署默认路由**（`agentDefaultModel`）。
+ *
+ * ## 为什么这条要留两种读法（#141 的现场）
+ *
+ * 宿主服务 `@deepseek-ai/dsh-agent-default-model` 的公开方法是 **`currentSelection()`**，
+ * 而本函数此前只试了 `get()` —— 七代次（0.1.2-rc.1 → 0.2.2-alpha.2）`grep` 实测**都只有
+ * `currentSelection`、都没有 `get`**。后果：凡是不显式配 provider/model 的部署（即
+ * 「跟随部署默认」这条路）**从来没通**，一律落到 `routeOf` 最后那个
+ * 「no model route available」的 throw；而显式配置那条绕开本分支，所以这个 bug 能活很久。
+ *
+ * 两种读法都留：`currentSelection` 是当代表，`get` 是历史/其它宿主形态的兜底。
+ *
+ * ## 为什么不再 `catch {}` 吞掉
+ *
+ * 旧实现把「服务不存在 / 方法不存在 / 抛错 / 值形状不对」四种原因统一压成 `undefined`，
+ * 于是排障时**分不清「宿主没给」和「我们读错了」**——这次就是后者的现场。
+ * 现在原因作为数据返回，由调用方写进失败报文的尾巴（`#97` 那族教训：静默降级最贵）。
+ */
+export function probeDeploymentRoute(ctx: { get?: (name: string) => unknown }): DeploymentRouteProbe {
+  let svc: unknown;
+  try {
+    svc = ctx.get?.('agentDefaultModel');
+  } catch {
+    return { route: undefined, reason: 'call-threw', via: null };
+  }
+  if (svc === undefined || svc === null || typeof svc !== 'object') {
+    return { route: undefined, reason: 'service-absent', via: null };
+  }
+  const holder = svc as { currentSelection?: () => unknown; get?: () => unknown };
+  const via = typeof holder.currentSelection === 'function'
+    ? 'currentSelection' as const
+    : typeof holder.get === 'function'
+      ? 'get' as const
+      : null;
+  if (via === null) return { route: undefined, reason: 'method-absent', via: null };
+  let raw: unknown;
+  try {
+    raw = holder[via]!();
+  } catch {
+    return { route: undefined, reason: 'call-threw', via: null };
+  }
+  if (raw === undefined || raw === null || typeof raw !== 'object') {
+    return { route: undefined, reason: 'value-unusable', via: null };
+  }
+  const row = raw as { provider?: unknown; model?: unknown };
+  const provider = typeof row.provider === 'string' ? row.provider.trim() : '';
+  const model = typeof row.model === 'string' ? row.model.trim() : '';
+  if (provider === '' || model === '') return { route: undefined, reason: 'value-unusable', via: null };
+  return { route: { provider, model }, reason: null, via };
+}
+
+/**
+ * 部署默认路由的**读取入口**（只关心「有没有」的调用方用它）。
+ * 需要原因时用 {@link probeDeploymentRoute}。
+ */
 export function deploymentRoute(ctx: { get?: (name: string) => unknown })
   : { readonly provider: string; readonly model: string } | undefined {
-  try {
-    const svc = ctx.get?.('agentDefaultModel') as { get?: () => unknown } | undefined;
-    const raw = svc?.get?.();
-    if (raw === undefined || raw === null || typeof raw !== 'object') return undefined;
-    const row = raw as { provider?: unknown; model?: unknown };
-    const provider = typeof row.provider === 'string' ? row.provider.trim() : '';
-    const model = typeof row.model === 'string' ? row.model.trim() : '';
-    if (provider === '' || model === '') return undefined;
-    return { provider, model };
-  } catch {
-    return undefined;
-  }
+  return probeDeploymentRoute(ctx).route;
 }
 
 /** 终止原因 → 失败信息。 */
@@ -856,7 +923,8 @@ export async function generateSuggestion(
   if (transcript === undefined) {
     throw new Error('dsh-suggest-ghost: session has no model-visible transcript to suggest from');
   }
-  const route = routeOf(session, config, deploymentRoute(ctx));
+  const probe = probeDeploymentRoute(ctx);
+  const route = routeOf(session, config, probe.route, probe.reason ?? undefined);
   // 语言判定：指定模式直接使用用户选择的语言；自动模式才走加权推断。
   // 证据取 evidencePairs（未经输入预算裁剪），不取 transcript.pairs——见其注释。
   let language: string;
@@ -1013,7 +1081,8 @@ export async function generateCompletion(
 ): Promise<{ text: string | undefined; language: string; metrics: StreamMetrics }> {
   signal.throwIfAborted();
   const startedAt = Date.now();
-  const route = routeOf(session, config, deploymentRoute(ctx));
+  const probe = probeDeploymentRoute(ctx);
+  const route = routeOf(session, config, probe.route, probe.reason ?? undefined);
   // 语言判定：指定模式直接使用用户选择的语言；自动模式才走加权推断。
   // 注意：草稿目前**没有**参与语言推断（只传历史证据对）——「中文会话里打英文草稿
   // 被判成中文续写」是已知缺口，另开条目修，不在本改动里混做。
