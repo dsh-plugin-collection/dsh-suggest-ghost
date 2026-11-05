@@ -366,7 +366,13 @@ run('设置页字段集合与基线一致（#108 之后共 29 项，含两个推
     'llmEnabled', 'suggestionReasoningEffort', 'streamingDelivery', 'historyEnabled', 'historyCrossSession',
     'historyMaxEntries', 'historyMinChars',
     'inlineEnabled', 'inlineDelayMs', 'inlineMinChars', 'inlineMaxChars', 'completionReasoningEffort',
-    'wordAccept', 'acceptKey', 'languageMode', 'uiLocaleWeight', '_ops', '_push', '_hot', '_residual',
+    'wordAccept', 'acceptKey',
+    // #127 两条（regen，声明在 `acceptKey` 之后、`languageMode` 之前）：**允许换一条** 与
+    // **换一条快捷键**。两者都进 schema / live-settings 键表 / 设置卡 / 客户端解析四处；
+    // 配额与冷却是常量、**刻意不是**字段（它们是安全边界，可配就等于把「连按刷调用」的上限
+    // 交给用户关掉，取舍见 `src/regen.ts` 模块头）。顺序必须与 `EditableFields` 一致。
+    'regenEnabled', 'regenKey',
+    'languageMode', 'uiLocaleWeight', '_ops', '_push', '_hot', '_residual',
   ];
   assert.deepEqual(
     editableFields,

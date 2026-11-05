@@ -115,6 +115,10 @@ run('sandbox.greps 全部仍能在源码里命中（改完不许让沙箱抓空�
   // 假的「串丢了」结论（本冒烟第一版就是这么红的）。
   // 例外：`apply called; artifact mtime=` 是宿主 devkit 打的行，不在本仓源码里。
   const files = ['index.ts', 'completion-gate.ts', 'generate.ts', 'sanitize.ts', 'stream.ts', 'hotness.ts',
+    // #127 之后 `sandbox.greps` 里还有 `regen-*` 与 `ops consumed: regen`：它们的家是
+    // `src/regen.ts`（留痕构造函数）与 `src/index.ts`（分发点）。逐文件枚举的白名单天然
+    // 会漏新模块 —— 这正是本断言该抓的东西（它在合并 #127 时确实红了一次）。
+    'regen.ts', 'text-match.ts', 'trace.ts',
     'client/index.ts', 'client/history.ts'].map((f) => {
     try { return readFileSync(fileURLToPath(new URL(`../src/${f}`, import.meta.url)), 'utf8'); } catch { return ''; }
   }).join('\n');

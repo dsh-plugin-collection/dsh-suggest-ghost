@@ -168,6 +168,28 @@ export const GHOST_FIELDS: ReadonlyArray<{
     writable: true,
   },
   {
+    key: 'regenKey',
+    label: { zh: '换一条快捷键', en: 'Regenerate shortcut' },
+    hint: {
+      zh: '建议不满意时换一条的快捷键（只在幽灵显示时生效）。默认 Alt+G。',
+      en: 'Shortcut to ask for another suggestion (only while the ghost is visible). Alt+G by default.',
+    },
+    kind: 'key',
+    section: 'llm',
+    writable: true,
+  },
+  {
+    key: 'regenEnabled',
+    label: { zh: '允许换一条', en: 'Allow regenerate' },
+    hint: {
+      zh: '打开后可以按上面的快捷键再要一条建议；每回合有次数上限，避免误触时连续调用模型。',
+      en: 'Lets you ask for another suggestion with the shortcut above. Capped per turn so a stray keypress cannot keep calling the model.',
+    },
+    kind: 'boolean',
+    section: 'llm',
+    writable: true,
+  },
+  {
     key: 'acceptKey',
     label: { zh: '采纳快捷键', en: 'Accept shortcut' },
     hint: {

@@ -53,6 +53,13 @@ export interface Config {
     suggestionReasoningEffort?: string;
     /** 停顿续写那次辅助调用的推理档位（#35），语义同 `suggestionReasoningEffort`。 */
     completionReasoningEffort?: string;
+    /**
+     * 重出「换一条」开关（#127，默认开）。关掉之后 `regen` op 仍会被消费，
+     * 但一律判 `regen-refused reason=disabled` 并留痕——不是静默 return。
+     */
+    regenEnabled?: boolean;
+    /** 触发重出的快捷键 spec（#127，默认 `Alt+G`）。空/空白 = 回落默认值，见 `resolveConfig`。 */
+    regenKey?: string;
 }
 /**
  * 0.1.7 的用户可调项。
@@ -64,6 +71,10 @@ export interface Config {
 export interface EditableConfig {
     llmEnabled?: Volatile<boolean> | boolean;
     streamingDelivery?: Volatile<boolean> | boolean;
+    /** 重出开关（#127）。volatile：设置页要能改，且改了不必重启。 */
+    regenEnabled?: Volatile<boolean> | boolean;
+    /** 重出快捷键 spec（#127）。volatile，判据与 `acceptKey` 同套（空串丢弃回落默认）。 */
+    regenKey?: Volatile<string> | string;
     historyEnabled?: Volatile<boolean> | boolean;
     historyCrossSession?: Volatile<boolean> | boolean;
     historyMaxEntries?: Volatile<number> | number;
@@ -300,7 +311,19 @@ export declare function generateSuggestion(ctx: Context, config: Config, session
  * 调用方**不传**）⇒ 开关关着时这条路径一个字节都不多走。净化由调用方做
  * （`prefixSafeClean`）："哪一帧可以显示"是投递侧的判断，不是模型的。
  */
-onTextDelta?: (rawCumulative: string) => void): Promise<{
+onTextDelta?: (rawCumulative: string) => void, 
+/**
+ * 追加到 system prompt **尾部**的负向约束块（#127 重出：把本回合已产出/已被拒的
+ * 至多 3 条正文以「MUST NOT repeat any of these」压回去）。
+ *
+ * **只在调用处拼接，`systemPrompt()` 本体一字不改**：那句措辞是全仓回归基线绑着的
+ * （README 的 42 次实测口径建立在它之上），改本体要付的回归代价远大于拼一块尾巴。
+ * 缺省 / 空串 ⇒ 拼出来的 `system` 与今天**逐字相同**（回归判据由
+ * `scripts/regen-smoke.mjs` 钉：不传这一参时整次调用的 system 不变）。
+ *
+ * 块的构造在 `src/regen.ts` 的 `buildAvoidBlock`（判同口径同源，去重与截尾也在那里）。
+ */
+avoidBlock?: string): Promise<{
     suggestion: SuggestGhostSuggested | undefined;
     language: string;
     metrics: StreamMetrics;

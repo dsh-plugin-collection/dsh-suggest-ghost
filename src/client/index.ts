@@ -30,7 +30,9 @@
 import type {} from '@deepseek-ai/dsh-client-ui-conversation';
 import type { Context } from '@deepseek-ai/cordis';
 import type { SuggestGhostProjection, SuggestGhostSuggested } from '../domain.js';
-import { clearNormalizeCache, commonPrefixLength, extractHistory, historySuggestion, normalizeForMatch, stripCommandPrefix } from './history.js';
+// `hashText32` 经 `./history.js` 的 re-export 取（它不是本地再算一遍）：宿主用摘要对齐
+// 「用户眼前那条」，而本文件在浏览器里跑 ⇒ 两个运行时必须逐字同值，唯一保证是同一份源码。
+import { clearNormalizeCache, commonPrefixLength, extractHistory, hashText32, historySuggestion, normalizeForMatch, stripCommandPrefix } from './history.js';
 import {
   acceptTarget,
   buildFullAccept,
@@ -395,6 +397,11 @@ type PushedPayload = {
   final?: unknown;
   completion?: { draft?: unknown; text?: unknown; final?: unknown } | null;
   completionSessionId?: unknown;
+  /**
+   * 「换一条」在途（#127）。宿主**只在 true 时写**、且每次组装时现算 ⇒ 读到缺省就是
+   * 「不在途」。旧宿主不给这个键 ⇒ 永远读成不在途（滚动升级期间无害）。
+   */
+  regenPending?: unknown;
 };
 
 /**
@@ -528,7 +535,8 @@ function parseAcceptKey(spec: string): ((event: KeyboardEvent) => boolean) | und
  * 采纳链（Tab / `→`）据此拒绝 provisional 帧；缺省即旧载荷行为不变。
  */
 type GhostContent =
-  | { kind: 'llm'; text: string; acceptKey: string; frame: FrameHint }
+  /** `pending`：宿主正在为这个会话重出（#127）⇒ 这条是**旧**的，落地后会被换掉。 */
+  | { kind: 'llm'; text: string; acceptKey: string; frame: FrameHint; pending: boolean }
   | { kind: 'history'; prefix: string; suffix: string; full: string; frame: FrameHint }
   /** 停顿续写：LLM 生成的草稿延续（prefix=当时草稿，suffix=续写文本，full=prefix+suffix）。 */
   | { kind: 'inline'; prefix: string; suffix: string; full: string; frame: FrameHint };
@@ -1042,6 +1050,14 @@ class GhostOverlay {
    * @param content - 本帧要显示的幽灵内容。
    */
   show(content: GhostContent): void {
+
+    // #127：把「宿主正在重出」标在**我们自己的节点**上（不引入新样式、不动几何判据）。
+    // 采信方是留痕与真 GUI 取证：`[data-regen-pending="1"]` 可纯读 DOM 判断「这条是旧的」。
+    if (content.kind === 'llm' && content.pending) {
+      this.el.dataset.regenPending = '1';
+    } else {
+      delete this.el.dataset.regenPending;
+    }
     const next = overlayShapeOf(content);
     const action = decideOverlayPaint({
       prev: this.shape,
@@ -1268,6 +1284,12 @@ function applyBody(ctx: Context): void {
     // #129：LLM 形态的进入判据把这一支拦掉了（草稿里有用户已输入的字符）。
     // 常态槽（`ROUTINE_TRACE_SLOTS`，debug 级）：它每帧都可能成立，不是故障。
     'llm-form-guard': null,
+    // #127：换一条的两条客户端留痕。`regen-skipped` 是常态（在历史补全/续写上按 regen 键
+    // 不会有任何动作，而那是设计如此），`regen-requested` 只是发出确认。
+    // 两者都进常态槽（debug 级）：它们每帧都可能成立，不是故障（#97 那条反向教训：
+    // 只有真正的失败才该走 warn）。
+    'regen-skipped': null,
+    'regen-requested': null,
     'deferred-repaint': null,
     'push-cell': null,
   };
@@ -1290,6 +1312,10 @@ function applyBody(ctx: Context): void {
     'push-cell',
     'inline-arm-cancel',
     'deferred-repaint',
+    // #127：换一条的两条（同上，常态证据走 debug）。
+    'llm-form-guard',
+    'regen-skipped',
+    'regen-requested',
     // #129：「非空草稿 ⇒ llm 形态不可达」在用户打字的整段时间里**每帧都成立**，
     // 属常态证据（判据把形态拦掉了），不是故障。留痕只在理由变化时打一行，
     // 通道走 debug（默认隐藏，Verbose 可见）——与 `tab-abandon` 那类失败告警相反。
@@ -1337,6 +1363,11 @@ function applyBody(ctx: Context): void {
     inlineMinChars: number;
     /** 幽灵显示时允许 → 逐词采纳（Tab 始终整条采纳）。 */
     wordAccept: boolean;
+    /** #127：换一条的开关与快捷键（宿主侧 `.volatile()` ⇒ 卡片可改、即时生效）。 */
+    regenEnabled: boolean;
+    regenKey: string;
+    /** #127：宿主在途读到的「换一条」状态（只在 true 时被宿主写进载荷）。 */
+    regenPending: boolean;
     /** host 实时推送：最新 LLM 建议（rev 递增识别新值）。 */
     suggestion: {
       turn: number;
@@ -1375,6 +1406,9 @@ function applyBody(ctx: Context): void {
     inlineDelayMs: 100,
     inlineMinChars: 4,
     wordAccept: true,
+    regenEnabled: true,
+    regenKey: 'Alt+G',
+    regenPending: false,
     suggestion: cached.suggestion ?? null,
     // 缓存里的建议可能来自上一进程；帧提示一起持久化，避免把 provisional 帧的
     // 建议冷启动后当成终帧采纳（读不到时按旧载荷兜底）。
@@ -1392,6 +1426,9 @@ function applyBody(ctx: Context): void {
    * 设置版本号：每次 applySettings 实际替换 settings 时递增。
    * 用于 ghostContent 缓存失效——避免把"草稿未变但 settings 已换"误判为命中。
    */
+  /** #127：宿主文档 revision 的只读镜像（`regen` 载荷的 `basisRev` 只用于归因）。 */
+  let documentRevisionSeen = -1;
+
   let settingsEpoch = 0;
 
   /** hotCounts Map 缓存：按 hot 数组引用失效，避免每次按键重建 2000 条归一化。 */
@@ -1481,7 +1518,9 @@ function applyBody(ctx: Context): void {
     let key: string | null = null;
     if (result !== null) {
       key = result.kind === 'llm'
-        ? `llm:${result.text}`
+        // #127：在途位进 key ⇒ 重新武装/在途开始这两个边沿都会触发重绘（#21 的判据
+        // 「观察值没变就不重画」不受影响：不在途时后缀恒为空 ⇒ 与改动前逐字相同）。
+        ? `llm:${result.pending ? 'pending:' : ''}${result.text}`
         : `${result.kind}:${result.prefix}|${result.suffix}`;
     }
 
@@ -1658,6 +1697,9 @@ function applyBody(ctx: Context): void {
         text: streamed.text,
         acceptKey: settings.suggestion?.acceptKey ?? 'Tab',
         frame: { frame: streamed.frame, final: streamed.final },
+        // 流式帧本身就是"正在增长"，与「换一条在途」是两件事：它有自己的帧号，
+        // 所以这里恒为 false（在途位只由 `_push.regenPending` 驱动）。
+        pending: false,
       };
     }
     const suggestion = settings.suggestion;
@@ -1673,7 +1715,14 @@ function applyBody(ctx: Context): void {
     }
     pushCellStats.llmGhostOffered += 1;
     // 帧提示随内容一起交给采纳链（#38）：provisional 帧可以显示，但不许采纳。
-    return { kind: 'llm', text: suggestion.text, acceptKey: suggestion.acceptKey, frame: settings.suggestionFrame };
+    return {
+      kind: 'llm',
+      text: suggestion.text,
+      acceptKey: suggestion.acceptKey,
+      frame: settings.suggestionFrame,
+      // #127：宿主在途 ⇒ 这条是旧的。**不在途时不带这个位**，让 key 与既有缓存逐字不变。
+      pending: settings.regenPending,
+    };
   };
 
   /** 缓存的上一次输入框查询结果（React 可能重建节点；isConnected 校验兜底）。 */
@@ -1998,6 +2047,38 @@ function applyBody(ctx: Context): void {
    * @param ghostKind - 本次 render 算出的幽灵形态；`inline` 表示该草稿的续写已在
    *                    屏幕上，没有再问一次的必要（也是写→推→render→再写的回环出口）。
    */
+  /**
+   * 请求宿主**重出**当前这条建议（#127）。
+   *
+   * 载荷只放**摘要与 rev**，不放正文：`_ops` 会落进 profile 文档，而「消费后清空」在事件
+   * 回调里历史上几乎必然被 nested transaction 拒 ⇒ 把模型产出抄进这条长期留盘的通道，
+   * 等于新增一类留在盘上的生成内容。宿主内存里本来就有本会话那条建议（`suggestionBySession`），
+   * 用摘要对齐即可；对不上时宿主走「盲重出」并留一行 `regen-no-basis`，不静默。
+   *
+   * `basisRev` 同理**只用于归因**（宿主重启后两侧计数器不可比，拿它当判据就成了
+   * 「因一次重启而拒绝服务」）。
+   *
+   * @param content - 当前在屏的 llm 形态（`text` 是用户眼前那条正文）。
+   * @param base - 与它同源的草稿快照（本函数不读它，保留参数是为了与采纳链共用同一份基线语义）。
+   */
+  const requestRegen = (content: Extract<GhostContent, { kind: 'llm' }>, base: { readonly draft: string }): void => {
+    const sessionId = currentSessionIdOf(sessions.list.getSnapshot());
+    if (sessionId === undefined) {
+      traceOnce('regen-skipped', 'no-session', ` shownChars=${content.text.length} draftChars=${base.draft.length}`);
+      return;
+    }
+    regenRev += 1;
+    traceOnce('regen-requested', 'sent', ` shownChars=${content.text.length} draftChars=${base.draft.length}`);
+    traceClear('regen-requested', null);
+    void writeOps(
+      JSON.stringify({
+        rev: regenRev,
+        ops: [{ op: 'regen', sessionId, basisRev: documentRevisionSeen, shownHash: hashText32(content.text) }],
+      }),
+      'regen',
+    );
+  };
+
   const scheduleInlineTrigger = (currentId: string | undefined, ghostKind: InlineArmGhostKind): void => {
     const sessionId = bound === null ? null : currentId ?? null;
     const obs = {
@@ -2060,6 +2141,8 @@ function applyBody(ctx: Context): void {
     }, Math.max(0, decision.dueAt! - obs.now));
   };
   let pullRev = 0;
+  /** #127：换一条的写序号（与 pull 分开，便于留痕里区分两类写入）。 */
+  let regenRev = 0;
   let lastPulledSessionId: string | undefined;
   /** 尚未确认收到应答的 pull（见 retryPendingPull）；null = 无待确认请求。 */
   let pendingPull: { sessionId: string; attempts: number } | null = null;
@@ -2237,6 +2320,7 @@ function applyBody(ctx: Context): void {
           const rev = typeof entry.revision === 'number' ? entry.revision : 0;
           if (rev === lastRevision) return;
           lastRevision = rev;
+          documentRevisionSeen = rev;
           pushCellStats.applies += 1;
           const v = (entry.value ?? {}) as Record<string, unknown>;
           const pushRaw = typeof v._push === 'string' ? v._push : '';
@@ -2321,6 +2405,8 @@ function applyBody(ctx: Context): void {
             inlineDelayMs: typeof v.inlineDelayMs === 'number' ? v.inlineDelayMs : 100,
             inlineMinChars: typeof v.inlineMinChars === 'number' ? v.inlineMinChars : 4,
             wordAccept: typeof v.wordAccept === 'boolean' ? v.wordAccept : true,
+            regenEnabled: typeof v.regenEnabled === 'boolean' ? v.regenEnabled : true,
+            regenKey: typeof v.regenKey === 'string' && v.regenKey.trim().length > 0 ? v.regenKey : 'Alt+G',
             suggestion: pushed?.suggestion === null || pushed?.suggestion === undefined
               ? null
               : (pushed.suggestion as typeof settings.suggestion),
@@ -2341,6 +2427,8 @@ function applyBody(ctx: Context): void {
               ? (typeof hotSource.historySessionId === 'string' ? hotSource.historySessionId : null)
               : settings.historySessionId,
             suggestionSessionId: typeof pushed?.suggestionSessionId === 'string' ? pushed.suggestionSessionId : null,
+            // #127：宿主只在 true 时写 ⇒ 缺省即「不在途」。旧宿主不给键也读 false（升级期无害）。
+            regenPending: pushed?.regenPending === true,
             // 续写：载荷省略 = host 未更新（保留现值，显示时仍以 draft 全等校验兜底）；
             // 显式 null = host 作废（切会话/回合结束清理）。
             completion: pushed?.completion === undefined
@@ -2450,6 +2538,28 @@ function applyBody(ctx: Context): void {
     // CAS 基线：这份 content **计算时**所用的草稿快照（文本 + 宿主 draftRev）。
     const base = shown.base;
     const acceptKey = content.kind === 'llm' ? content.acceptKey : DEFAULT_ACCEPT_KEY;
+    // ── #127 换一条（regen）──────────────────────────────────────────────────
+    // 只在幽灵在屏时可用（`shown !== null` 是 `onKeyDown` 的头一道门）。**排在采纳闸之前**：
+    // 若把 regen 键与 acceptKey 配成同一个键，采纳优先是本仓既有语义（Tab 永远采纳），
+    // 而 regen 是**新增**入口，不该抢走用户已经习惯的那一个。
+    // 与 `acceptKey` 不同，regen **吞按键**（preventDefault）：否则 `Alt+G` 在某些宿主组合上
+    // 会落到浏览器 / 系统的原生动作上（例如带 Alt 的菜单快捷键），那是用户没要的副作用。
+    if (settings.regenEnabled) {
+      const regenMatcher = parseAcceptKey(settings.regenKey);
+      if (regenMatcher !== undefined && regenMatcher(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (content.kind === 'llm') {
+          // 只对 LLM 建议有意义：历史补全/续写是本地即时算出的，没有"再要一条"这种语义
+          // （它们的候选集合由历史环与草稿决定，重出的结果必然是同一份）。
+          requestRegen(content, base);
+        } else {
+          traceOnce('regen-skipped', 'not-llm', ` kind=${content.kind}`);
+        }
+        return;
+      }
+    }
+
     const matcher = parseAcceptKey(acceptKey);
     if (matcher !== undefined && matcher(event)) {
       // ── #38 采纳闸（整条）：只认终帧 ─────────────────────────────────────────

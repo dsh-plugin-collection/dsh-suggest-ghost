@@ -119,6 +119,13 @@ export interface Config {
   suggestionReasoningEffort?: string;
   /** 停顿续写那次辅助调用的推理档位（#35），语义同 `suggestionReasoningEffort`。 */
   completionReasoningEffort?: string;
+  /**
+   * 重出「换一条」开关（#127，默认开）。关掉之后 `regen` op 仍会被消费，
+   * 但一律判 `regen-refused reason=disabled` 并留痕——不是静默 return。
+   */
+  regenEnabled?: boolean;
+  /** 触发重出的快捷键 spec（#127，默认 `Alt+G`）。空/空白 = 回落默认值，见 `resolveConfig`。 */
+  regenKey?: string;
 }
 
 /**
@@ -131,6 +138,10 @@ export interface Config {
 export interface EditableConfig {
   llmEnabled?: Volatile<boolean> | boolean;
   streamingDelivery?: Volatile<boolean> | boolean;
+  /** 重出开关（#127）。volatile：设置页要能改，且改了不必重启。 */
+  regenEnabled?: Volatile<boolean> | boolean;
+  /** 重出快捷键 spec（#127）。volatile，判据与 `acceptKey` 同套（空串丢弃回落默认）。 */
+  regenKey?: Volatile<string> | string;
   historyEnabled?: Volatile<boolean> | boolean;
   historyCrossSession?: Volatile<boolean> | boolean;
   historyMaxEntries?: Volatile<number> | number;
@@ -206,6 +217,11 @@ export function flattenConfig(config: ResolvedPluginConfig): FlatConfig {
     wordAccept: readVolatile(config.wordAccept, true),
     languageMode: readVolatile(config.languageMode, 'auto'),
     uiLocaleWeight: readVolatile(config.uiLocaleWeight, 100),
+    // #127 重出。默认值与 `index.ts` 的 schema `.default()` 逐字同值：
+    // `true`（这是补齐一个缺失的交互，不是新增一项成本）、`'Alt+G'`（键面选型见
+    // `scripts/keyspec-smoke.mjs` 的默认值断言与 #127 的排除表）。
+    regenEnabled: readVolatile(config.regenEnabled, true),
+    regenKey: readVolatile(config.regenKey, 'Alt+G'),
     inlineEnabled: readVolatile(config.inlineEnabled, true),
     inlineDelayMs: readVolatile(config.inlineDelayMs, 100),
     inlineMinChars: readVolatile(config.inlineMinChars, 4),
@@ -256,6 +272,10 @@ export function resolveConfig(config: Config): Config {
     wordAccept: readVolatile(raw.wordAccept, true),
     languageMode: readVolatile(raw.languageMode, 'auto'),
     uiLocaleWeight: readVolatile(raw.uiLocaleWeight, 100),
+    // #127 重出。与 `flattenConfig` 那一处**同值**（两处 readVolatile 都要登记，
+    // 漏一处的后果见 Gitea #124 配置面一节：解析层与拍平层给出不同的默认值）。
+    regenEnabled: readVolatile(raw.regenEnabled, true),
+    regenKey: readVolatile(raw.regenKey, 'Alt+G'),
     suggestionReasoningEffort: readVolatile(raw.suggestionReasoningEffort, ''),
     completionReasoningEffort: readVolatile(raw.completionReasoningEffort, ''),
   };
@@ -294,6 +314,15 @@ export function resolveConfig(config: Config): Config {
   if (value.acceptKey !== undefined
     && (typeof value.acceptKey !== 'string' || value.acceptKey.trim().length === 0)) {
     throw new Error('dsh-suggest-ghost: acceptKey must be a non-empty shortcut string');
+  }
+  // #127 重出的两键。判据与 `acceptKey` 逐字同套（空/空白 = 这一支永不命中，是配置错误
+  // 而不是「关闭」——关闭走 `regenEnabled`）。
+  if (value.regenKey !== undefined
+    && (typeof value.regenKey !== 'string' || value.regenKey.trim().length === 0)) {
+    throw new Error('dsh-suggest-ghost: regenKey must be a non-empty shortcut string');
+  }
+  if (value.regenEnabled !== undefined && typeof value.regenEnabled !== 'boolean') {
+    throw new Error('dsh-suggest-ghost: regenEnabled must be a boolean');
   }
   if (value.llmEnabled !== undefined && typeof value.llmEnabled !== 'boolean') {
     throw new Error('dsh-suggest-ghost: llmEnabled must be a boolean');
@@ -795,6 +824,18 @@ export async function generateSuggestion(
    * （`prefixSafeClean`）："哪一帧可以显示"是投递侧的判断，不是模型的。
    */
   onTextDelta?: (rawCumulative: string) => void,
+  /**
+   * 追加到 system prompt **尾部**的负向约束块（#127 重出：把本回合已产出/已被拒的
+   * 至多 3 条正文以「MUST NOT repeat any of these」压回去）。
+   *
+   * **只在调用处拼接，`systemPrompt()` 本体一字不改**：那句措辞是全仓回归基线绑着的
+   * （README 的 42 次实测口径建立在它之上），改本体要付的回归代价远大于拼一块尾巴。
+   * 缺省 / 空串 ⇒ 拼出来的 `system` 与今天**逐字相同**（回归判据由
+   * `scripts/regen-smoke.mjs` 钉：不传这一参时整次调用的 system 不变）。
+   *
+   * 块的构造在 `src/regen.ts` 的 `buildAvoidBlock`（判同口径同源，去重与截尾也在那里）。
+   */
+  avoidBlock?: string,
 ): Promise<{
   suggestion: SuggestGhostSuggested | undefined;
   language: string;

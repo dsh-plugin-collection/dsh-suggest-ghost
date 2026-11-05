@@ -7,7 +7,7 @@
  * 指向本仓源码的相对说明符统一成宿主侧的 `.js` 写法（B 方案；`import type` 一并改，
  * 因为「同文件一半 `.js` 一半 `.ts`」的混用正是这条要消的根源不对称）。
  *
- * 改完还剩**唯一一处刻意保留**：`src/client/accept-guard.ts` 的 `'./history.ts'`。
+ * 改完还剩**两处刻意保留**（第二处见下）：`src/client/accept-guard.ts` 的 `'./history.ts'`。
  * 它不是漏网，是**两条约束的交叉点**：那 5 条离线冒烟
  * （`accept-cas-smoke` / `frame-monotonic-smoke` / `legacy-payload-smoke` /
  * `provisional-accept-smoke` / `ghost-frame-e2e`）**刻意按 TS 源码直载**，为的就是
@@ -38,6 +38,14 @@ const CLIENT_DIR = fileURLToPath(new URL('../src/client', import.meta.url));
  */
 const ALLOWED = [
   { file: 'accept-guard.ts', line: 51, specifier: './history.ts' },
+  // 第二处（#127）：`src/client/history.ts` 的 `'../text-match.ts'`。
+  // 归一化与判同的唯一实现家在 `src/text-match.ts`（宿主的重出判同与这里的历史补全**必须**
+  // 共用同一套口径，两份实现的分叉在界面上只会长成「按了没反应」）。而 `history.ts` 自己
+  // 被 8 条离线冒烟按 TS 源码直载（`history-smoke` / `accept-cas` / `provisional-accept` /
+  // `llm-form-guard` / `replay-history` / `hot-window-*` / `scaffold-opener-hitrate`）⇒
+  // 写成 `'../text-match.js'` 会当场 `ERR_MODULE_NOT_FOUND`（同一机理，见上面那段的实测）。
+  // 代价：客户端诊断面多一条 TS5097（7 → 8），是 lead 明确授权的变化，见 #127。
+  { file: 'history.ts', line: 72, specifier: '../text-match.ts' },
 ];
 
 /** 带 `.ts` / `.tsx` 扩展名的**相对**说明符（指向本仓源码；不含 `@deepseek-ai/*` 那类裸包名）。 */

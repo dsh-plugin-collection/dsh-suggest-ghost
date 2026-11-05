@@ -60,33 +60,19 @@ export function extractHistory(nodes: readonly unknown[]): string[] {
 }
 
 /**
- * 归一化缓存：同一文本只跑一次 5 条正则。
- * 缓存在 settings 变更时由调用方通过 {@link clearNormalizeCache} 清空，
- * 避免跨推送的旧条目泄漏内存。
+ * 归一化与判同的**唯一实现**在 `src/text-match.ts`（#127：宿主的重出判同与这里的
+ * 历史补全必须共用同一套口径，两份实现的分叉在界面上都长成「按了没反应」）。
+ *
+ * 说明符写 `'../text-match.ts'`（带 `.ts`）而不是宿主侧惯例的 `.js`：本文件被 8 条
+ * 离线冒烟按 TS 源码直载（`--experimental-strip-types`），Node 的 type-stripping
+ * **不做 `.js → .ts` 回退** ⇒ 用 `.js` 会当场 `ERR_MODULE_NOT_FOUND`。先例与本仓的
+ * 取舍记录见 `src/client/accept-guard.ts` 顶部那条同款说明符，与
+ * `scripts/client-import-surface-smoke.mjs` 的白名单。
  */
-const normalizeCache = new Map<string, string>();
+import { clearNormalizeCache, hashText32, normalizeForMatch } from '../text-match.ts';
 
-/** 清空归一化缓存（settings 变更时调用）。 */
-export function clearNormalizeCache(): void {
-  normalizeCache.clear();
-}
-
-/**
- * 匹配用归一化：全角 ASCII（U+FF01–U+FF5E，含 ，？！等）→ 半角、表意空格 →
- * 空格、小写化、连续空白折叠、去首尾。只用于比较与打分，不改动展示文本。
- */
-export function normalizeForMatch(text: string): string {
-  const cached = normalizeCache.get(text);
-  if (cached !== undefined) return cached;
-  const result = text
-    .replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
-    .replace(/\u3000/g, ' ')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-  normalizeCache.set(text, result);
-  return result;
-}
+/** 按原名继续对外导出：既有调用方（本文件内部与 `src/client/index.ts`）一字不改。 */
+export { clearNormalizeCache, hashText32, normalizeForMatch };
 
 /** 两串按 UTF-16 码元的公共前缀长度（渲染幽灵时对齐已输入部分用）。 */
 export function commonPrefixLength(a: string, b: string): number {

@@ -58,7 +58,9 @@ export interface GhostPushPayload {
         readonly truncated: boolean;
         readonly acceptKey: string;
         /**
-         * 单次生成内的帧号（>=1，单调；见 domain.ts 的 SuggestGhostSuggested）。
+         * 同 `(会话, turn)` 桶内单调递增的帧号（>=1；语义与推翻记录见 domain.ts 的
+         * `SuggestGhostSuggested` 头部——**这里曾经是「单次生成内的帧号」**，#127 加入重出之后
+         * 「一次生成」不再等于一个桶，同一回合会产出第二条建议，所以宿主现在桶内递增）。
          * host 侧由 `pushToClient` 统一补齐（缺省 1），所以这个键在载荷里**恒在**。
          */
         readonly frame: number;
@@ -77,6 +79,31 @@ export interface GhostPushPayload {
     readonly completionSessionId?: string | null;
     /** 最近一次生成失败的摘要（可诊断）。 */
     readonly error?: string;
+    /**
+     * 本会话有一次**重出**在途（#127）。缺省 = `false`（旧宿主从不写这一键）。
+     *
+     * ## 它必须每次派生，不许「写进去一次再等它消失」
+     *
+     * `_push` 是**省略式拼装**（`buildPushPayload` 用条件展开）：不带某个键时该键就**不出现**，
+     * 于是任何一次无关推送（切会话的 `pull` 应答就是最常见的一个）都会把它整条抹掉。
+     * 同一个机制在 `error` 键上已被 #136 实测到：live 里 `_push` 没有 error ≠ 从来没写过。
+     * ⇒ 这一位**只从宿主的在途集合派生**（`src/index.ts` 的 `regenPendingFor`），
+     * 每次组装载荷现算；在途 ⇒ `true`，不在途 ⇒ **不写这一键**（零额外字节）。
+     * 断言钉在 `scripts/regen-smoke.mjs`：先落 pending，再来一次无关推送，pending 仍在。
+     *
+     * ## 为什么 pending 是宿主驱动而不是客户端自绘
+     *
+     * 客户端自绘无法区分「在途」与「被配额拒」——宿主 refuse 时**一个字节都不写**，
+     * 乐观置灰就会在配额耗尽那一按上骗人到超时为止，而那正是验收②要求「幽灵保持原样」的
+     * 场景。宿主驱动的代价是多一笔写，而这笔写受配额硬顶（每回合 ≤2 次 ⇒ 每回合 ≤4 笔）。
+     *
+     * ## 兼容
+     *
+     * 与 `error` 同族：格内可选键，整格缺省 = 客户端保留现值，未知键天然忽略。
+     * ⚠️ 「旧客户端容忍 `_push` 新增键」今天只在 `_residual` 上验证过（#56），
+     * 这一条要用当前 main 的 `lib/client.js` 配新宿主实测，不能只靠推理。
+     */
+    readonly regenPending?: boolean;
 }
 /**
  * host → client 的**热度格**载荷（`_hot` 字段的 JSON 形态）。
