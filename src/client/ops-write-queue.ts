@@ -35,7 +35,14 @@
  */
 
 /** 写入来源：`complete` 可合并，`pull` 不可合并（见模块头）。 */
-export type OpsWriteKind = 'pull' | 'complete';
+/**
+ * 写入类型。
+ *
+ * `regen`（#127 换一条）与 `complete` 一样**不合并**（每次按键都是一次有意义的用户意图，
+ * 合并掉就等于「按了三次只发一次」）；但与 `pull` 也不同——它在宿主侧有配额，
+ * 客户端**不能**替宿主做取舍。所以它既不 last-wins 也不去重，按 FIFO 逐条发。
+ */
+export type OpsWriteKind = 'pull' | 'complete' | 'regen';
 
 /** 队列里等待执行的一项。`resolve` 在兑现时只调用一次。 */
 interface QueuedWrite {

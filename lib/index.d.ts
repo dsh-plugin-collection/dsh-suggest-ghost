@@ -56,6 +56,8 @@ export interface PluginConfigValues {
     completionReasoningEffort: Volatile<string>;
     wordAccept: Volatile<boolean>;
     acceptKey: Volatile<string>;
+    regenEnabled: Volatile<boolean>;
+    regenKey: Volatile<string>;
     languageMode: Volatile<string>;
     uiLocaleWeight: Volatile<number>;
     _ops: Volatile<string>;
@@ -158,6 +160,24 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
     wordAccept: z<boolean, boolean, "volatile-defined">;
     /** 采纳建议的输入框快捷键（默认 Tab）。 */
     acceptKey: z<string, string, "volatile-defined">;
+    /**
+     * 「换一条」开关（#127，默认**开**）。
+     *
+     * 默认开的理由写进工单：这条补的是**一个缺失的交互**（用户对当前那条不满意时，
+     * 界面上原本没有任何入口），不是新增一项功能成本。配额与冷却是常量、不在这里
+     * （判据与先例见 `src/regen.ts` 顶部：那两个防的是「连按刷调用」，是安全边界，
+     * 可配就等于把上限交给用户关掉）。
+     */
+    regenEnabled: z<boolean, boolean, "volatile-defined">;
+    /**
+     * 触发「换一条」的快捷键 spec（#127，默认 `Alt+G`）。
+     *
+     * `min(1)` 与 `acceptKey` 同套：空串在 `SettingsForms` 上写不进去，而空白值在
+     * 两侧都会退化成「这一支永不命中」。默认值必须被 `keyCodeOf` 认得——这一条钉在
+     * `scripts/keyspec-smoke.mjs`，历史上「spec 写了表里没有的主键 ⇒ 静默不生效」
+     * 是本仓真实踩过的坑（`src/client/index.ts` 的 `parseAcceptKey` 注释）。
+     */
+    regenKey: z<string, string, "volatile-defined">;
     /**
      * 建议语言模式：'auto' = 自动推断（结合 UI 语言 + 用户消息文字分布）；
      * 'zh' / 'zh-TW' / 'en' / 'ja' / 'ko' / 'ru' / 'fr' / 'de' / 'es' = 强制指定语言。
@@ -299,6 +319,24 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
     wordAccept: z<boolean, boolean, "volatile-defined">;
     /** 采纳建议的输入框快捷键（默认 Tab）。 */
     acceptKey: z<string, string, "volatile-defined">;
+    /**
+     * 「换一条」开关（#127，默认**开**）。
+     *
+     * 默认开的理由写进工单：这条补的是**一个缺失的交互**（用户对当前那条不满意时，
+     * 界面上原本没有任何入口），不是新增一项功能成本。配额与冷却是常量、不在这里
+     * （判据与先例见 `src/regen.ts` 顶部：那两个防的是「连按刷调用」，是安全边界，
+     * 可配就等于把上限交给用户关掉）。
+     */
+    regenEnabled: z<boolean, boolean, "volatile-defined">;
+    /**
+     * 触发「换一条」的快捷键 spec（#127，默认 `Alt+G`）。
+     *
+     * `min(1)` 与 `acceptKey` 同套：空串在 `SettingsForms` 上写不进去，而空白值在
+     * 两侧都会退化成「这一支永不命中」。默认值必须被 `keyCodeOf` 认得——这一条钉在
+     * `scripts/keyspec-smoke.mjs`，历史上「spec 写了表里没有的主键 ⇒ 静默不生效」
+     * 是本仓真实踩过的坑（`src/client/index.ts` 的 `parseAcceptKey` 注释）。
+     */
+    regenKey: z<string, string, "volatile-defined">;
     /**
      * 建议语言模式：'auto' = 自动推断（结合 UI 语言 + 用户消息文字分布）；
      * 'zh' / 'zh-TW' / 'en' / 'ja' / 'ko' / 'ru' / 'fr' / 'de' / 'es' = 强制指定语言。

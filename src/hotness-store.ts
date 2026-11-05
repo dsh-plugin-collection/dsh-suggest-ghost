@@ -464,7 +464,13 @@ export function setupHotnessPersistence(ctx: Context): {
               changed += hotness.clearAll();
               break;
             default:
-              break; // 未知操作忽略（前后版本协议差异下保持宽容）
+              // 未知操作忽略（前后版本协议差异下保持宽容）。
+              // ⚠️ #127 的 `regen` **落在这一支是刻意的**，不是漏接线：它不是热度变更，
+              // 一次重出不许动热表（被拒的建议从不进热表与历史环 ⇒ regen 不污染打分）。
+              // 它的消费方在 `src/index.ts` 的 `consumeOps` 分发循环里，与本函数**并行**；
+              // 所以「加了变体忘了分发」不会在这里报错，只会静默无事发生——那条风险由
+              // `scripts/ops-schema-coverage-smoke.mjs` 的「每个变体都得有消费方」断言兜住。
+              break;
           }
         }
         return changed;
@@ -484,6 +490,21 @@ const opsPayloadSchema = z.object({
       z.object({ op: z.literal('clear') }),
       z.object({ op: z.literal('pull'), sessionId: z.string().min(1) }),
       z.object({ op: z.literal('complete'), sessionId: z.string().min(1), draft: z.string().min(1) }),
+      // #127 重出。载荷**不带被拒正文**（只带它的 32 位摘要）：`_ops` 会落进 profile 文档，
+      // 而「消费后清空」在事件回调里 373 次里 372 次被 `HMR transactions cannot be nested` 拒
+      // ⇒ 抄一份模型产出进去，等于新增一类长期留盘的生成内容。对齐不上时宿主走盲重出
+      // 并留痕 `regen-no-basis`，不静默 return（判据本体见 `src/regen.ts` 与 `src/index.ts`）。
+      //
+      // 两个 number 字段**刻意不加** `.int()` / `.min(0)` 这类值域约束：这一批的判据是
+      // 「非法载荷整批拒绝」（#17：一个变体不合法 ⇒ 整批静默丢弃，用户侧就是「按了没反应」）。
+      // `basisRev` 只用于归因、`shownHash` 只用于**比对**（宿主拿它跟自己内存里那条的摘要比，
+      // 从不解析它），收窄取值范围换来的只有「将来换更宽的摘要时把整批打死」。
+      z.object({
+        op: z.literal('regen'),
+        sessionId: z.string().min(1),
+        basisRev: z.number(),
+        shownHash: z.number(),
+      }),
     ]),
   ),
   /** client UI 语言（'zh' | 'en'）；可选，捎带在每次 _ops 写入中。 */

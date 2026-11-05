@@ -7,9 +7,16 @@
  * `suggest-ghost/suggested` 事件的载荷——一条可用的下一条建议（whole-value）。
  *
  * 帧语义（#39 的第一块地基，与客户端判定链同源）：
- *  - `frame` 是**单次生成内**单调递增的帧号，从 1 起。宿主目前一次生成只出
- *    终帧，所以恒为 1；把它写成字段而不是让客户端猜，是为了让「多帧化」
- *    这件后续改动只碰宿主一侧。
+ *  - `frame` 是**同一个 `(会话, turn)` 桶内单调递增**的帧号，从 1 起。
+ *    ⚠️ 这里曾经是「单次生成内」——**那句已经被 #127 推翻**，因为客户端的帧台账
+ *    分桶键就是 `(会话, turn)`（`src/client/accept-guard.ts` 的 `frameBucketKey`），
+ *    而「一次生成」在加入重生成（regen）之后**不再是桶**：同一个回合会产出第二条
+ *    建议。若 regen 沿用 `frame: 1`，台账判成 `same`——此刻放行，但 ① 与对账重放
+ *    同形、观测不可区分（`frameRuns` 答不出「这条是重出还是重放」），② 一旦 #108 的
+ *    流式终帧把 `frame > 1` 写进 `_push`，同桶里的 regen 帧就判成 `older` ⇒ 整条静默
+ *    丢弃。所以宿主现在**在桶内递增**：回合首帧仍是 1，每次 regen 取「同 turn 那条
+ *    已有建议的 `frame + 1`」（不新建表，直接读 `suggestionBySession` 里那份）。
+ *    把它写成字段而不是让客户端猜，是为了让「多帧化」这件后续改动只碰宿主一侧。
  *  - `final` 标记终帧：只有终帧上的文本才是可采纳的完整内容。
  *  - 两个字段**允许缺省**（`version` 仍是 1，不做破坏性升版）：缺省时客户端
  *    按 `frame=0 / final=true` 兜底，等于沿用旧行为。因此任何「重建载荷」的
@@ -29,7 +36,10 @@ export interface SuggestGhostSuggested {
     readonly truncated: boolean;
     /** 采纳快捷键（默认 "Tab"）。 */
     readonly acceptKey: string;
-    /** 单次生成内的帧号（>=1，单调）；缺省 = 旧载荷，客户端按 0 兜底。 */
+    /**
+     * 同 `(会话, turn)` 桶内单调递增的帧号（>=1；语义与推翻记录见本类型头部的「帧语义」）。
+     * 缺省 = 旧载荷，客户端按 0 兜底。
+     */
     readonly frame?: number;
     /** 是否终帧（终帧才可采纳）；缺省 = 旧载荷，客户端按 true 兜底。 */
     readonly final?: boolean;
@@ -54,10 +64,25 @@ export interface SuggestGhostHotEntry {
 }
 /**
  * 热度管理单条操作（client 管理面板经 settings `_ops` 通道送达 host）。
- * 所有操作幂等：重复执行无副作用（host 消费后立即清空 `_ops`，rev 仅用于
+ * 除 `regen` 外所有操作幂等：重复执行无副作用（host 消费后立即清空 `_ops`，rev 仅用于
  * client 侧递增标识，host 不依赖它去重）。`pull` 不是热度变更：client 切换
  * 会话时请求 host 立即推送该会话的历史环（历史环只在事件到达时播种，
  * pull 关闭「切会话后无历史」的窗口）。
+ *
+ * ⚠️ **`regen` 打破上面那句「幂等」**：它的每一次执行都是一次真实的模型调用。
+ * 挡着它的不是操作自身的幂等性，而是两道外部闸——宿主的载荷字节判重
+ * （`_ops` 同一份字节只消费一次，`src/index.ts` 的 `lastOpsPayload`）与
+ * **配额**（`sessionId + turn` 有界，见 `src/regen.ts` 的 `decideRegen`）。
+ * 已知的漏网：被消费但没清干净的 `_ops` 会在宿主重启时再补消费一次（#22/#23 的现实），
+ * 而配额表是内存态 ⇒ 代价是**每次重启至多多一次调用**，量级有界、写进 PR 的遗留风险。
+ *
+ * `regen` 的载荷**刻意不带被拒正文**：`_ops` 会落进 profile 文档，而「消费后清空」在
+ * 事件回调里历史上 373 次里 372 次被 `HMR transactions cannot be nested` 拒 ⇒ 载荷长期
+ * 留盘。把模型产出抄进这条通道等于新增一类长期留盘的生成内容。宿主内存里已有本会话那条
+ * 建议（`suggestionBySession`，有界 16 会话）⇒ `shownHash`（正文的 32 位摘要）对齐就够；
+ * 对不上走「无负向约束的盲重出」并留痕 `regen-no-basis`，**不静默 return**。
+ * `basisRev` 是客户端此刻看到的 `_push.rev`，只用于归因（判据不读它——宿主重启后两侧
+ * 计数器不可比），`shownHash` 才是对齐用的锚点。
  */
 export type HotnessOp = {
     readonly op: 'delete';
@@ -79,6 +104,11 @@ export type HotnessOp = {
     readonly op: 'complete';
     readonly sessionId: string;
     readonly draft: string;
+} | {
+    readonly op: 'regen';
+    readonly sessionId: string;
+    readonly basisRev: number;
+    readonly shownHash: number;
 };
 /**
  * `suggest-ghost/hot-index` 事件的载荷——跨会话历史热度快照。
