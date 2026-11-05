@@ -1,6 +1,6 @@
 {
   "task": "T-TYPE (task-3)",
-  "generatedAt": "2026-10-30T09:23:42.230Z",
+  "generatedAt": "2026-11-05T08:52:36.283Z",
   "repo": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost",
   "tsc": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/node_modules/.bin/tsc",
   "commands": {
@@ -24,15 +24,16 @@
     },
     "client": {
       "config": "tsconfig.client.json",
-      "errors": 7,
+      "errors": 8,
       "errorList": [
         "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
         "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
         "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
-        "src/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+        "src/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+        "src/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
         "src/client/index.ts(30,21): error TS2307: Cannot find module '@deepseek-ai/dsh-client-ui-conversation' or its corresponding type declarations.",
-        "src/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
-        "src/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+        "src/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+        "src/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
       ]
     }
   },
@@ -120,18 +121,19 @@
         "client": {
           "config": "tsconfig.client.json",
           "scope": "src/client only (exclude: [] override)",
-          "errors": 6,
+          "errors": 7,
           "errorList": [
             "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
             "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
             "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
-            "src/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
-            "src/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
-            "src/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+            "src/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
           ],
           "novelVsBaseline": [],
-          "baselineErrors": 7,
-          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.2-rc.1/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+          "baselineErrors": 8,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.2-rc.1/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
         }
       },
       "faceB": {
@@ -182,7 +184,7 @@
             "registry": {
               "checkedVersion": "0.1.2-rc.1",
               "published": true,
-              "versionCount": 41
+              "versionCount": 43
             },
             "declaredAsPeerDependency": false,
             "declaredAsDevDependency": true,
@@ -295,18 +297,19 @@
         "client": {
           "config": "tsconfig.client.json",
           "scope": "src/client only (exclude: [] override)",
-          "errors": 6,
+          "errors": 7,
           "errorList": [
             "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
             "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
             "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
-            "src/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
-            "src/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
-            "src/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+            "src/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
           ],
           "novelVsBaseline": [],
-          "baselineErrors": 7,
-          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.5-rc.3/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+          "baselineErrors": 8,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.5-rc.3/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
         }
       },
       "faceB": {
@@ -358,7 +361,7 @@
             "registry": {
               "checkedVersion": "0.1.5-rc.3",
               "published": true,
-              "versionCount": 41
+              "versionCount": 43
             },
             "declaredAsPeerDependency": false,
             "declaredAsDevDependency": true,
@@ -469,18 +472,19 @@
         "client": {
           "config": "tsconfig.client.json",
           "scope": "src/client only (exclude: [] override)",
-          "errors": 6,
+          "errors": 7,
           "errorList": [
             "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
             "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
             "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
-            "src/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
-            "src/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
-            "src/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+            "src/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
           ],
           "novelVsBaseline": [],
-          "baselineErrors": 7,
-          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.7-rc.1/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+          "baselineErrors": 8,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.7-rc.1/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
         }
       },
       "faceB": {
@@ -531,7 +535,7 @@
             "registry": {
               "checkedVersion": "0.1.7-rc.1",
               "published": true,
-              "versionCount": 41
+              "versionCount": 43
             },
             "declaredAsPeerDependency": false,
             "declaredAsDevDependency": true,
@@ -642,18 +646,19 @@
         "client": {
           "config": "tsconfig.client.json",
           "scope": "src/client only (exclude: [] override)",
-          "errors": 6,
+          "errors": 7,
           "errorList": [
             "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
             "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
             "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
-            "src/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
-            "src/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
-            "src/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+            "src/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
           ],
           "novelVsBaseline": [],
-          "baselineErrors": 7,
-          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.7-rc.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+          "baselineErrors": 8,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.1.7-rc.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
         }
       },
       "faceB": {
@@ -704,7 +709,7 @@
             "registry": {
               "checkedVersion": "0.1.7-rc.2",
               "published": true,
-              "versionCount": 41
+              "versionCount": 43
             },
             "declaredAsPeerDependency": false,
             "declaredAsDevDependency": true,
@@ -815,18 +820,19 @@
         "client": {
           "config": "tsconfig.client.json",
           "scope": "src/client only (exclude: [] override)",
-          "errors": 6,
+          "errors": 7,
           "errorList": [
             "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
             "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
             "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
-            "src/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
-            "src/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
-            "src/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+            "src/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
           ],
           "novelVsBaseline": [],
-          "baselineErrors": 7,
-          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.2.0-rc.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+          "baselineErrors": 8,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.2.0-rc.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
         }
       },
       "faceB": {
@@ -877,7 +883,7 @@
             "registry": {
               "checkedVersion": "0.2.0-rc.2",
               "published": true,
-              "versionCount": 41
+              "versionCount": 43
             },
             "declaredAsPeerDependency": false,
             "declaredAsDevDependency": true,
@@ -987,18 +993,19 @@
         "client": {
           "config": "tsconfig.client.json",
           "scope": "src/client only (exclude: [] override)",
-          "errors": 6,
+          "errors": 7,
           "errorList": [
             "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
             "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
             "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
-            "src/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
-            "src/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
-            "src/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+            "src/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
           ],
           "novelVsBaseline": [],
-          "baselineErrors": 7,
-          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.2.1-rc.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+          "baselineErrors": 8,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.2.1-rc.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
         }
       },
       "faceB": {
@@ -1052,7 +1059,7 @@
             "registry": {
               "checkedVersion": "0.2.1-rc.2",
               "published": true,
-              "versionCount": 41
+              "versionCount": 43
             },
             "declaredAsPeerDependency": false,
             "declaredAsDevDependency": true,
@@ -1106,7 +1113,7 @@
         "generationId": "0.2.2-alpha.2",
         "treeRoot": "/home/wujue/dsh-versions/0.2.2-alpha.2",
         "exists": true,
-        "mtime": "2026-10-30T09:00:05.986Z",
+        "mtime": "2026-11-03T06:36:53.717Z",
         "entries": 331,
         "launcherVersion": "0.2.2-alpha.2"
       },
@@ -1162,18 +1169,19 @@
         "client": {
           "config": "tsconfig.client.json",
           "scope": "src/client only (exclude: [] override)",
-          "errors": 6,
+          "errors": 7,
           "errorList": [
             "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
             "src/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.",
             "src/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.",
-            "src/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
-            "src/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
-            "src/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
+            "src/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.",
+            "src/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'.",
+            "src/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.",
+            "src/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to 'src/client/settings-card.tsx', but '--jsx' is not set."
           ],
           "novelVsBaseline": [],
-          "baselineErrors": 7,
-          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/index.ts(97,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.2.2-alpha.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(912,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1711,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
+          "baselineErrors": 8,
+          "raw": "src/client/accept-guard.ts(51,36): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/chunk.ts(68,39): error TS2532: Object is possibly 'undefined'.\nsrc/client/chunk.ts(71,33): error TS2532: Object is possibly 'undefined'.\nsrc/client/history.ts(72,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.\nsrc/client/index.ts(99,59): error TS6142: Module './settings-card.js' was resolved to '/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost/scripts/cross-kernel/.work/type/0.2.2-alpha.2/src/client/settings-card.tsx', but '--jsx' is not set.\nsrc/client/index.ts(920,17): error TS18047: 'last.nodeValue' is possibly 'null'.\nsrc/client/index.ts(1791,13): error TS2341: Property 'attach' is private and only accessible within class 'GhostOverlay'."
         }
       },
       "faceB": {
@@ -1227,7 +1235,7 @@
             "registry": {
               "checkedVersion": "0.2.2-alpha.2",
               "published": true,
-              "versionCount": 41
+              "versionCount": 43
             },
             "declaredAsPeerDependency": false,
             "declaredAsDevDependency": true,

@@ -1743,3 +1743,65 @@ dsh-session-projection=0.2.2-alpha.2）：`tsc -p tsconfig.json --noEmit` **0 �
   仍未判定的部分是**`streamingDelivery: true` 下的逐帧提前量**——额度 402 让建议没内容可推，
   别把"注册成功"读成"#109 在 0.2.2 上验过了"。
 - **`wire.summary: false`（issue 第 3 条）未采纳**：客户端历史前缀补全要从摘要里读 `hot`，排除出去等于砍掉热路径数据源；要改先量会话列表 payload 体积。
+
+## 21. 六面矩阵复跑（2026-11-05，构建 `8b79c83` = 0.8.1+regen+route）
+
+本轮把 skill §0 的六面**逐面重跑**，因为此前类型面停在 11/02 的旧产物、client 面从未跑过、
+UI/功能面只覆盖 0.2.1-rc.2 一代。**结果：五面绿，功能面与 UI 面在三代次上都通过。**
+
+| 面 | 命令 | 覆盖 | 结果 |
+|---|---|---|---|
+| ① 装配 mount | `npm run verify:kernels` | 7 代 | 全 GREEN |
+| ② 门禁 gate | 同上（各代自己的 `evaluatePluginCompatibility`） | 7 代 | 5 GREEN / 2 UNDETERMINED（0.1.2-rc.1、0.1.5-rc.3 无 evaluator ⇒ 按 §0 约定不算红） |
+| ③ 类型 type | `node scripts/cross-kernel/type-surface.mjs` | 7 代 | **全 GREEN**（`red=[] undetermined=[]`），`out/type.json` 已被本轮覆盖 |
+| ④ client 导入可用性 | 同上（FACE B） | 7 代 | **全 GREEN**；每代都标 `unresolved-in-tree: react, react/jsx-runtime`，但 `hostSeed=true`（宿主提供）+ 形状 `published=true` ⇒ 不是缺陷 |
+| ⑤ 功能 function（regen） | `node scripts/cross-kernel/regen-round.mjs` | 3 代 | 全 PASS，见下 |
+| ⑥ UI（幽灵可见） | `node scripts/cross-kernel/gui-round.mjs` | 3 代 | 全 PASS，见下 |
+
+### 21.1 UI 面读数（真 GUI，用户可见文本）
+
+| 代次 | 幽灵 chars | 文本 |
+|---|---|---|
+| 0.1.7-rc.2 | 28 | 「在什么场景下应该选 worktree 而不是 clone」 |
+| 0.2.0-rc.2 | 23 | 「顺便说说 git worktree 的使用场景」 |
+| 0.2.1-rc.2 | 23 | 「用 worktree 给当前仓库开个新分支目录」 |
+
+### 21.2 功能面读数（换一条，`regen-round.mjs`）
+
+| 代次 | 第一条 → Alt+G 之后 | 留痕 | verdict |
+|---|---|---|---|
+| 0.1.7-rc.2 | 「为什么 git worktree 不能切换…」→ 文本未变 | `started=1 dropped=1` | PASS（`dropped` ⇒ 文本必不变） |
+| 0.2.0-rc.2 | 「如何创建并列出所有 worktree」→「普通 clone 会重新拉取完整历史吗」 | `started=1 landed=1` | PASS |
+| 0.2.1-rc.2 | 上午那轮 + 配额轮 | `used=2/2 wait=never` | PASS |
+
+### 21.3 判据自身被修过一次（记下来，否则下一个人会重复我的错）
+
+`regen-round.mjs` 初版判据是「幽灵文本必须变化才算 PASS」。第一次跑 `--rounds 2` 判 **FAIL**，
+而真实原因是 `regen dropped outcome=filtered ghostUnchanged=1` —— 模型产出被
+`maxSuggestionChars` 过滤，宿主**正确地**让幽灵保持原样。**判据把正确行为判成了缺陷。**
+
+改成「`landed` ⇒ 文本必变；`dropped`/`failed` ⇒ 文本必不变；且 `ops consumed: regen` 恰 1 次」后，
+做了 8 个样本的**判据自证**（其中 5 个是应当判红的坏情况：landed 却没变 / dropped 却变了 /
+ops 消费 0 次 / 消费 2 次 / 发起却无处置），全部符合预期。
+方法教训与 §5 那句同源：**一条从没红过的判据不是判据。**
+
+### 21.4 工具面缺陷（非产品面，但会让读数变成假红）
+
+`regen-round.mjs` 首版没有处理「选工作区」，于是在 0.1.7-rc.2 上第一条建议永远不出现 ⇒ 判 FAIL。
+真实原因是**驱动没把 composer 弄可用**，不是插件坏。补齐 `ensureComposer()` 后转 PASS。
+
+同时记三条驱动坑（都在这次踩过，写进两个脚本的头注）：
+1. **固定 sleep 不够**：GUI 是懒挂载，2.5s 时 `[role=dialog]` 一个都没有，后面全对着一片白板做；
+2. **`[role=textbox]` 会选中工作区选择器**：它的 aria-label 是「选择工作区」，同样可见 ⇒
+   往它里面打字，`draft` 长度恒 0，整轮静默失败；
+3. **模板字符串里不能写反引号**：`const GY = String.raw\`...\`` 的正文里出现反引号会把模板提前闭合，
+   报的错是 `Unexpected identifier`，位置在几十行之外。本次连踩三次，最后固化成
+   `check-driver.sh`（先数模板内反引号，再查两处语法）。
+
+### 21.5 `supersedes` / 未判定
+
+- `out/type.json`：本轮覆盖旧文件（旧数据为 2026-11-02），**旧结论不保留**——类型面按代次重新算过，无冲突。
+- `out/across-kernels-2026-11-05T07-56-56-764Z.json` 取代 10-30 的两份同类产物。
+- **UI 面 0.2.2-alpha.2 仍未判定**（预发布线，§20 原记录即如此），本轮没有扩到它。
+- **功能面/UI 面只覆盖 3 代**（0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2）。0.1.2-rc.1、0.1.5-rc.3、
+  0.1.7-rc.1 未跑 UI：它们不是当前支持矩阵的主线代次，如需覆盖要另起沙箱，**不当作已验**。

@@ -1,0 +1,70 @@
+{
+ "gen": "0.2.1-rc.2",
+ "at": "2026-11-05T08:10:36.026Z",
+ "steps": {
+  "newSession": {
+   "found": true
+  },
+  "typed": true,
+  "first": {
+   "ok": true,
+   "ghost": {
+    "exists": true,
+    "shown": true,
+    "display": "block",
+    "visible": true,
+    "chars": 22,
+    "text": "再详细说说 worktree 分支切换的限制",
+    "reject": null,
+    "regenPending": null
+   }
+  },
+  "afterAltG": {
+   "changed": true,
+   "ghost": {
+    "exists": true,
+    "shown": true,
+    "display": "block",
+    "visible": true,
+    "chars": 25,
+    "text": "用 worktree 给这个仓库建一个功能分支目录",
+    "reject": null,
+    "regenPending": null
+   }
+  },
+  "hostTrace": {
+   "regenStarted": 1,
+   "regenLanded": 1,
+   "regenRefused": 0,
+   "regenDuplicate": 0,
+   "regenSkipped": 0,
+   "opsConsumedRegen": 1,
+   "lines": [
+    "[dsh-suggest-ghost][ops-trace] ops consumed: regen session=session-242ce0ec-7901-446f-a31f-885e9734865b basisRev=139 shownHash=3138776101",
+    "[dsh-suggest-ghost][ops-trace] regen started session=session-242ce0ec-7901-446f-a31f-885e9734865b turn=1 frame=2 basis=aligned avoid=1 clientRev=139 hostRev=15",
+    "[dsh-suggest-ghost][ops-trace] regen landed session=session-242ce0ec-7901-446f-a31f-885e9734865b turn=1 frame=2 chars=25 avoided=1 in 888ms"
+   ]
+  },
+  "judgement": {
+   "startedDelta": 1,
+   "landed": 1,
+   "dropped": 0,
+   "failed": 0,
+   "disposed": 1,
+   "ghostChanged": true,
+   "rule": "landed⇒文本必变；dropped/failed⇒文本必不变；且 ops consumed: regen 恰 1 次"
+  },
+  "quota": {
+   "textBeforeQuotaChars": 21,
+   "textAfterQuotaChars": 21,
+   "unchanged": true,
+   "refusedQuota": true,
+   "composerStillEditable": true,
+   "regenRefusedLines": [
+    "[dsh-suggest-ghost][ops-trace] regen-refused session=session-242ce0ec-7901-446f-a31f-885e9734865b turn=1 reason=quota used=2/2 wait=never"
+   ],
+   "ok": true
+  }
+ },
+ "verdict": "PASS"
+}

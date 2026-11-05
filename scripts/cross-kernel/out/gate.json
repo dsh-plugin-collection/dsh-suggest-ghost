@@ -1,11 +1,11 @@
 {
   "task": "task-1 (T-GATE)",
-  "generatedAt": "2026-10-30T09:55:15.052Z",
-  "nonce": "gate-48ecaf21",
+  "generatedAt": "2026-11-05T07:56:57.154Z",
+  "nonce": "gate-7f131bd9",
   "pluginRoot": "/home/wujue/workspace/dsh-plugins/dsh-suggest-ghost",
   "plugin": {
     "name": "dsh-suggest-ghost",
-    "version": "0.8.0",
+    "version": "0.8.1",
     "enginesDsh": ">=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0",
     "dshPeers": {
       "@deepseek-ai/dsh-llm": "^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
@@ -19,13 +19,13 @@
   "referencePlugin": {
     "path": "/home/wujue/workspace/dsh-plugins/dsh-later/package.json",
     "name": "dsh-later",
-    "version": "1.10.0",
-    "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0"
+    "version": "1.12.0",
+    "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0 || >=0.2.2-alpha.2 <0.2.3-0"
   },
   "kernelRoot": "/home/wujue/dsh-versions",
   "dshHomeRedirected": {
-    "DSH_HOME": "/tmp/gate-48ecaf21-H3bL1C",
-    "tempHome": "/tmp/gate-48ecaf21-H3bL1C"
+    "DSH_HOME": "/tmp/gate-7f131bd9-gDHfoh",
+    "tempHome": "/tmp/gate-7f131bd9-gDHfoh"
   },
   "outOfBoundsCheck": {
     "scanned": "/home/wujue/.dsh",
@@ -206,7 +206,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.1.7-rc.1",
             "peers": {
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
@@ -222,7 +222,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.1.7-rc.1",
             "peers": {
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
@@ -240,8 +240,8 @@
       "verdictReason": null,
       "reference": {
         "name": "dsh-later",
-        "version": "1.10.0",
-        "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0",
+        "version": "1.12.0",
+        "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0 || >=0.2.2-alpha.2 <0.2.3-0",
         "real": "met",
         "realRaw": null,
         "enginesRemoved": "met"
@@ -341,7 +341,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.1.7-rc.2",
             "peers": {
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
@@ -357,7 +357,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.1.7-rc.2",
             "peers": {
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
@@ -375,8 +375,8 @@
       "verdictReason": null,
       "reference": {
         "name": "dsh-later",
-        "version": "1.10.0",
-        "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0",
+        "version": "1.12.0",
+        "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0 || >=0.2.2-alpha.2 <0.2.3-0",
         "real": "met",
         "realRaw": null,
         "enginesRemoved": "met"
@@ -476,7 +476,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.2.0-rc.2",
             "peers": {
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
@@ -492,7 +492,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.2.0-rc.2",
             "peers": {
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
@@ -510,8 +510,8 @@
       "verdictReason": null,
       "reference": {
         "name": "dsh-later",
-        "version": "1.10.0",
-        "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0",
+        "version": "1.12.0",
+        "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0 || >=0.2.2-alpha.2 <0.2.3-0",
         "real": "met",
         "realRaw": null,
         "enginesRemoved": "met"
@@ -607,7 +607,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.2.1-rc.2",
             "requirements": {
               "engines.dsh": ">=9.0.0"
@@ -627,7 +627,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.2.1-rc.2",
             "requirements": {
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
@@ -639,7 +639,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.2.1-rc.2",
             "requirements": {
               "engines.dsh": ">=9.0.0"
@@ -653,8 +653,8 @@
       "verdictReason": null,
       "reference": {
         "name": "dsh-later",
-        "version": "1.10.0",
-        "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0",
+        "version": "1.12.0",
+        "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0 || >=0.2.2-alpha.2 <0.2.3-0",
         "real": "met",
         "realRaw": null,
         "enginesRemoved": "met"
@@ -750,7 +750,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.2.2-alpha.2",
             "requirements": {
               "engines.dsh": ">=9.0.0"
@@ -770,7 +770,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.2.2-alpha.2",
             "requirements": {
               "@deepseek-ai/dsh-api-remote-access": "^9.0.0"
@@ -782,7 +782,7 @@
           "ok": "unmet",
           "raw": {
             "name": "dsh-suggest-ghost",
-            "version": "0.8.0",
+            "version": "0.8.1",
             "runtimeVersion": "0.2.2-alpha.2",
             "requirements": {
               "engines.dsh": ">=9.0.0"
@@ -796,19 +796,11 @@
       "verdictReason": null,
       "reference": {
         "name": "dsh-later",
-        "version": "1.10.0",
-        "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0",
-        "real": "unmet",
-        "realRaw": {
-          "name": "dsh-later",
-          "version": "1.10.0",
-          "runtimeVersion": "0.2.2-alpha.2",
-          "requirements": {
-            "engines.dsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0"
-          },
-          "exempted": false
-        },
-        "enginesRemoved": "unmet"
+        "version": "1.12.0",
+        "enginesDsh": ">=0.1.2-rc.1 <0.1.3-0 || >=0.1.5-rc.3 <0.1.6-0 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-rc.2 <0.2.1-0 || >=0.2.1-rc.2 <0.2.2-0 || >=0.2.2-alpha.2 <0.2.3-0",
+        "real": "met",
+        "realRaw": null,
+        "enginesRemoved": "met"
       },
       "declaredSupported": {
         "viaEnginesDsh": true,

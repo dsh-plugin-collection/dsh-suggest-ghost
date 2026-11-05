@@ -1,0 +1,59 @@
+{
+ "gen": "0.2.0-rc.2",
+ "at": "2026-11-05T08:57:18.604Z",
+ "steps": {
+  "newSession": {
+   "found": true
+  },
+  "typed": true,
+  "first": {
+   "ok": true,
+   "ghost": {
+    "exists": true,
+    "shown": true,
+    "display": "block",
+    "visible": true,
+    "chars": 18,
+    "text": "如何创建并列出所有 worktree",
+    "reject": null,
+    "regenPending": null
+   }
+  },
+  "afterAltG": {
+   "changed": true,
+   "ghost": {
+    "exists": true,
+    "shown": true,
+    "display": "block",
+    "visible": true,
+    "chars": 19,
+    "text": "普通 clone 会重新拉取完整历史吗",
+    "reject": null,
+    "regenPending": null
+   }
+  },
+  "hostTrace": {
+   "regenStarted": 1,
+   "regenLanded": 1,
+   "regenRefused": 0,
+   "regenDuplicate": 0,
+   "regenSkipped": 0,
+   "opsConsumedRegen": 1,
+   "lines": [
+    "[dsh-suggest-ghost][ops-trace] ops consumed: regen session=session-4d6e1b9b-ddc5-4d03-bf5d-36606c079001 basisRev=30 shownHash=4236036432",
+    "[dsh-suggest-ghost][ops-trace] regen started session=session-4d6e1b9b-ddc5-4d03-bf5d-36606c079001 turn=1 frame=2 basis=aligned avoid=1 clientRev=30 hostRev=5",
+    "[dsh-suggest-ghost][ops-trace] regen landed session=session-4d6e1b9b-ddc5-4d03-bf5d-36606c079001 turn=1 frame=2 chars=19 avoided=1 in 1644ms"
+   ]
+  },
+  "judgement": {
+   "startedDelta": 1,
+   "landed": 1,
+   "dropped": 0,
+   "failed": 0,
+   "disposed": 1,
+   "ghostChanged": true,
+   "rule": "landed⇒文本必变；dropped/failed⇒文本必不变；且 ops consumed: regen 恰 1 次"
+  }
+ },
+ "verdict": "PASS"
+}

@@ -1,0 +1,104 @@
+{
+ "gen": "0.2.1-rc.2",
+ "at": "2026-11-05T08:45:44.643Z",
+ "claim": "PR#4 / #129：草稿非空 ⇒ llm 幽灵不得出现在界面上",
+ "steps": {
+  "onboarding": [],
+  "workspace": {
+   "ready": true,
+   "how": "picker",
+   "dialogStillOpen": false
+  },
+  "pageState": {
+   "textboxes": [
+    {
+     "tag": "DIV",
+     "label": "描述你想要构建的内容, / 调用指令, ",
+     "vis": true
+    }
+   ],
+   "composerInputs": 1,
+   "buttons": [
+    "打开侧边栏",
+    "新建会话",
+    "插件",
+    "自动化任务",
+    "上下文洞察",
+    "添加工作区",
+    "搜索会话",
+    "",
+    "账号菜单",
+    "打开右侧边栏",
+    "选择工作区 xk-probe-ws",
+    "标准模式",
+    "添加文件或调用指令",
+    "访问模式，当前：完全权限 完全权限"
+   ],
+   "hasWorkspacePicker": false,
+   "bodyHead": "9% | 峰时 | 探索未至之境 | 预览版 | xk-probe-ws | 标准模式 | 描述你想要构建的内容, / 调用指令, @ 文件或对话 | 完全权限"
+  },
+  "newSession": {
+   "found": true
+  },
+  "composer": {
+   "ok": true,
+   "tag": "DIV",
+   "editable": true,
+   "label": "描述你想要构建的内容, / 调用指令, @ 文件"
+  },
+  "afterInsert": {
+   "draft": "git worktree 和普通 clone 的区别是什么？一句话回答。",
+   "len": 36
+  },
+  "afterEnter": {
+   "draft": "",
+   "len": 0
+  },
+  "positiveControl": {
+   "ok": true,
+   "ghost": {
+    "exists": true,
+    "shown": true,
+    "display": "block",
+    "visible": true,
+    "chars": 11,
+    "text": "那帮我建一个工作区试试",
+    "reject": null
+   },
+   "draft": ""
+  },
+  "withDraft": {
+   "draft": "这是用户新打的字",
+   "ghost": {
+    "exists": true,
+    "shown": false,
+    "display": "none",
+    "visible": false,
+    "chars": 0,
+    "text": "",
+    "reject": null
+   }
+  },
+  "afterClear": {
+   "back": true,
+   "ghost": {
+    "exists": true,
+    "shown": true,
+    "display": "block",
+    "visible": true,
+    "chars": 11,
+    "text": "那帮我建一个工作区试试",
+    "reject": null
+   },
+   "draft": ""
+  },
+  "verdictParts": {
+   "ghostGoneWithDraft": true,
+   "draftIntact": true,
+   "suggestionReturnsAfterClear": true,
+   "sameSuggestion": true
+  },
+  "note": null
+ },
+ "verdict": "PASS"
+}

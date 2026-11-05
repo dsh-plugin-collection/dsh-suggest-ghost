@@ -1,0 +1,63 @@
+{
+ "gen": "0.1.7-rc.2",
+ "at": "2026-11-05T08:58:03.483Z",
+ "steps": {
+  "workspace": {
+   "ready": true,
+   "how": "already"
+  },
+  "newSession": {
+   "found": true
+  },
+  "typed": true,
+  "first": {
+   "ok": true,
+   "ghost": {
+    "exists": true,
+    "shown": true,
+    "display": "block",
+    "visible": true,
+    "chars": 32,
+    "text": "为什么 git worktree 不能切换已被其他目录检出的分支",
+    "reject": null,
+    "regenPending": null
+   }
+  },
+  "afterAltG": {
+   "changed": false,
+   "ghost": {
+    "exists": true,
+    "shown": true,
+    "display": "block",
+    "visible": true,
+    "chars": 32,
+    "text": "为什么 git worktree 不能切换已被其他目录检出的分支",
+    "reject": null,
+    "regenPending": null
+   }
+  },
+  "hostTrace": {
+   "regenStarted": 1,
+   "regenLanded": 0,
+   "regenRefused": 0,
+   "regenDuplicate": 0,
+   "regenSkipped": 0,
+   "opsConsumedRegen": 1,
+   "lines": [
+    "[dsh-suggest-ghost][ops-trace] ops consumed: regen session=session-24fb6a97-63cc-42c6-8829-d2427e4c1787 basisRev=47 shownHash=2472719776",
+    "[dsh-suggest-ghost][ops-trace] regen started session=session-24fb6a97-63cc-42c6-8829-d2427e4c1787 turn=1 frame=2 basis=aligned avoid=1 clientRev=47 hostRev=9",
+    "[dsh-suggest-ghost][ops-trace] regen dropped session=session-24fb6a97-63cc-42c6-8829-d2427e4c1787 turn=1 outcome=filtered ghostUnchanged=1 in 2854ms"
+   ]
+  },
+  "judgement": {
+   "startedDelta": 1,
+   "landed": 0,
+   "dropped": 1,
+   "failed": 0,
+   "disposed": 1,
+   "ghostChanged": false,
+   "rule": "landed⇒文本必变；dropped/failed⇒文本必不变；且 ops consumed: regen 恰 1 次"
+  }
+ },
+ "verdict": "PASS"
+}
