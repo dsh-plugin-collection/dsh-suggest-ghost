@@ -17,7 +17,7 @@
 import { statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import z from '@deepseek-ai/schemastery';
-import { traceAt, traceNote } from './trace.js';
+import { traceAt, traceNote, languageTraceKeys } from './trace.js';
 import { MODEL_OPTIONS_PATH, createModelCatalogHandler } from './model-catalog.js';
 import type { Volatile } from '@deepseek-ai/cosmokit';
 import type { Context } from '@deepseek-ai/cordis';
@@ -703,6 +703,11 @@ export function apply(ctx: Context, config: GenerateConfig): void {
    * host 重启后为空，client 下次 pull 会重新捎带；语言检测时作为先验加成。
    */
   let clientUiLocale: string | undefined;
+  /**
+   * 上面那个值**到达宿主的时刻**（#137）。与它同点写入、成对读，缺了它就分不开
+   * 「本次 `_ops` 确实带到了 locale」与「这是上一次写入留下的进程级残留」。
+   */
+  let clientUiLocaleAtMs = 0;
   /**
    * 取当前某个传输通道的载荷字符串（`_ops` / `_push`）。
    *
@@ -1415,6 +1420,16 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     const controller = new AbortController();
     completionPending.set(sessionId, controller);
     completionInflightDraft.set(sessionId, draft);
+    /**
+     * 本轮生成**用掉的**界面语言快照（#137）。取在启动生成的同一同步 tick 上；
+     * **不能**到收口回调里再读 `clientUiLocale`——deliver 是异步的（一次生成 5~10s），
+     * 那时进程级单值可能已被下一次 `_ops` 写入推进，报出来的就不是当时那个值
+     * （同一个坑见 `consumedPayload` 上方那段注释）。
+     */
+    const genUiLocale: string | undefined = clientUiLocale;
+    const genUiLocaleAgeMs: number | undefined = genUiLocale === undefined
+      ? undefined
+      : Date.now() - clientUiLocaleAtMs;
     // 生成 + 有界超时 + 每一种收口的留痕，全在 `startBoundedCompletion` 里（纯模块，
     // 冒烟可逐条断言）。这里只注入三件事：pending 槽的归属、留痕通道、交付动作。
     startBoundedCompletion<CompletionValue>(
@@ -1432,7 +1447,10 @@ export function apply(ctx: Context, config: GenerateConfig): void {
             // 空/不合格：过去是 `return` 静默，于是「宿主生成了但被净化链丢弃」与
             // 「根本没生成」在观测上完全同形（#17 的教训正在这一支上被重新违反）。
             // outcome= 把这两种终于分开（empty → 看提示词/档位；filtered → 看净化链）。
-            traceOps(`completion dropped (empty or filtered) session=${sessionId} draftChars=${draftChars} in ${elapsedMs}ms ${stream} at=${Date.now()}`);
+            // #137：dropped 这一支也带判定入参与结论——「生成了但被净化链丢弃」时，
+            // language=/uiLocale= 是唯一还能证明「当时界面语言到没到」的读数
+            // （本轮注入实测：①「从未捎带」那一发正落在这条支上，不补键就重新变成静默）。
+            traceOps(`completion dropped (empty or filtered) session=${sessionId} draftChars=${draftChars} in ${elapsedMs}ms ${stream} at=${Date.now()}${languageTraceKeys({ language: value.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })}`);
             return;
           }
           cacheCompletion(sessionId, draft, value.text);
@@ -1442,7 +1460,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
             completionSessionId: sessionId,
           });
           // 只打字符数：续写正文是模型对用户草稿的模仿，抄进 tee 日志等于把用户输入的第二份副本落到盘上。
-          traceOps(`completion generated session=${sessionId} draftChars=${draftChars} chars=${value.text.length} in ${elapsedMs}ms ${stream} at=${Date.now()}`);
+          // #137：行尾追加语言判定的入参与结论（既有键序与前缀一字未动，`sandbox.greps`
+          // 与 dev-sandbox 的抓行照旧命中）。只打标签与毫秒数，不打正文。
+          traceOps(`completion generated session=${sessionId} draftChars=${draftChars} chars=${value.text.length} in ${elapsedMs}ms ${stream} at=${Date.now()}${languageTraceKeys({ language: value.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })}`);
         },
       },
       {
@@ -1451,6 +1471,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         startedAt: Date.now(),
         draftChars,
         // 用融合后的信号：上游抢占/卸载中止与墙钟上界都能传到底层请求。
+        // #137：留痕用的 locale 快照取在**紧接其上的那两行**（与这里的读取同处一个同步
+        // tick，因此就是本轮判定用掉的值）。不在 lambda 内改写的理由：这几行是
+        // impl-127 的活跃区，留痕只许加、不许动别人的行。
         generate: (signal) => generateCompletion(
           ctx,
           cfg,
@@ -2662,7 +2685,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     // CAS 就退化成「无条件清空」，恰好丢掉这条约束要防的那种竞态。
     const consumedPayload = lastOpsPayload;
     // 捎带的 UI 语言：有则更新（last-wins），无则保持上次值。
-    if (parsed.locale !== undefined) clientUiLocale = parsed.locale;
+    // #137：同时盖一个到达时刻 ⇒ 产出行能报出「这个 locale 在宿主里已经待了多久」，
+    // 把「本次带到」与「上次写入的残留」分开（两者在只有值时完全同形）。
+    if (parsed.locale !== undefined) { clientUiLocale = parsed.locale; clientUiLocaleAtMs = Date.now(); }
     // 整批丢弃必须可见（#17：客户端写了、宿主没动、日志一个字都没有）。
     // 空载荷不走这条：那是消费后的正常态，每次都打就成了噪声。
     const dropped = parsed.rejected;
@@ -2862,6 +2887,17 @@ export function apply(ctx: Context, config: GenerateConfig): void {
      */
     const genStartedAt = Date.now();
     /**
+     * 本轮建议生成**用掉的**界面语言快照（#137，与续写那条同一口径）。留痕必须在收口时
+     * 报「当时用的值」，而 `clientUiLocale` 是进程级单值：收口 `.then` 里读它可能已被
+     * 下一次 `_ops` 写入推进。这里取在 `genStartedAt` 同一同步 tick —— 生成体在紧随其后的
+     * **微任务**里读同一个变量，微任务先于任何后续宏任务排空 ⇒ 期间不可能插入新的 `_ops`
+     * 写入，两个值必然相同（因此不必改动生成调用那几行——那是 impl-127 的活跃区）。
+     */
+    const genUiLocale: string | undefined = clientUiLocale;
+    const genUiLocaleAgeMs: number | undefined = genUiLocale === undefined
+      ? undefined
+      : Date.now() - clientUiLocaleAtMs;
+    /**
      * 本次生成是否走流式。**三个条件缺一不可**：开关开、通道挂上了、该会话此刻确实有
      * 活订阅。任一不满足 ⇒ 下面传给 `generateSuggestion` 的 delta 回调是 `undefined`
      * ⇒ 生成路径与开关关时逐字一致（回归判据「开关关 = 现状一字不变」就靠这一处）。
@@ -2926,9 +2962,11 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           const streamGate = () => ` streaming=${streaming ? 1 : 0} ready=${streamChannelReady ? 1 : 0}`
             + ` on=${effective().streamingDelivery ? 1 : 0} subs=${streamHub.channelCount}`;
           if (result.suggestion === undefined) {
-            traceOps(`suggestion dropped (empty or filtered) session=${session.id} turn=${turn} in ${Date.now() - genStartedAt}ms ${stream}${streamGate()} at=${Date.now()}`);
+            // #137：与续写那两行同口径——四条产出行（generated/dropped × 建议/续写）都带键。
+            traceOps(`suggestion dropped (empty or filtered) session=${session.id} turn=${turn} in ${Date.now() - genStartedAt}ms ${stream}${streamGate()} at=${Date.now()}${languageTraceKeys({ language: result.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })}`);
           } else {
-            traceOps(`suggestion generated session=${session.id} turn=${turn} chars=${result.suggestion.text.length} frame=${String(result.suggestion.frame ?? 1)} in ${Date.now() - genStartedAt}ms ${stream}${streamGate()} at=${Date.now()}`);
+            // #137：行尾追加语言判定的入参与结论（与续写那条同键同名，既有键序未动）。
+            traceOps(`suggestion generated session=${session.id} turn=${turn} chars=${result.suggestion.text.length} frame=${String(result.suggestion.frame ?? 1)} in ${Date.now() - genStartedAt}ms ${stream}${streamGate()} at=${Date.now()}${languageTraceKeys({ language: result.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })}`);
           }
           // 流式收口：**终帧之后上面那次 `_push` 照旧发生**（权威态不因开流而省掉）。
           // 空建议/被过滤时只关订阅、不发空终帧 ⇒ 客户端等 `_push` 的 null 去清幽灵。
