@@ -397,6 +397,11 @@ type PushedPayload = {
   final?: unknown;
   completion?: { draft?: unknown; text?: unknown; final?: unknown } | null;
   completionSessionId?: unknown;
+  /**
+   * 「换一条」在途（#127）。宿主**只在 true 时写**、且每次组装时现算 ⇒ 读到缺省就是
+   * 「不在途」。旧宿主不给这个键 ⇒ 永远读成不在途（滚动升级期间无害）。
+   */
+  regenPending?: unknown;
 };
 
 /**
@@ -530,7 +535,8 @@ function parseAcceptKey(spec: string): ((event: KeyboardEvent) => boolean) | und
  * 采纳链（Tab / `→`）据此拒绝 provisional 帧；缺省即旧载荷行为不变。
  */
 type GhostContent =
-  | { kind: 'llm'; text: string; acceptKey: string; frame: FrameHint }
+  /** `pending`：宿主正在为这个会话重出（#127）⇒ 这条是**旧**的，落地后会被换掉。 */
+  | { kind: 'llm'; text: string; acceptKey: string; frame: FrameHint; pending: boolean }
   | { kind: 'history'; prefix: string; suffix: string; full: string; frame: FrameHint }
   /** 停顿续写：LLM 生成的草稿延续（prefix=当时草稿，suffix=续写文本，full=prefix+suffix）。 */
   | { kind: 'inline'; prefix: string; suffix: string; full: string; frame: FrameHint };
@@ -1044,6 +1050,14 @@ class GhostOverlay {
    * @param content - 本帧要显示的幽灵内容。
    */
   show(content: GhostContent): void {
+
+    // #127：把「宿主正在重出」标在**我们自己的节点**上（不引入新样式、不动几何判据）。
+    // 采信方是留痕与真 GUI 取证：`[data-regen-pending="1"]` 可纯读 DOM 判断「这条是旧的」。
+    if (content.kind === 'llm' && content.pending) {
+      this.el.dataset.regenPending = '1';
+    } else {
+      delete this.el.dataset.regenPending;
+    }
     const next = overlayShapeOf(content);
     const action = decideOverlayPaint({
       prev: this.shape,
@@ -1352,6 +1366,8 @@ function applyBody(ctx: Context): void {
     /** #127：换一条的开关与快捷键（宿主侧 `.volatile()` ⇒ 卡片可改、即时生效）。 */
     regenEnabled: boolean;
     regenKey: string;
+    /** #127：宿主在途读到的「换一条」状态（只在 true 时被宿主写进载荷）。 */
+    regenPending: boolean;
     /** host 实时推送：最新 LLM 建议（rev 递增识别新值）。 */
     suggestion: {
       turn: number;
@@ -1392,6 +1408,7 @@ function applyBody(ctx: Context): void {
     wordAccept: true,
     regenEnabled: true,
     regenKey: 'Alt+G',
+    regenPending: false,
     suggestion: cached.suggestion ?? null,
     // 缓存里的建议可能来自上一进程；帧提示一起持久化，避免把 provisional 帧的
     // 建议冷启动后当成终帧采纳（读不到时按旧载荷兜底）。
@@ -1501,7 +1518,9 @@ function applyBody(ctx: Context): void {
     let key: string | null = null;
     if (result !== null) {
       key = result.kind === 'llm'
-        ? `llm:${result.text}`
+        // #127：在途位进 key ⇒ 重新武装/在途开始这两个边沿都会触发重绘（#21 的判据
+        // 「观察值没变就不重画」不受影响：不在途时后缀恒为空 ⇒ 与改动前逐字相同）。
+        ? `llm:${result.pending ? 'pending:' : ''}${result.text}`
         : `${result.kind}:${result.prefix}|${result.suffix}`;
     }
 
@@ -1678,6 +1697,9 @@ function applyBody(ctx: Context): void {
         text: streamed.text,
         acceptKey: settings.suggestion?.acceptKey ?? 'Tab',
         frame: { frame: streamed.frame, final: streamed.final },
+        // 流式帧本身就是"正在增长"，与「换一条在途」是两件事：它有自己的帧号，
+        // 所以这里恒为 false（在途位只由 `_push.regenPending` 驱动）。
+        pending: false,
       };
     }
     const suggestion = settings.suggestion;
@@ -1693,7 +1715,14 @@ function applyBody(ctx: Context): void {
     }
     pushCellStats.llmGhostOffered += 1;
     // 帧提示随内容一起交给采纳链（#38）：provisional 帧可以显示，但不许采纳。
-    return { kind: 'llm', text: suggestion.text, acceptKey: suggestion.acceptKey, frame: settings.suggestionFrame };
+    return {
+      kind: 'llm',
+      text: suggestion.text,
+      acceptKey: suggestion.acceptKey,
+      frame: settings.suggestionFrame,
+      // #127：宿主在途 ⇒ 这条是旧的。**不在途时不带这个位**，让 key 与既有缓存逐字不变。
+      pending: settings.regenPending,
+    };
   };
 
   /** 缓存的上一次输入框查询结果（React 可能重建节点；isConnected 校验兜底）。 */
@@ -2398,6 +2427,8 @@ function applyBody(ctx: Context): void {
               ? (typeof hotSource.historySessionId === 'string' ? hotSource.historySessionId : null)
               : settings.historySessionId,
             suggestionSessionId: typeof pushed?.suggestionSessionId === 'string' ? pushed.suggestionSessionId : null,
+            // #127：宿主只在 true 时写 ⇒ 缺省即「不在途」。旧宿主不给键也读 false（升级期无害）。
+            regenPending: pushed?.regenPending === true,
             // 续写：载荷省略 = host 未更新（保留现值，显示时仍以 draft 全等校验兜底）；
             // 显式 null = host 作废（切会话/回合结束清理）。
             completion: pushed?.completion === undefined

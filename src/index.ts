@@ -1587,6 +1587,12 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     readonly completionSessionId?: string | null;
     /** 本次生成失败的摘要（可诊断；成功/无错误时缺省）。 */
     readonly error?: string;
+    /**
+     * 「换一条」在途（#127）。**必须在组装载荷时现算**（`regenPendingFor`），
+     * 绝不许一次性写进去等它自己消失：`_push` 是省略式拼装，下一次无关推送就会把这个键
+     * 抹掉（#136 实测 `error` 键就是这么丢的）。只在 `true` 时写 ⇒ 常态零额外字节。
+     */
+    readonly regenPending?: boolean;
   }
 
   /**
@@ -1678,6 +1684,9 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         }
         : {}),
     ...(p.error !== undefined ? { error: p.error } : {}),
+    // #127：只在 true 时写（省略即「不在途」）。`_push` 的指纹据此变格——
+    // 「在途开始」与「在途结束」各推一次，客户端的置灰/恢复各有明确边沿。
+    ...(p.regenPending === true ? { regenPending: true } : {}),
   });
 
   /** 热度格的载荷（热度快照 / 总数 / 历史环）。 */
@@ -2738,6 +2747,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
         : lastCompletion !== null
           ? { completion: lastCompletion.completion, completionSessionId: lastCompletion.sessionId }
           : {}),
+      // 现算，不缓存（见 `ClientPush.regenPending` 的注释）。
+      ...(regenPendingFor(sessionId) ? { regenPending: true } : {}),
     };
   };
 
