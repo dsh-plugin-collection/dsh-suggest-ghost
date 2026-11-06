@@ -44,6 +44,9 @@
 dsh plugin --profile web add dsh-suggest-ghost
 ```
 
+> **想改代码请从这里看起：`src/` 是源码，`lib/` 是 `npm run build` 生成的产物。**
+> 直接改 `lib/` 会在下次构建时被静默覆盖 —— 细节见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 从 GitHub 一行安装（构建产物已随仓库提交，无需本地构建）：
 
 ```bash
