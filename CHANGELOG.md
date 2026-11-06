@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-06
+
 ### 修复
 
 - **LLM 形态不再能在非空草稿上出现（Gitea #129，PR #134）**。`computeGhostContent` 的 LLM 支过去
