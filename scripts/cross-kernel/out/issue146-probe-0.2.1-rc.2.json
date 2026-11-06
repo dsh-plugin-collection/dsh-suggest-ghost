@@ -1,0 +1,165 @@
+{
+ "gen": "0.2.1-rc.2",
+ "at": "2026-11-06T01:23:29.854Z",
+ "note": "只观测，不下结论",
+ "cases": {
+  "cmd-only": {
+   "typed": "/later ",
+   "snap": {
+    "draft": "/later ",
+    "chips": 1,
+    "chipRects": [
+     {
+      "text": "/later",
+      "left": 86,
+      "right": 127
+     }
+    ],
+    "lastTextRight": 131,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 191
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 21,
+     "text": "提醒我明天下班后给妈妈打个电话确认周末安排",
+     "left": 131,
+     "right": 745,
+     "top": 195,
+     "reject": null
+    }
+   }
+  },
+  "cmd-then-text": {
+   "typed": "/later 提醒我",
+   "snap": {
+    "draft": "/later 提醒我",
+    "chips": 1,
+    "chipRects": [
+     {
+      "text": "/later",
+      "left": 86,
+      "right": 127
+     }
+    ],
+    "lastTextRight": 173,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 191
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 18,
+     "text": "明天下班后给妈妈打个电话确认周末安排",
+     "left": 173,
+     "right": 745,
+     "top": 195,
+     "reject": null
+    }
+   }
+  },
+  "cmd-in-middle": {
+   "typed": "abc /later 提醒我",
+   "snap": {
+    "draft": "abc /later 提醒我",
+    "chips": 0,
+    "chipRects": [],
+    "lastTextRight": 190,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 191
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 12,
+     "text": "明天上午十点给客户回电话",
+     "left": 190,
+     "right": 745,
+     "top": 195,
+     "reject": null
+    }
+   }
+  },
+  "cmd-tight": {
+   "typed": "/later",
+   "snap": {
+    "draft": "/later",
+    "chips": 0,
+    "chipRects": [],
+    "lastTextRight": 119,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 191
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 19,
+     "text": "提醒我在今晚八点前整理好这周的会议纪要",
+     "left": 119,
+     "right": 745,
+     "top": 195,
+     "reject": null
+    }
+   }
+  }
+ },
+ "workspace": {
+  "ready": true,
+  "how": "picker"
+ },
+ "warmup": {
+  "ok": false,
+  "snap": {
+   "draft": "",
+   "chips": 0,
+   "chipRects": [],
+   "editor": {
+    "left": 72,
+    "right": 753,
+    "top": 191
+   },
+   "ghost": {
+    "exists": false
+   }
+  }
+ },
+ "hostTrace": {
+  "completionGenerated": 3,
+  "suggestionGenerated": 0,
+  "completionNotShown": 0,
+  "rejectLines": [
+   "[dsh-suggest-ghost][ops-trace] completion generated session=session-1789365d-e1c3-472a-a281-d8c83e0bccde draftChars=7 chars=21 in 2097ms first_text_delta_ms=207",
+   "[dsh-suggest-ghost][ops-trace] completion generated session=session-1789365d-e1c3-472a-a281-d8c83e0bccde draftChars=14 chars=12 in 1605ms first_text_delta_ms=15",
+   "[dsh-suggest-ghost][ops-trace] completion generated session=session-1789365d-e1c3-472a-a281-d8c83e0bccde draftChars=6 chars=19 in 974ms first_text_delta_ms=971 "
+  ]
+ }
+}

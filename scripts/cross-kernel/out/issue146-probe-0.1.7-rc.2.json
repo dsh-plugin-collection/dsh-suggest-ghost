@@ -1,0 +1,97 @@
+{
+ "gen": "0.1.7-rc.2",
+ "at": "2026-11-06T01:39:19.111Z",
+ "note": "只观测，不下结论",
+ "cases": {
+  "cmd-only": {
+   "typed": "/later ",
+   "snap": {
+    "draft": "",
+    "chips": 0,
+    "chipRects": [],
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 191
+    },
+    "ghost": {
+     "exists": false
+    }
+   }
+  },
+  "cmd-then-text": {
+   "typed": "/later 提醒我",
+   "snap": {
+    "draft": "",
+    "chips": 0,
+    "chipRects": [],
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 191
+    },
+    "ghost": {
+     "exists": false
+    }
+   }
+  },
+  "cmd-in-middle": {
+   "typed": "abc /later 提醒我",
+   "snap": {
+    "draft": "",
+    "chips": 0,
+    "chipRects": [],
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 191
+    },
+    "ghost": {
+     "exists": false
+    }
+   }
+  },
+  "cmd-tight": {
+   "typed": "/later",
+   "snap": {
+    "draft": "",
+    "chips": 0,
+    "chipRects": [],
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 191
+    },
+    "ghost": {
+     "exists": false
+    }
+   }
+  }
+ },
+ "workspace": {
+  "ready": true,
+  "how": "picker"
+ },
+ "warmup": {
+  "ok": false,
+  "snap": {
+   "draft": "",
+   "chips": 0,
+   "chipRects": [],
+   "editor": {
+    "left": 72,
+    "right": 753,
+    "top": 191
+   },
+   "ghost": {
+    "exists": false
+   }
+  }
+ },
+ "hostTrace": {
+  "completionGenerated": 0,
+  "suggestionGenerated": 0,
+  "completionNotShown": 0,
+  "rejectLines": []
+ }
+}

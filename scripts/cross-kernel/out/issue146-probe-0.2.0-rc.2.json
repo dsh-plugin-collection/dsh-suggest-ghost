@@ -1,0 +1,166 @@
+{
+ "gen": "0.2.0-rc.2",
+ "at": "2026-11-06T01:55:17.174Z",
+ "note": "只观测，不下结论",
+ "cases": {
+  "cmd-only": {
+   "typed": "/later ",
+   "snap": {
+    "draft": "/later ",
+    "chips": 0,
+    "chipRects": [],
+    "lastTextRight": 123,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 230
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 27,
+     "text": "记得晚上回来对比一下多分支并行开发时两者的磁盘占用差异",
+     "left": 123,
+     "right": 745,
+     "top": 234,
+     "reject": null
+    }
+   }
+  },
+  "cmd-then-text": {
+   "typed": "/later 提醒我",
+   "snap": {
+    "draft": "/later 提醒我",
+    "chips": 0,
+    "chipRects": [],
+    "lastTextRight": 165,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 246
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 27,
+     "text": "记得晚上回来对比一下多分支并行开发时两者的磁盘占用差异",
+     "left": 165,
+     "right": 745,
+     "top": 250,
+     "reject": null
+    }
+   }
+  },
+  "cmd-in-middle": {
+   "typed": "abc /later 提醒我",
+   "snap": {
+    "draft": "abc /later 提醒我",
+    "chips": 0,
+    "chipRects": [],
+    "lastTextRight": 190,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 246
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 14,
+     "text": "明天上午十点前把工作区整理好",
+     "left": 190,
+     "right": 745,
+     "top": 250,
+     "reject": null
+    }
+   }
+  },
+  "cmd-tight": {
+   "typed": "/later",
+   "snap": {
+    "draft": "/later",
+    "chips": 0,
+    "chipRects": [],
+    "lastTextRight": 119,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 246
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 18,
+     "text": "提醒我明天抽空对比一下两者的磁盘占用",
+     "left": 119,
+     "right": 745,
+     "top": 250,
+     "reject": null
+    }
+   }
+  }
+ },
+ "workspace": {
+  "ready": true,
+  "how": "already"
+ },
+ "warmup": {
+  "ok": false,
+  "messageCount": 0,
+  "snap": {
+   "draft": "",
+   "chips": 0,
+   "chipRects": [],
+   "editor": {
+    "left": 72,
+    "right": 753,
+    "top": 246
+   },
+   "ghost": {
+    "exists": true,
+    "shown": true,
+    "display": "block",
+    "visible": true,
+    "form": "llm(bare-text)",
+    "firstChildTag": null,
+    "childNodes": 1,
+    "chars": 35,
+    "text": "用一句话解释 git worktree 和 git clone 的区别",
+    "left": 86,
+    "right": 745,
+    "top": 250,
+    "reject": null
+   }
+  }
+ },
+ "hostTrace": {
+  "completionGenerated": 3,
+  "suggestionGenerated": 0,
+  "completionNotShown": 0,
+  "rejectLines": [
+   "[dsh-suggest-ghost][ops-trace] completion generated session=session-1da0bd20-614d-4cc4-9f33-d04cf0cebb88 draftChars=7 chars=27 in 1390ms first_text_delta_ms=126",
+   "[dsh-suggest-ghost][ops-trace] completion generated session=session-1da0bd20-614d-4cc4-9f33-d04cf0cebb88 draftChars=14 chars=14 in 1686ms first_text_delta_ms=16",
+   "[dsh-suggest-ghost][ops-trace] completion generated session=session-1da0bd20-614d-4cc4-9f33-d04cf0cebb88 draftChars=6 chars=18 in 709ms first_text_delta_ms=640 "
+  ]
+ }
+}

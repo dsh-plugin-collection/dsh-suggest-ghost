@@ -1,0 +1,166 @@
+{
+ "gen": "0.2.2-alpha.2",
+ "at": "2026-11-06T01:57:12.745Z",
+ "note": "只观测，不下结论",
+ "cases": {
+  "cmd-only": {
+   "typed": "/later ",
+   "snap": {
+    "draft": "/later ",
+    "chips": 1,
+    "chipRects": [
+     {
+      "text": "/later",
+      "left": 86,
+      "right": 127
+     }
+    ],
+    "lastTextRight": 131,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 230
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 31,
+     "text": "提醒我之后再细看 worktree 在多个分支并行开发时的用法",
+     "left": 131,
+     "right": 745,
+     "top": 234,
+     "reject": null
+    }
+   }
+  },
+  "cmd-then-text": {
+   "typed": "/later 提醒我",
+   "snap": {
+    "draft": "/later 提醒我",
+    "chips": 1,
+    "chipRects": [
+     {
+      "text": "/later",
+      "left": 86,
+      "right": 127
+     }
+    ],
+    "lastTextRight": 173,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 246
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 28,
+     "text": "之后再细看 worktree 在多个分支并行开发时的用法",
+     "left": 173,
+     "right": 745,
+     "top": 250,
+     "reject": null
+    }
+   }
+  },
+  "cmd-in-middle": {
+   "typed": "abc /later 提醒我",
+   "snap": {
+    "draft": "abc /later 提醒我",
+    "chips": 0,
+    "chipRects": [],
+    "lastTextRight": 190,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 246
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 5,
+     "text": "later",
+     "left": 190,
+     "right": 745,
+     "top": 250,
+     "reject": null
+    }
+   }
+  },
+  "cmd-tight": {
+   "typed": "/later",
+   "snap": {
+    "draft": "/later",
+    "chips": 0,
+    "chipRects": [],
+    "lastTextRight": 119,
+    "editor": {
+     "left": 72,
+     "right": 753,
+     "top": 246
+    },
+    "ghost": {
+     "exists": true,
+     "shown": true,
+     "display": "block",
+     "visible": true,
+     "form": "inline/history(span-wrapped)",
+     "firstChildTag": "SPAN",
+     "childNodes": 1,
+     "chars": 20,
+     "text": "稍后再提醒我看 worktree 的文档",
+     "left": 119,
+     "right": 745,
+     "top": 250,
+     "reject": null
+    }
+   }
+  }
+ },
+ "workspace": {
+  "ready": true,
+  "how": "already"
+ },
+ "warmup": {
+  "ok": false,
+  "messageCount": 0,
+  "snap": {
+   "draft": "",
+   "chips": 0,
+   "chipRects": [],
+   "editor": {
+    "left": 72,
+    "right": 753,
+    "top": 246
+   },
+   "ghost": {
+    "exists": false
+   }
+  }
+ },
+ "hostTrace": {
+  "completionGenerated": 3,
+  "suggestionGenerated": 0,
+  "completionNotShown": 0,
+  "rejectLines": [
+   "[dsh-suggest-ghost][ops-trace] completion generated session=session-f4a0da5b-9665-44bf-ae9c-315ad5b9af6d draftChars=6 chars=5 in 1935ms first_text_delta_ms=1922",
+   "[dsh-suggest-ghost][ops-trace] completion generated session=session-f4a0da5b-9665-44bf-ae9c-315ad5b9af6d draftChars=14 chars=26 in 989ms first_text_delta_ms=773",
+   "[dsh-suggest-ghost][ops-trace] completion generated session=session-f4a0da5b-9665-44bf-ae9c-315ad5b9af6d draftChars=4 chars=23 in 1122ms first_text_delta_ms=111"
+  ]
+ }
+}
