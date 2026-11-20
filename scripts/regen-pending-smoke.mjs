@@ -148,7 +148,10 @@ const cdp = async () => {
   const close = () => {
     try { ws.close(); } catch { /* noop */ }
     proc.kill('SIGKILL');
-    rmSync(dir, { recursive: true, force: true });
+    // Chrome 被杀时仍在往 user-data-dir 里写：立刻 rm 会撞 ENOTEMPTY，而它抛在
+    // `finally` 里就会被上层记成「行为对照未能运行」——一条与判据无关的假红（实测）。
+    // 重试是清理临时目录的标准做法，不影响任何被测判据。
+    try { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* 留给系统清理 */ }
   };
   return { evaluate, close };
 };

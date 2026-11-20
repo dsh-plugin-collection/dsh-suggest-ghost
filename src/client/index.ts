@@ -57,6 +57,7 @@ import { shouldYieldKey } from './yield-key.js';
 import { alignCompletion, decideCompletionReuse, decideLlmForm, hasUserDraft } from './completion-align.js';
 import { buildOpsPayload, createSeqSource } from './ops-envelope.js';
 import { nextAcceptChunk } from './chunk.js';
+import { overlayGeometry } from './overlay-geometry.js';
 import {
   anchorMovedBeyond,
   configValuesEqual,
@@ -827,6 +828,19 @@ class GhostOverlay {
       // 依赖 `[data-placeholder]` 出文案的 ::before/::after 实现。
       'body:has(#dsh-suggest-ghost-overlay[data-shown="1"]:not([style*="display: none"])) [data-composer-input][data-placeholder]::before{content:none!important}',
       'body:has(#dsh-suggest-ghost-overlay[data-shown="1"]:not([style*="display: none"])) [data-composer-input][data-placeholder]::after{content:none!important}',
+      // ── 折行断点：允许在灰字**第一个字之前**断行 ──
+      //
+      // overlay 现在是整行全宽、用 `text-indent` 让首行从草稿行尾起笔（见
+      // overlay-geometry.ts）。可 CSS 有一条硬规则：一行至少要放下一个字符——
+      // 行尾离内容右缘不足一个字宽时，首字会**溢出**右缘，而编辑器在同样位置会把它
+      // 折到下一行（那里存在断点，因为前面已经有字）。零宽空格补上同一个断点：
+      // 放得下时零宽、紧贴在首字前不着痕迹，放不下时在此断行、续行落到内容原点，
+      // 与「采纳之后正文长什么样」逐行一致。
+      //
+      // ⚠️ 用 generated content 而不是往 textContent 里塞字符：采纳闸读的是节点上
+      // 那句话（`paintedText`），多一个看不见的字符就会让「屏幕文本 ≠ 待写入文本」，
+      // 那是 #166 判定链的输入，不能动。
+      '#dsh-suggest-ghost-overlay::before{content:"\\200b"}',
     ].join('\n');
     if (typeof document !== 'undefined') document.head.appendChild(this.styleTag);
   }
@@ -962,9 +976,7 @@ class GhostOverlay {
     // 宽度：编辑器内容宽 = clientWidth - 左右 padding（border-box 下 clientWidth
     // 已含 padding、不含 border）。
     const fullWidth = ta.clientWidth - padLeft - padRight;
-    let left = originLeft;
-    let top = originTop;
-    let width = fullWidth > 0 ? fullWidth : ta.clientWidth;
+    const contentWidth = fullWidth > 0 ? fullWidth : ta.clientWidth;
 
     // ── 历史补全：锚定到「DOM 量出的草稿行尾」，而非靠隐形 prefix 撑位 ─────────
     // 视口坐标下的内容原点，与 originLeft/originTop 是同一位置的不同坐标系；
@@ -979,28 +991,26 @@ class GhostOverlay {
     // 增长快路径据此决定要不要再测（{@link anchorMovedBeyond}）。
     this.anchor = end === null ? null : { right: end.right, top: end.top };
     this.anchorDirty = false;
-    if (end !== null) {
-      left = originLeft + (end.right - originViewportX);
-      // `end` 是末字符矩形：其 top 是**文本顶部**（字形墨迹上缘），不是行框顶部。
-      // overlay 的 top 定位的是行框顶部，而 overlay 内文本会在 line-height 行框里
-      // 垂直居中——若直接用 end.top 对齐行框顶，幽灵文本会比正文低
-      // (lineHeight - 字高)/2（本例 ≈2px，正是用户报的"高度不一致"）。
-      // 所以要把这段行内偏移扣掉，让 overlay 的**文本**与正文的**文本**同高。
-      const lineHeight = parseFloat(style.lineHeight);
-      const lineOffset = Number.isFinite(lineHeight) && lineHeight > 0 && end.height > 0
-        ? Math.max(0, (lineHeight - end.height) / 2)
-        : 0;
-      top = originTop + (end.top - originViewportY) - lineOffset;
-      // 后缀只能在「行尾到行末」这段空间里换行，与编辑器继续输入时的行为一致。
-      width = Math.max(0, fullWidth - (left - originLeft));
-    }
-    this.el.style.left = `${left}px`;
-    this.el.style.top = `${top}px`;
-    this.el.style.width = `${width}px`;
+
+    // 盒子算术（含折行口径）全在 overlay-geometry.ts：那里是纯函数，Node 可逐条钉住；
+    // 这里只负责把量到的数字喂进去、把结果写回样式。
+    const geometry = overlayGeometry({
+      originLeft,
+      originTop,
+      contentWidth,
+      originViewportX,
+      originViewportY,
+      caret: end === null ? null : { right: end.right, top: end.top, height: end.height },
+      lineHeight: parseFloat(style.lineHeight),
+    });
+    this.el.style.left = `${geometry.left}px`;
+    this.el.style.top = `${geometry.top}px`;
+    this.el.style.width = `${geometry.width}px`;
     // ── 文本排版属性整组照搬 ───────────────────────────────────────────────
     // 位置已不依赖排版，但后缀**自身**的换行仍需与编辑器一致（否则长建议会溢出
     // 到错误的位置）。宿主 `overflow-wrap: anywhere` 可在拉丁词内断行，逐项复制
-    // 比逐项猜测可靠。
+    // 比逐项猜测可靠。注意 `text-indent` 也在这一组里，随后由几何结果覆盖——
+    // 它才是决定「续行从哪一列起排」的那个属性（见 overlay-geometry.ts）。
     const TEXT_LAYOUT_PROPS = [
       'font-family', 'font-size', 'font-style', 'font-variant', 'font-weight', 'font-stretch',
       'font-feature-settings', 'font-kerning',
@@ -1016,6 +1026,8 @@ class GhostOverlay {
     for (const prop of TEXT_LAYOUT_PROPS) {
       this.el.style.setProperty(prop, style.getPropertyValue(prop));
     }
+    // 必须写在上面这一组之后：宿主的 text-indent 会被整组照搬过来，而折行口径归几何。
+    this.el.style.textIndent = `${geometry.textIndent}px`;
     this.el.style.boxSizing = 'border-box';
   }
 
@@ -1063,6 +1075,31 @@ class GhostOverlay {
     return rect.width > 0 || rect.height > 0 ? rect : null;
   }
 
+  /**
+   * overlay 里**第一个可见字**的矩形（视口坐标）。
+   *
+   * 为什么不用 `el.getBoundingClientRect()`：盒子左缘现在是内容原点（整行全宽），
+   * 它已经不再等于「灰字起笔的位置」——起笔位置由 `text-indent` 决定。自检要证明的是
+   * 「灰字接在草稿行尾」，只能量文字本身（量盒子等于量一个与判据无关的量）。
+   *
+   * 与 {@link draftEndRect} 同一口径：逐文本节点走，取第一个非空节点的**首字符**。
+   */
+  private firstGlyphRect(): DOMRect | null {
+    const walker = document.createTreeWalker(this.el, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      const text = node as Text;
+      const value = text.nodeValue;
+      if (value === null || value.length === 0) continue;
+      const range = document.createRange();
+      range.setStart(text, 0);
+      range.setEnd(text, 1);
+      const rect = range.getBoundingClientRect();
+      // 空白首字符（理论上不会出现：净化链已折叠空白）宽度可能为 0，但高仍可信。
+      return rect.width > 0 || rect.height > 0 ? rect : null;
+    }
+    return null;
+  }
+
   /** 记录一次自检失败的原因（留在 `data-reject` 上供现场取证）并判为不显示。 */
   private rejectAs(reason: string): false {
     this.el.dataset.reject = reason;
@@ -1105,15 +1142,38 @@ class GhostOverlay {
         || end.top < taRect.top - 1 || end.top > taRect.bottom + 1) {
         return this.rejectAs('caret-outside-editor');
       }
-      const dx = Math.round(ghostRect.left - end.right);
+      // ① 盒子左缘必须在内容原点上：折行口径改成「整行全宽 + text-indent 起笔」之后，
+      //    幽灵**不再是**从行尾起笔的那一小块，它的左缘就是内容左缘。这一条仍能拦住
+      //    「挂错层 / offsetParent 变化」这类坐标系失真。
+      const originX = taRect.left + borderLeft + padLeft;
+      const dxOrigin = Math.round(ghostRect.left - originX);
+      if (Math.abs(dxOrigin) > 4) return this.rejectAs(`origin-drift-x dx=${dxOrigin}`);
+      // ② 真正接在草稿行尾的是**第一个字**（由 text-indent 决定）。锚点量错时它会落到
+      //    内容原点或别处，dx 立刻炸开——与旧实现量盒子左缘同一语义，被测量的对象变了。
+      //
+      //    这里必须接受**两种**合法落点（都是编辑器自己会做的选择）：
+      //      a. 行尾还剩得下第一个字 ⇒ 就在行尾同一行起笔（最常见）；
+      //      b. 行尾离右缘不足一个字宽 ⇒ 零宽断点把它整体折到下一行（见 overlay 的
+      //         ::before{content:"\200b"}）：起笔落在**内容原点**、行号 +1。
+      //    只认 a 会把 b 判成失真（真浏览器实测：dx=-896、灰字被拒、什么都不显示）。
+      const first = this.firstGlyphRect();
+      if (first === null) return this.rejectAs('no-anchor-glyph');
+      const dx = Math.round(first.left - end.right);
+      const sameLine = Math.abs(dx) <= 4 && Math.abs(Math.round(first.top - end.top)) <= 4;
+      const wrappedToNextLine = Number.isFinite(lineHeight) && lineHeight > 0
+        && Math.abs(Math.round(first.left - originX)) <= 4
+        && Math.abs(Math.round(first.top - (end.top + lineHeight))) <= 4;
+      if (!sameLine && !wrappedToNextLine) {
+        return this.rejectAs(`anchor-drift dx=${dx} dy=${Math.round(first.top - end.top)}`);
+      }
       // overlay 顶被刻意上移了行内偏移（让 overlay 内文本与正文字形同高），
       // 所以 overlay.top ≈ end.top - lineOffset，dy 会是一个约 -2px 的负值——
       // 允许 [-(lineHeight-end.height)/2 - 4, +4] 区间，仍拦住真正的坐标系错位。
       const lineOff = Number.isFinite(lineHeight) && lineHeight > 0 && end.height > 0
         ? Math.max(0, (lineHeight - end.height) / 2) : 0;
       const dy = Math.round(ghostRect.top - end.top);
-      if (Math.abs(dx) > 4 || dy > 4 || dy < -(lineOff + 4)) {
-        return this.rejectAs(`anchor-drift dx=${dx} dy=${dy}`);
+      if (dy > 4 || dy < -(lineOff + 4)) {
+        return this.rejectAs(`box-drift dy=${dy}`);
       }
     } else {
       if (Math.abs(ghostRect.top - (taRect.top + borderTop + padTop)) > tolerance) return this.rejectAs('origin-drift-y');
