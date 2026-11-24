@@ -67,8 +67,8 @@ card copy (field labels/hints, buttons, badges) follows the host DSH UI language
 
 | Group | Fields |
 |---|---|
-| LLM next-suggestion | enable toggle, max output tokens, max suggestion chars, reference turns, transcript char budget, timeout (ms), accept key, provider / model route (leave empty to inherit the main request), **suggestion reasoning effort `suggestionReasoningEffort` (empty by default = not sent)** |
-| Pause completion | enable toggle, pause duration (default 100ms), min input chars (pause), completion length cap, **completion reasoning effort `completionReasoningEffort` (empty by default = not sent)** |
+| LLM next-suggestion | enable toggle, max output tokens, max suggestion chars, reference turns, transcript char budget, timeout (ms), accept key, provider / model route (leave empty to inherit the main request), **suggestion reasoning effort `suggestionReasoningEffort` (empty by default = not sent)**, **suggestion prompt `suggestionPrompt` (empty by default = built-in template)** |
+| Pause completion | enable toggle, pause duration (default 100ms), min input chars (pause), completion length cap, **completion reasoning effort `completionReasoningEffort` (empty by default = not sent)**, **completion prompt `completionPrompt` (empty by default = built-in template)** |
 | History prefix completion | enable toggle, cross-session search, max history entries, min input chars (history), word-by-word accept |
 | Hotness management | frequent cross-session phrases list: pin (exempt from eviction, always leads candidates), delete, manual add (pinned by default), clear all — takes effect immediately, no save needed |
 
@@ -91,7 +91,49 @@ You can also override by id in cordis.patch.yml (as initial values for the above
     llmEnabled: true           # LLM suggestion toggle
     suggestionReasoningEffort: ''  # effort for the suggestion call (empty = do not send)
     completionReasoningEffort: ''  # effort for the completion call (same semantics)
+    suggestionPrompt: ''           # prompt for the next-suggestion call (empty = built-in template)
+    completionPrompt: ''           # prompt for the pause completion (same semantics)
 ```
+
+### Custom prompts
+
+Both generation paths expose their system prompt in the settings card —
+**Suggestion prompt** (`suggestionPrompt`) and **Completion prompt** (`completionPrompt`),
+one multi-line box each, up to 6000 characters.
+
+- **Empty means the built-in template, byte for byte.** Both keys default to empty, so leaving
+  them alone changes nothing about today's behaviour. Whitespace-only counts as empty too: a
+  template of spaces and newlines hands the model a prompt with no instruction at all, which
+  shows up as "it rambles but nothing failed" — harder to diagnose than falling back.
+- **Any text you type becomes the template**, with three placeholders:
+
+  | Placeholder | Expands to | Why it is there |
+  |---|---|---|
+  | `{{builtin}}` | the whole built-in template | add your own rules **around** the built-in ones without copying a full prompt, and without losing its dozen prohibitions by replacing it wholesale |
+  | `{{language}}` | the output language detected for this turn | the language still comes from the *Suggestion language* setting; a custom prompt does not override it |
+  | `{{maxChars}}` | that path's character cap | the cap stays a setting (`maxSuggestionChars` / completion length cap) instead of getting baked into a copied template |
+
+  An unrecognised `{{xxx}}` is **sent as-is**: silently dropping it would look like it worked,
+  and throwing would fail the whole generation in silence — both are harder to debug than
+  passing it through.
+
+  Example — keep the built-in rules and add one of your own:
+  ```
+  {{builtin}}
+
+  One more rule: never suggest committing, pushing, or anything else not already asked for.
+  ```
+
+- **No restart needed.** The write goes through the kernel's volatile channel; the host marks
+  its live view dirty on `settings/document-updated` and re-reads it before the next generation,
+  so the very next turn uses the new prompt. The trace lines end with `prompt=custom` /
+  `prompt=builtin` to answer "which one did this turn use" — that reading comes from the
+  generation itself, not from re-reading the config when it lands (by then it may be a newer value).
+- The 6000-character cap measures the **template**; what `{{builtin}}` expands to is not counted
+  against it.
+- **Output sanitising and filtering do not loosen** because you wrote your own prompt: the
+  character caps, the single-line rule and the echo filter still apply. A custom prompt changes
+  what the model is asked for, not what it is allowed to output.
 
 
 
