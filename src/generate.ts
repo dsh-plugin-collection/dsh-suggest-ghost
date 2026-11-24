@@ -24,6 +24,8 @@ import {
   shouldFilterSuggestion,
 } from './sanitize.js';
 import { inlinePrompt, sanitizeCompletion } from './inline.js';
+import { promptSource, resolveSystemPrompt } from './prompt-override.js';
+import type { PromptSource } from './prompt-override.js';
 import {
   extractContextSummary,
   frameTranscript,
@@ -120,6 +122,17 @@ export interface Config {
   /** 停顿续写那次辅助调用的推理档位（#35），语义同 `suggestionReasoningEffort`。 */
   completionReasoningEffort?: string;
   /**
+   * 「下一条建议」的 system 提示词模板。空串 = 用内置模板（`systemPrompt()` 逐字不变）。
+   *
+   * 与 `suggestionReasoningEffort` 同一套「空串是合法值」的判据：这一项的**默认形态就是空**，
+   * 用 `min(1)` 会把它变成必填，等于把插件逼成「不抄一份提示词就不能启动」。
+   * 展开规则（`{{builtin}}` / `{{language}}` / `{{maxChars}}`）在 `prompt-override.ts`，
+   * 与续写路径共用同一份实现。
+   */
+  suggestionPrompt?: string;
+  /** 停顿续写的 system 提示词模板，语义同 `suggestionPrompt`（读的是内置 `inlinePrompt()`）。 */
+  completionPrompt?: string;
+  /**
    * 重出「换一条」开关（#127，默认开）。关掉之后 `regen` op 仍会被消费，
    * 但一律判 `regen-refused reason=disabled` 并留痕——不是静默 return。
    */
@@ -164,6 +177,10 @@ export interface EditableConfig {
   suggestionReasoningEffort?: Volatile<string> | string;
   /** 续写调用的推理档位（#35）；空串 = 继承。 */
   completionReasoningEffort?: Volatile<string> | string;
+  /** 建议的提示词模板；空串 = 内置模板，见 `Config.suggestionPrompt`。 */
+  suggestionPrompt?: Volatile<string> | string;
+  /** 续写的提示词模板；空串 = 内置模板。 */
+  completionPrompt?: Volatile<string> | string;
 }
 
 /** 内核解析后的插件配置：策略字段是裸值，可调字段是引用。 */
@@ -210,6 +227,8 @@ export type FlatConfig = Config & {
   contextSummaryChars: number;
   suggestionReasoningEffort: string;
   completionReasoningEffort: string;
+  suggestionPrompt: string;
+  completionPrompt: string;
 };
 
 /**
@@ -252,6 +271,11 @@ export function flattenConfig(config: ResolvedPluginConfig): FlatConfig {
     // 空串在这里是**合法值**而不是缺失——它表达的就是「继承路由自己的默认档位」。
     suggestionReasoningEffort: readVolatile(config.suggestionReasoningEffort, ''),
     completionReasoningEffort: readVolatile(config.completionReasoningEffort, ''),
+    // 提示词模板。空串是**合法值**（= 内置模板），所以兜底与 schema 的 `.default('')` 同值；
+    // 这一行漏掉的后果与 #124 那条一样：`...config` 打底会把 `{ get() }` 引用对象当裸值带进
+    // boot 层，于是「留空 = 内置」判成「留空 = 非空对象」，展开出空 system。
+    suggestionPrompt: readVolatile(config.suggestionPrompt, ''),
+    completionPrompt: readVolatile(config.completionPrompt, ''),
   } as FlatConfig;
 }
 
@@ -296,6 +320,9 @@ export function resolveConfig(config: Config): Config {
     regenKey: readVolatile(raw.regenKey, 'Alt+G'),
     suggestionReasoningEffort: readVolatile(raw.suggestionReasoningEffort, ''),
     completionReasoningEffort: readVolatile(raw.completionReasoningEffort, ''),
+    // 与 `flattenConfig` 那一处**同值**（两处都要登记，判据见那边那条注释）。
+    suggestionPrompt: readVolatile(raw.suggestionPrompt, ''),
+    completionPrompt: readVolatile(raw.completionPrompt, ''),
   };
   const int = (name: string): number => {
     const n = readVolatile<unknown>(value[name], undefined);
@@ -1054,6 +1081,14 @@ export async function generateSuggestion(
   suggestion: SuggestGhostSuggested | undefined;
   language: string;
   metrics: StreamMetrics;
+  /**
+   * 本轮**实际发给模型的**是哪份提示词（`custom` = 用户填的模板，`builtin` = 内置）。
+   *
+   * 为什么从生成侧返回而不是让调用方读配置：留痕要回答的是「这一轮用的哪条」，
+   * 而调用方手上的快照与生成时用的那份可能不同（#137 的 `uiLocale` 同一课——
+   * 收口时再读进程级值，可能已被下一次写入推进）。判据单点在 `prompt-override.ts`。
+   */
+  promptSource: PromptSource;
 }> {
   signal.throwIfAborted();
   const startedAt = Date.now();
@@ -1080,7 +1115,14 @@ export async function generateSuggestion(
   } else {
     language = suggestionLanguage(transcript.evidencePairs, uiLocale, uiLocaleWeight, lastLanguage);
   }
-  const system = systemPrompt(config.maxSuggestionChars, language);
+  const builtinSystem = systemPrompt(config.maxSuggestionChars, language);
+  // 用户填了 `suggestionPrompt` 就按模板展开，留空 ⇒ `resolveSystemPrompt` 原样返回
+  // `builtinSystem`（同一个字符串引用，不是拷贝后再相等），所以默认形态与今天逐字相同。
+  const system = resolveSystemPrompt(config.suggestionPrompt, builtinSystem, {
+    language,
+    maxChars: config.maxSuggestionChars,
+  });
+  const usedPrompt = promptSource(config.suggestionPrompt);
   const framed = frameTranscript(transcript.pairs);
   // source：0.1.7 删除了 `plugin` kind（0.1.5 有、0.1.7 无），且 0.1.7 新增的
   // `schedule` kind 在 0.1.5 不存在 —— 两代**无交集**，故取两代都有的 `user`。
@@ -1190,7 +1232,7 @@ export async function generateSuggestion(
         // 吐了但净化/过滤链丢掉 = `filtered`（指向 sanitize 那一侧）。原注释声称
         // 这里有「归因日志」而代码里一个字都没有，#39 就是把它兑现。
         metrics.outcome = text.trim().length === 0 ? 'empty' : 'filtered';
-        return { suggestion: undefined, language, metrics };
+        return { suggestion: undefined, language, metrics, promptSource: usedPrompt };
       }
       const { text: suggestion, truncated } = sanitizeSuggestion(cleaned, config.maxSuggestionChars);
       const suggested: SuggestGhostSuggested = {
@@ -1205,7 +1247,7 @@ export async function generateSuggestion(
         final: true,
       };
       metrics.outcome = 'ok';
-      return { suggestion: suggested, language, metrics };
+      return { suggestion: suggested, language, metrics, promptSource: usedPrompt };
     } catch (error) {
       // 外部中止（新回合取代 / 卸载）不重试。
       if (signal.aborted) throw error;
@@ -1266,7 +1308,13 @@ export async function generateCompletion(
   languageMode?: string,
   uiLocaleWeight?: number,
   lastLanguage?: string,
-): Promise<{ text: string | undefined; language: string; metrics: StreamMetrics }> {
+): Promise<{
+  text: string | undefined;
+  language: string;
+  metrics: StreamMetrics;
+  /** 本轮发给模型的提示词是哪份，语义同 `generateSuggestion` 的同名返回字段。 */
+  promptSource: PromptSource;
+}> {
   signal.throwIfAborted();
   const startedAt = Date.now();
   const probe = probeDeploymentRoute(ctx);
@@ -1293,7 +1341,14 @@ export async function generateCompletion(
     );
   }
   const inlineMaxChars = config.inlineMaxChars ?? 160;
-  const system = inlinePrompt(inlineMaxChars, language);
+  const builtinSystem = inlinePrompt(inlineMaxChars, language);
+  // 同 `generateSuggestion`：留空逐字不变，填了按模板展开。读的是 `completionPrompt`，
+  // 与建议路径分键（口径与 `completionReasoningEffort` 一致）。
+  const system = resolveSystemPrompt(config.completionPrompt, builtinSystem, {
+    language,
+    maxChars: inlineMaxChars,
+  });
+  const usedPrompt = promptSource(config.completionPrompt);
   // 用户消息：先附少量上下文（若有），再附草稿。
   const contextBlock = pairs.length > 0
     ? `Recent conversation context:\n${frameTranscript(pairs)}\n\n`
@@ -1362,10 +1417,10 @@ export async function generateCompletion(
         // （stripDraftEcho 裁空、形态兜底拦下）= filtered。`sanitizeCompletion` 本身
         // 不区分这两者，也不该区分——区分它是留痕层的职责。
         metrics.outcome = raw.trim().length === 0 ? 'empty' : 'filtered';
-        return { text: undefined, language, metrics };
+        return { text: undefined, language, metrics, promptSource: usedPrompt };
       }
       metrics.outcome = 'ok';
-      return { text, language, metrics };
+      return { text, language, metrics, promptSource: usedPrompt };
     } catch (error) {
       if (signal.aborted) throw error;
       // 失败即降级一次：撤档位、立刻重发，不退避、不占重试预算。

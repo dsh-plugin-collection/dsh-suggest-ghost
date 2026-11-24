@@ -26,6 +26,9 @@ import { useEffect, useRef, useState, type ReactElement } from 'react';
 import type { PluginSettingsScope } from './settings-scope.js';
 import type { ScopeSnapshot } from './index.js';
 import type { HotnessOp } from '../domain.js';
+// 提示词上限的**唯一出处**（宿主 schema 引的是同一个常量）。卡片需要它来在保存前
+// 挡住超长：内核 zod 拒绝时 `save()` 读不到结论，界面只表现为「点了保存、值没变」。
+import { PROMPT_MAX_CHARS } from '../prompt-override.js';
 import { keyEventToSpec } from './keyspec.js';
 import { useGhostT, type GhostLang, type LocaleFaceLike } from './useGhostT.js';
 import { injectStyles } from './styles.js';
@@ -35,7 +38,7 @@ import { injectStyles } from './styles.js';
 import { IconChevronDownOutlineRegular, IconInfoOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
 
 /** 字段输入形态。 */
-export type FieldKind = 'number' | 'text' | 'boolean' | 'key' | 'select' | 'catalog';
+export type FieldKind = 'number' | 'text' | 'boolean' | 'key' | 'select' | 'catalog' | 'textarea';
 
 /** 双语文案值（zh 为源语言）。 */
 export interface Bilingual {
@@ -304,6 +307,24 @@ export const GHOST_FIELDS: ReadonlyArray<{
     section: 'llm',
     writable: true,
   },
+  // —— 自定义提示词（Gitea #182）——
+  //
+  // 放在各自分组的最末：它替代的是整条生成指令，不是某个阈值，排在一堆数字中间
+  // 会让人以为它也是其中之一。占位符语义写在说明里——不填就永远用内置模板，
+  // 所以默认形态下它只是一行安静的说明。
+  // 上限 `PROMPT_MAX_CHARS` 从 `src/prompt-override.ts` 引，不在这里抄一份数字：
+  // 抄来的数字与 schema 的 `.max()` 一旦分叉，界面挡住的就是另一个长度。
+  {
+    key: 'suggestionPrompt',
+    label: { zh: '下一条建议的提示词', en: 'Suggestion prompt' },
+    hint: {
+      zh: '留空使用内置提示词。填了则整段替换，可写 {{builtin}} 保留内置原文、{{language}} 取本轮判定语言、{{maxChars}} 取字数上限。',
+      en: 'Empty uses the built-in prompt. Your text replaces it: {{builtin}} keeps the built-in one, {{language}} the detected language, {{maxChars}} the character limit.',
+    },
+    kind: 'textarea',
+    section: 'llm',
+    writable: true,
+  },
   // —— 历史前缀补全 ——
   {
     key: 'historyEnabled',
@@ -440,6 +461,17 @@ export const GHOST_FIELDS: ReadonlyArray<{
     section: 'inline',
     writable: true,
   },
+  {
+    key: 'completionPrompt',
+    label: { zh: '续写的提示词', en: 'Completion prompt' },
+    hint: {
+      zh: '留空使用内置提示词。{{builtin}} / {{language}} / {{maxChars}} 的含义与「下一条建议的提示词」一致。',
+      en: 'Empty uses the built-in prompt. {{builtin}}, {{language}} and {{maxChars}} mean the same as in the suggestion prompt.',
+    },
+    kind: 'textarea',
+    section: 'inline',
+    writable: true,
+  },
   // —— 语言设置 ——
   {
     key: 'languageMode',
@@ -506,6 +538,10 @@ const zhStrings = {
   save: '保存',
   /** 数字字段校验错误 */
   invalidNumber: '请输入数字',
+  /** 多行提示词字段：占位符与超长说明（超长必须在保存前挡住，理由见 fieldInvalid）。 */
+  promptPlaceholder: '留空 = 使用内置提示词',
+  promptTooLong: (max: number, current: number): string =>
+    `提示词最长 ${max} 字，当前 ${current} 字，请精简后再保存`,
   /** 快捷键控件 */
   keyCapturing: '按下组合键…（Esc 取消）',
   keyEmpty: '点击设置快捷键',
@@ -559,6 +595,9 @@ const enStrings: { [K in keyof typeof zhStrings]: (typeof zhStrings)[K] } = {
   saving: 'Saving…',
   save: 'Save',
   invalidNumber: 'Enter a number',
+  promptPlaceholder: 'Leave empty to use the built-in prompt',
+  promptTooLong: (max: number, current: number): string =>
+    `Prompts are limited to ${max} characters; this one has ${current}. Shorten it before saving`,
   keyCapturing: 'Press a key combo… (Esc to cancel)',
   keyEmpty: 'Click to set a shortcut',
   // —— Hotness management ——
@@ -904,12 +943,22 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
     if (key in edits) return String(edits[key]);
     return displayValue(value[key]);
   };
-  /** 数字字段的暂存值是否非法（空或非数字）；与官方 ValueField 校验一致。 */
+  /** 数字字段的暂存值是否非法（空或非数字）；与官方 ValueField 校验一致。
+   * 多行提示词字段另一条判据：超过 `PROMPT_MAX_CHARS` 直接挡住保存 —— 写进内核会被
+   * schema 的 `.max()` 拒，而 `save()` 读不到那次拒绝，界面表现是「点了保存、值没变」。 */
   const fieldInvalid = (f: (typeof GHOST_FIELDS)[number]): boolean => {
-    if (f.kind !== 'number' || !(f.key in edits)) return false;
-    const raw = String(edits[f.key]).trim();
-    return raw === '' || Number.isNaN(Number(raw));
+    if (!(f.key in edits)) return false;
+    if (f.kind === 'number') {
+      const raw = String(edits[f.key]).trim();
+      return raw === '' || Number.isNaN(Number(raw));
+    }
+    if (f.kind === 'textarea') return String(edits[f.key]).length > PROMPT_MAX_CHARS;
+    return false;
   };
+  /** 非法时的说明（两种非法形态的原因不同，不能共用「请输入数字」）。 */
+  const invalidMessage = (f: (typeof GHOST_FIELDS)[number]): string => f.kind === 'textarea'
+    ? t.promptTooLong(PROMPT_MAX_CHARS, String(edits[f.key] ?? '').length)
+    : t.invalidNumber;
   const anyInvalid = GHOST_FIELDS.some(fieldInvalid);
   const setField = (key: string, raw: string | boolean | number): void => {
     setEdits(prev => ({ ...prev, [key]: raw }));
@@ -1179,6 +1228,21 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
           <option key={opt.value} value={opt.value}>{opt.label[lang]}</option>
         ))}
       </select>
+    ) : f.kind === 'textarea' ? (
+      // 提示词这类多行文本：单行 `<input>` 装不下，也看不出自己写了多少行。
+      // `rows` 固定 5 行 + `resize:vertical`（见 styles.ts 的 `.sgc-textarea`），
+      // 关掉拼写检查——这是发给模型的指令，不是散文，波浪线只会误导。
+      <textarea
+        className={invalid ? `${inputClass} sgc-textarea sgc-inputInvalid` : `${inputClass} sgc-textarea`}
+        id={fieldId}
+        rows={5}
+        spellCheck={false}
+        placeholder={t.promptPlaceholder}
+        aria-invalid={invalid || undefined}
+        value={fieldValue(f.key)}
+        disabled={!editable || busy}
+        onChange={e => setField(f.key, e.target.value)}
+      />
     ) : (
       <input
         className={inputClass}
@@ -1217,7 +1281,7 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
           </div>
         </div>
         {control}
-        {invalid && <p className="sgc-invalid" role="status">{t.invalidNumber}</p>}
+        {invalid && <p className="sgc-invalid" role="status">{invalidMessage(f)}</p>}
         {helpOpenNow && (
           <div id={helpId} role="region" aria-label={helpAria} className="sgc-help">
             <p>{f.hint[lang]}</p>

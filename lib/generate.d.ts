@@ -10,6 +10,7 @@ import type { StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { Session } from '@deepseek-ai/dsh-session';
 import { PROJECTION_KEY } from './domain.js';
 import type { SuggestGhostSuggested } from './domain.js';
+import type { PromptSource } from './prompt-override.js';
 import type { Transcript } from './transcript.js';
 export { sessionEvents } from './coldstart.js';
 /** 本能力所属的辅助请求超时错误码。 */
@@ -54,6 +55,17 @@ export interface Config {
     /** 停顿续写那次辅助调用的推理档位（#35），语义同 `suggestionReasoningEffort`。 */
     completionReasoningEffort?: string;
     /**
+     * 「下一条建议」的 system 提示词模板。空串 = 用内置模板（`systemPrompt()` 逐字不变）。
+     *
+     * 与 `suggestionReasoningEffort` 同一套「空串是合法值」的判据：这一项的**默认形态就是空**，
+     * 用 `min(1)` 会把它变成必填，等于把插件逼成「不抄一份提示词就不能启动」。
+     * 展开规则（`{{builtin}}` / `{{language}}` / `{{maxChars}}`）在 `prompt-override.ts`，
+     * 与续写路径共用同一份实现。
+     */
+    suggestionPrompt?: string;
+    /** 停顿续写的 system 提示词模板，语义同 `suggestionPrompt`（读的是内置 `inlinePrompt()`）。 */
+    completionPrompt?: string;
+    /**
      * 重出「换一条」开关（#127，默认开）。关掉之后 `regen` op 仍会被消费，
      * 但一律判 `regen-refused reason=disabled` 并留痕——不是静默 return。
      */
@@ -97,6 +109,10 @@ export interface EditableConfig {
     suggestionReasoningEffort?: Volatile<string> | string;
     /** 续写调用的推理档位（#35）；空串 = 继承。 */
     completionReasoningEffort?: Volatile<string> | string;
+    /** 建议的提示词模板；空串 = 内置模板，见 `Config.suggestionPrompt`。 */
+    suggestionPrompt?: Volatile<string> | string;
+    /** 续写的提示词模板；空串 = 内置模板。 */
+    completionPrompt?: Volatile<string> | string;
 }
 /** 内核解析后的插件配置：策略字段是裸值，可调字段是引用。 */
 export type ResolvedPluginConfig = Config & EditableConfig;
@@ -126,6 +142,8 @@ export type FlatConfig = Config & {
     contextSummaryChars: number;
     suggestionReasoningEffort: string;
     completionReasoningEffort: string;
+    suggestionPrompt: string;
+    completionPrompt: string;
 };
 /**
  * 把插件配置拍平成「策略 + 可调」的裸值视图。0.1.7 的可调项是引用，其余代码
@@ -477,6 +495,14 @@ avoidBlock?: string): Promise<{
     suggestion: SuggestGhostSuggested | undefined;
     language: string;
     metrics: StreamMetrics;
+    /**
+     * 本轮**实际发给模型的**是哪份提示词（`custom` = 用户填的模板，`builtin` = 内置）。
+     *
+     * 为什么从生成侧返回而不是让调用方读配置：留痕要回答的是「这一轮用的哪条」，
+     * 而调用方手上的快照与生成时用的那份可能不同（#137 的 `uiLocale` 同一课——
+     * 收口时再读进程级值，可能已被下一次写入推进）。判据单点在 `prompt-override.ts`。
+     */
+    promptSource: PromptSource;
 }>;
 /**
  * 为草稿停顿生成行内续写。模型产出空或不合格回复 = 无续写（静默返回 undefined），
@@ -492,5 +518,7 @@ export declare function generateCompletion(ctx: Context, config: Config, session
     text: string | undefined;
     language: string;
     metrics: StreamMetrics;
+    /** 本轮发给模型的提示词是哪份，语义同 `generateSuggestion` 的同名返回字段。 */
+    promptSource: PromptSource;
 }>;
 export { PROJECTION_KEY };

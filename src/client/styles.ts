@@ -42,6 +42,10 @@ const COMPONENTS = [
   '.sgc-input:disabled{color:var(--dsw-alias-label-tertiary);cursor:default}',
   '.sgc-inputInvalid{border-color:var(--dsw-alias-state-error-primary)}',
   '.sgc-inputReadOnly{opacity:.6;cursor:not-allowed}',
+  /* 多行提示词（Gitea #182）。必须排在 `.sgc-input` **之后**：两条选择器特异性相同，
+     靠顺序覆盖 padding / min-height。等宽是因为提示词里要看占位符与换行，比例字体下
+     `{{builtin}}` 这种连续花括号容易看串行。 */
+  '.sgc-textarea{min-height:120px;padding:8px 12px;line-height:1.6;resize:vertical;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}',
 
   /* ==================== 快捷键按钮 ==================== */
   '.sgc-key{box-sizing:border-box;width:100%;appearance:none;font:inherit;text-align:left;cursor:pointer;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);min-height:36px;color:var(--dsw-alias-label-primary);border-radius:var(--dsw-radius-md,8px);padding:0 12px;font-size:13px;line-height:1.5}',
