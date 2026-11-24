@@ -771,15 +771,44 @@ const tailRectOf = (node: Node): DraftEnd | null => {
   }
   if (!(node instanceof HTMLElement)) return null;
   const display = getComputedStyle(node).display;
+  // 原子（inline-flex / inline-block / inline-grid / inline-table）：引用 chip / quote 的
+  // 可见内容就是它，用自己的盒子——**不能**用 range，range 会漏掉盒子的 padding，也会在
+  // 「盒子里还没有文本节点」（装饰器 portal 未到）时量出空。
+  if (/^inline-(block|flex|grid|table)/.test(display)) {
+    const box = node.getBoundingClientRect();
+    return box.width > 0 || box.height > 0
+      ? { right: box.right, top: box.top, height: box.height }
+      : null;
+  }
+  // 块级：它的最后一行。
   if (!display.startsWith('inline')) {
-    const inner = lastLineRectOf(node);
-    if (inner !== null) return inner;
+    const line = lastLineRectOf(node);
+    if (line !== null) return line;
+    const box = node.getBoundingClientRect();
+    return box.width > 0 || box.height > 0
+      ? { right: box.right, top: box.top, height: box.height }
+      : null;
   }
+  // 普通内联容器（Lexical 的格式化 <span>、chip 的外壳）：接着往**最后一颗子节点**走。
+  // 直接对它取 getBoundingClientRect 会拿到跨行并集（top 落在第一行），取 range 又会漏掉
+  // 原子盒子的边界 —— 只有落到子节点上，才既能是「末字符」也能是「原子盒子」。
+  const kids = node.childNodes;
+  for (let i = kids.length - 1; i >= 0; i -= 1) {
+    const child = kids[i];
+    if (child === undefined) continue;
+    if (child.nodeType === Node.TEXT_NODE) {
+      if (((child as Text).nodeValue ?? '').length === 0) continue;
+      return tailRectOf(child);
+    }
+    if (child instanceof HTMLElement) return tailRectOf(child);
+  }
+  // 空内联容器（<br> 之类）：退回它自己的行片段 / 盒子。
+  const line = lastLineRectOf(node);
+  if (line !== null) return line;
   const box = node.getBoundingClientRect();
-  if (box.width > 0 || box.height > 0) {
-    return { right: box.right, top: box.top, height: box.height };
-  }
-  return lastLineRectOf(node);
+  return box.width > 0 || box.height > 0
+    ? { right: box.right, top: box.top, height: box.height }
+    : null;
 };
 
 class GhostOverlay {
