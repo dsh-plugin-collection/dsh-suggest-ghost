@@ -702,6 +702,86 @@ interface StreamFrameRecord {
   readonly t: number;
 }
 
+/** 草稿收尾锚点：只用到右缘/顶/高三个量（不需要完整 DOMRect，也就不用伪造 one）。 */
+interface DraftEnd {
+  readonly right: number;
+  readonly top: number;
+  readonly height: number;
+}
+
+/** 编辑器里最后一个元素子节点（Lexical 的块级 `<p>`）；没有则 null（textarea 形态）。 */
+const lastElementChildOf = (host: HTMLElement): HTMLElement | null => {
+  for (let i = host.children.length - 1; i >= 0; i -= 1) {
+    const child = host.children[i];
+    if (child instanceof HTMLElement) return child;
+  }
+  return null;
+};
+
+/**
+ * 一个块元素**最后一行**的渲染矩形（视口坐标）。
+ *
+ * 为什么要 range 而不是 `block.getBoundingClientRect()`：后者量的是整个块（含全部
+ * 行），多行时 `right` 是最宽那行、不是收尾那一行。`Range` 的 `getClientRects()`
+ * 逐行返回，取最后一条才是「屏幕上草稿收尾的位置」。
+ *
+ * 为什么不用`range.selectNodeContents(editor)`：那会跨全部段落，多行时同样要自己
+ * 找最后一条，而且范围更大（每次对齐都多一轮排版遍历）。
+ *
+ * 空块（刚按过回车、只剩一个 `<br>`）可能量不出一行 ⇒ 返回 null，调用方退回文本
+ * 节点口径（与修复前行为一致，不在这里顺手改语义）。
+ */
+const lastLineRectOf = (block: HTMLElement): DraftEnd | null => {
+  const range = document.createRange();
+  range.selectNodeContents(block);
+  const rects = range.getClientRects();
+  for (let i = rects.length - 1; i >= 0; i -= 1) {
+    const rect = rects[i];
+    if (rect === undefined) continue;
+    if (rect.width > 0 || rect.height > 0) {
+      return { right: rect.right, top: rect.top, height: rect.height };
+    }
+  }
+  return null;
+};
+
+/**
+ * 块元素收尾处**那个东西**的渲染矩形：文本取末字符，内联原子取**它自己的盒子**。
+ *
+ * 为什么不能统一走 range：`Range` 只覆盖文本与它所在的盒子，**不包含空内联元素的
+ * 宽度**。引用 chip 的可见盒子由 React 装饰器渲染，若此刻还没有文本节点（portal 未到 /
+ * 宿主用非文本渲染），range 的最后一条矩形停在 chip **之前** —— 灰字就画在 chip 身上
+ * （用户报告的重叠）。而 `Element.getBoundingClientRect()` 量的是盒子本身，与里面有没有
+ * 文本节点无关。
+ *
+ * 块级元素（列表之类）回退到「它的最后一行」，避免拿整块宽度当收尾。
+ */
+const tailRectOf = (node: Node): DraftEnd | null => {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node as Text;
+    const value = text.nodeValue ?? '';
+    if (value.length === 0) return null;
+    const range = document.createRange();
+    range.setStart(text, Math.max(0, value.length - 1));
+    range.setEnd(text, value.length);
+    const rect = range.getBoundingClientRect();
+    return rect.width > 0 || rect.height > 0
+      ? { right: rect.right, top: rect.top, height: rect.height }
+      : null;
+  }
+  if (!(node instanceof HTMLElement)) return null;
+  const display = getComputedStyle(node).display;
+  if (!display.startsWith('inline')) {
+    const inner = lastLineRectOf(node);
+    if (inner !== null) return inner;
+  }
+  const box = node.getBoundingClientRect();
+  if (box.width > 0 || box.height > 0) {
+    return { right: box.right, top: box.top, height: box.height };
+  }
+  return lastLineRectOf(node);
+};
+
 class GhostOverlay {
   private readonly el: HTMLDivElement;
   private composer: HTMLElement | null = null;
@@ -714,6 +794,8 @@ class GhostOverlay {
   private scroller: HTMLElement | null = null;
   private readonly onScroll: () => void;
   private readonly onResize: () => void;
+  /** 结构变化的合并入口（rAF 一拍只重排一次，见 {@link mutationObserver}）。 */
+  private readonly onDomMutation: () => void;
   private readonly styleTag: HTMLStyleElement;
   /**
    * 生成中指示的样式标签（内容随设置变化）。
@@ -724,6 +806,15 @@ class GhostOverlay {
   private pendingStyle: HTMLStyleElement | null = null;
   /** 尺寸变化观察者：composer 自动增高/附件行出现/字体回流都会改变内容起点。 */
   private resizeObserver: ResizeObserver | null = null;
+  /**
+   * 结构变化观察者：`ResizeObserver` 只看尺寸，看不到「盒子大小没变、里面换了内容」
+   * 这一类变化——而引用 chip / quote 是**装饰器节点**，React portal 的提交晚于
+   * Lexical 的 DOM 更新，量早一拍就会量到空盒子（锚点落到 chip 之前 ⇒ 灰字压在引用上）。
+   * 回调里只标脏 + 重对齐，用 rAF 合并（一次渲染期间的多次 DOM 变更只重排一次）。
+   */
+  private mutationObserver: MutationObserver | null = null;
+  /** rAF 合并标记（见 {@link onDomMutation}）。 */
+  private mutationFrame = 0;
   /** 正在显示的内容（供 ResizeObserver 回调重对齐后重新自检）。 */
   private current: GhostContent | null = null;
   /**
@@ -789,6 +880,19 @@ class GhostOverlay {
     ].join(';');
     this.onScroll = () => { this.anchorDirty = true; this.alignAndVerify(); };
     this.onResize = () => { this.anchorDirty = true; this.alignAndVerify(); };
+    // 结构变化用 rAF 合并：等宿主把这一帧的 DOM 提交完（装饰器 portal 也在这一帧里到）
+    // 再重排，既不会量到半成品，也不会因为一次渲染里的多次变更重排多次。
+    this.onDomMutation = () => {
+      if (this.mutationFrame !== 0) return;
+      const run = (): void => {
+        this.mutationFrame = 0;
+        this.anchorDirty = true;
+        this.alignAndVerify();
+      };
+      this.mutationFrame = typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(run)
+        : (setTimeout(run, 0) as unknown as number);
+    };
     // 幽灵激活时隐藏原生 placeholder（二者同位置，避免重叠）。
     // 状态标记打在**我们自己的 overlay 节点**上（data-shown），经 body:has() 关联
     // 占位元素——React/Lexical 重渲染会剥掉编辑器上的外来类（实测发生过），而
@@ -897,6 +1001,12 @@ class GhostOverlay {
     this.scroller?.addEventListener('scroll', this.onScroll, { passive: true });
     window.addEventListener('resize', this.onResize);
     // 尺寸变化（自动增高、附件行、字体回流）也会移动内容起点，必须重对齐。
+    // 结构变化（装饰器 portal 晚到 / 宿主替换子树）：量到的收尾可能已经变了。
+    // 观察的是 composer，而 overlay 挂在 **composer 之外**（.grow 上）⇒ 不会自我触发。
+    if (typeof MutationObserver !== 'undefined') {
+      this.mutationObserver = new MutationObserver(this.onDomMutation);
+      this.mutationObserver.observe(composer, { childList: true, subtree: true, characterData: true });
+    }
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(this.onResize);
       this.resizeObserver.observe(composer);
@@ -933,6 +1043,13 @@ class GhostOverlay {
     }
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.mutationObserver?.disconnect();
+    this.mutationObserver = null;
+    if (this.mutationFrame !== 0) {
+      if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this.mutationFrame);
+      else clearTimeout(this.mutationFrame);
+      this.mutationFrame = 0;
+    }
     this.current = null;
     this.resetPaintState();
     this.el.dataset.shown = '0';
@@ -1049,16 +1166,49 @@ class GhostOverlay {
    * 行高量级内。偏差超过一行，说明坐标系假设已被宿主破坏，放弃显示。
    */
   /**
-   * 量出草稿在编辑器里的**真实行尾**（最后一行最后一个字符之后的位置）。
+   * 量出草稿**在屏幕上**的收尾位置（最后一行内容的右缘 + 行框顶 + 行框高）。
    *
-   * 必须逐文本节点取、且只取**最后一个非空文本节点的末字符**矩形：
-   * `range.selectNodeContents(editor)` 返回的是**块级 `<p>` 的整行矩形**，
-   * 多行时其 `right` 是第一行的行尾——拿它当"草稿末尾"会算出几百像素的假重叠
-   * （本仓库实测踩过两次）。
+   * ## 为什么不能量「最后一个文本节点的末字符」
+   *
+   * 旧口径是逐文本节点走、取最后一个非空文本节点的末字符矩形。它在纯文本草稿上
+   * 成立，但只要草稿里出现**内联原子**就必然画错——DSH 的引用 chip / quote 都是
+   * `contenteditable=false` 的 inline-flex 盒子，文字外面套着 `max-width` +
+   * `overflow:hidden`（chip 240px、quote `min(80%,300px)`）：
+   *
+   *  - 文本节点的排版宽度是**未截断**的自然宽度 ⇒ 末字符矩形落在裁剪框**外面**；
+   *  - 用户能看见的收尾却是裁剪框的右缘。
+   *
+   * 实测（真 Chromium + 0.11.2 产物，920px composer，chip 标签被 240px 截断）：
+   * 可见收尾 `right=330.78`，文本节点末字符 `right=652.78` —— 差 **322px**。
+   * 幽灵于是被画到草稿右侧几百像素的空地上（行末还有字时就直接压在那些字上），
+   * 用户看到的就是「幽灵和引用文本之外的东西重叠」。
+   *
+   * ## 现在怎么量
+   *
+   * 量**最后一个块元素的最后一行**的 range 矩形：`range.selectNodeContents(block)`
+   * 的 `getClientRects()` 逐行返回，取最后一条 ⇒ `right` 是这一行**渲染出来的**
+   * 内容右缘（内联原子按它的盒子算，被截断时就是裁剪框），`top/height` 是行框。
+   *
+   * ⚠️ 不要退回 `range.selectNodeContents(editor)`：那会跨全部段落，多行时还要自己
+   * 找最后一行（本仓库在这上面踩过两次）。这里只对**最后一个块**取 range。
    */
-  private draftEndRect(): DOMRect | null {
+  private draftEndRect(): DraftEnd | null {
     const ta = this.composer;
     if (ta === null) return null;
+    // ① 首选：最后一个块元素的**收尾那个东西**（文本末字符 / 内联原子的盒子）。
+    const block = lastElementChildOf(ta);
+    if (block !== null) {
+      const tail = block.lastChild;
+      if (tail !== null) {
+        const rect = tailRectOf(tail);
+        if (rect !== null) return rect;
+      }
+      // 收尾量不出来（空块 / 结构性怪形状）⇒ 退回这一块的最后一行。
+      const line = lastLineRectOf(block);
+      if (line !== null) return line;
+    }
+    // ② 退化（textarea / 结构异常 / 块量不出矩形）：仍按最后一个文本节点的末字符量。
+    //    真实 composer 上几乎走不到这一支，保留它是为了不把老行为整体换掉。
     const walker = document.createTreeWalker(ta, NodeFilter.SHOW_TEXT);
     let last: Text | null = null;
     for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
@@ -1072,7 +1222,9 @@ class GhostOverlay {
     range.setEnd(last, end);
     const rect = range.getBoundingClientRect();
     // 行尾是空白字符时矩形宽度可能为 0，但 left/right 仍有位置意义。
-    return rect.width > 0 || rect.height > 0 ? rect : null;
+    return rect.width > 0 || rect.height > 0
+      ? { right: rect.right, top: rect.top, height: rect.height }
+      : null;
   }
 
   /**
