@@ -907,7 +907,13 @@ class GhostOverlay {
       // 与类注释，display 让节点彻底退出渲染，避免任何过渡期双绘。
       'display:none',
     ].join(';');
-    this.onScroll = () => { this.anchorDirty = true; this.alignAndVerify(); };
+    // 滚动**不重排**：overlay 挂在被滚动的内容里（见类注释的实测表格），滚动时它和正文
+    // 一起位移，锚点在 offsetParent 坐标系里的数值根本没变。旧实现每收到一个 scroll 事件
+    // 就跑一遍 align+verify——而 align() 是「先写样式再测量」，等于**每帧强制一次同步
+    // 布局**；多行灰字正是那块最贵的被布局元素。实测真 composer（DSH 0.2.2-rc.3 + 本插件
+    // 真产物）滚动 2.2s：带幽灵时帧间隔 p95 由 17.4ms 涨到 23.5ms、峰值 18→32.5ms，
+    // 也就是掉帧——用户看到的「滚动时抖」。这里只标脏，交给下一次增长帧 / 尺寸变化去重测。
+    this.onScroll = () => { this.anchorDirty = true; };
     this.onResize = () => { this.anchorDirty = true; this.alignAndVerify(); };
     // 结构变化用 rAF 合并：等宿主把这一帧的 DOM 提交完（装饰器 portal 也在这一帧里到）
     // 再重排，既不会量到半成品，也不会因为一次渲染里的多次变更重排多次。
