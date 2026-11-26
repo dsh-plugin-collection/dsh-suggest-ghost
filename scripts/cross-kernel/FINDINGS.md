@@ -2004,3 +2004,110 @@ _push.completion.text = "只要一条命令，不用解释原理。"（续写那
 ⇒ **流式投递在沙箱里从没注册上**，但"幽灵照常出现"，所以这个缺陷**不表现为 FAIL**，
 只表现为"流式那一路是死的"。修法是给 `<home>/plugin/node_modules` 挂仓库的软链
 （本次手工做了，没有改脚本——改脚本会影响所有跑 dev-sandbox 的仓）。
+
+## 23. 键位设置面（PR !186）：给跨内核矩阵**加了第四个面**，以及它暴露出的一个**一直存在的空列**（2026-11-26，构建 = 0.11.2 + `b10f723`）
+
+### 23.1 为什么必须加这一面
+
+PR !186 新增三个 volatile 配置项（`localAcceptKey` / `wordAcceptKey` / `dismissKey`）。
+跑之前先核了一件事：**现有矩阵根本没有设置面**——
+
+```
+grep -c "settings.update\|SettingsForms\|describe()" scripts/verify-across-kernels.mjs   → 0
+```
+
+也就是说：装配绿 + 投影绿 + 门禁绿，**对「用户改得动键吗」这个新问题一个字都没说**。
+按 skill §0 的分面表，这属于「功能面」缺了一格，直接跑旧矩阵再写"已跨内核验证"就是假结论。
+
+### 23.2 加了什么
+
+`scripts/verify-across-kernels.mjs` 的 worker 里加判据 4（**同一个 worker、同一套隔离、同一份树戳**，
+不另起一套量具——两套隔离一定漂）：读该代 `ctx.settings.describe()` → 看三键在不在投影里 →
+`await update(ns, {localAcceptKey:'F9', wordAcceptKey:'Up', dismissKey:''})` → 再 describe 读回 →
+再走插件**自己的**实时合并层（`lib/live-settings.js` 的 `pickLiveSettings` +
+`generate.js` 的 `mergeLiveConfig`）看值进不进 `effective()`。
+`dismissKey` 故意写**空串**（它是五键里唯一空串合法的），这样「空串被当成缺失丢掉」那一类
+会在读回这一格露出来。
+
+**总体判定只由装配面 + 投影面决定，设置面单列一列**（表里打 `设置面(单列)=…`）。
+理由不是"怕红"，见 23.4。
+
+### 23.3 九代实测读数
+
+```
+### 0.1.2-rc.1  GREEN   设置面=LEGACY-STORED-NOT-PROJECTED   投影键=[]                            读回={F9,Up,''} 
+### 0.1.5-rc.3  GREEN   设置面=LEGACY-STORED-NOT-PROJECTED   投影键=[]                            读回={F9,Up,''}
+### 0.1.7-rc.1  GREEN   设置面=PROJECTED-WRITE-BLOCKED-BY-HARNESS  投影键=[local,word,dismiss]   读回={}
+### 0.1.7-rc.2  GREEN   同上
+### 0.2.0-rc.2  GREEN   同上
+### 0.2.1-rc.2  GREEN   同上
+### 0.2.2-alpha.2 GREEN 同上
+### 0.2.2-rc.1  GREEN   同上
+### 0.2.2-rc.5  GREEN   同上
+汇总：绿 9 / 红 0 / 未判定 0；门禁分面 红 0 / 未判定 2（0.1.2/0.1.5 那一代不跑准入闸，见 §此前记录）
+明细：scripts/cross-kernel/out/across-kernels-2026-11-26T09-10-45-659Z.json
+```
+
+两条**新事实**：
+
+1. **0.1.7 起三键确实进了投影**（`describe()` 的行里有它们）⇒ 内核把插件 Config 的
+   `.volatile()` 字段投成设置面这件事，对新增字段是自动的，不需要额外注册。
+2. **0.1.2 / 0.1.5 上写不拒、读得回，但三键不在注册 schema 里**：那两代的命名空间是插件自己
+   `register(SUGGEST_GHOST_NAMESPACE, TransportSchema)` 出来的，只有 4 个 JSON 串；
+   legacy 存储不裁未知键 ⇒ 值存得下也读得到。宿主合并层取不到它们
+   （`pickLiveSettings` 按新代次的行形状取值 ⇒ `pickedKeys=[]`），
+   但**这三键是纯客户端判据、宿主本来就不读**，客户端读 `remote.settings.describe()` 有值即生效
+   ⇒ 老代次改键可用，无副作用。这是**读代码推不出来**的一条（我推的是"老代次写不进去"，实测反了）。
+
+### 23.4 空列：**这个 harness 从来没测过任何设置写入**
+
+判据 4 第一次跑就报 `No configurable plugin entry "suggest-ghost"`。
+先把原始载荷打出来再下结论（skill §1c），结果是决定性的：
+
+```
+entries: { shape:'array', count:99, ghost:[] }      // configEditor.entries() 里没有本插件条目
+```
+
+内核 `dsh-settings/lib/index.js:501-504` 的 `write()` 要求
+`configEditor.entries().find(row => row.options.id === ns)` **且** `schema(entry)` 存在，
+缺一个都抛同一句话。而本 harness 是用 **patch 层的 `include`** 把插件装进 loader 树的
+（skill §1 的实体副本口径），它因此**不是一个可配置的 profile bundle 条目** ⇒
+`update()` 在这里必然被拒。
+
+⇒ **不只是这三个新键：既有的 `_push` / `_hot` / `_ops` / `acceptKey` 写，在这个矩阵里同样一次都没测过。**
+台账里以往那些"0.1.7-rc.1 的 `_push` 落在 cordis.patch.yml"的证据，走的是
+**dev-sandbox 真实例**那条路（profile 里有真条目），不是这个矩阵。
+两件事以前被"跨内核已验证"一句话混在一起说了。
+
+因此设置面的状态**不计入总体判定**（见 23.2）：把它算进总体会让 9 代全从绿变"未判定"，
+等于用一把明确测不到的尺子盖掉已有的信号。它单列，并在每代 notes 里写明是哪一种未判定。
+
+**真实例的写面读数**（dev-sandbox + Playwright，内核 0.2.2-rc.5，PR !186 验收）：
+设置页把 `localAcceptKey` 改成 `F7` → 保存 → **硬刷新后仍是 F7**，摘要行同步显示
+「历史 / 续写 F7 采纳」。⇒ 写面在用户实际在跑的那一代上是**通的**。
+
+### 23.5 加这一面时我自己踩的四条工具坑（都改在脚本里了，写下来是为了下一个人别再踩）
+
+1. **`String.raw` 模板里写 markdown 反引号 = 提前闭合模板**。我在 worker 注释里写 `` `.volatile()` ``，
+   整个 worker 变成语法崩掉的模块 → 表现为「9 代全红 + worker 没回报」，
+   看着像插件全线坏了。与本仓 §6 那条「JSDoc 里写 `~/.npm/_npx/*/node_modules` 会提前闭合注释」
+   是同一族：**模板字符串的结束符也是注释里最容易顺手写出来的东西**。
+   ⇒ 现在 worker 体内一律不用反引号；改完必须**渲染出 worker 单独 `node --check`**（脚本里就是这么验的）。
+2. **`a && b ?? c` 必须加括号**。JS 语法禁止 `&&` 与 `??` 裸混用；我写了 `String(e && e.message ?? e)`，
+   外层脚本 `node --check` **通过**（它在模板里），错误只在渲染出的 worker 上现形。
+3. **`settings.update()` 在 0.2.2 上是 async**（走 `config-editor.edit` 的异步事务）。
+   不 await ⇒ unhandled rejection 在 worker 打印 marker **之前**把进程带走，
+   表现成 `workerExit=1 / worker 没有回报结果`，红得毫无信息量。
+4. **判定块不能假设 try 里的赋值发生过**：我第一版在判定块无条件写 `record.settings.state`，
+   而 `record.settings` 只在 try 成功路径上被赋值 → 一代读数缺失直接把整条命令崩成
+   `TypeError: Cannot set properties of undefined`。⇒ 判定块现在 `record.settings ??= { reported:false }`。
+
+### 23.6 未判定 / 下一步
+
+- **写面在 0.1.7-rc.1 ~ 0.2.2-rc.1 七代上仍未判定**（真实例只测了 0.2.2-rc.5）。
+  要判定，得把 harness 的装载方式从「patch include」换成「profile 的 `dsh.profile.bundles` 列上本插件」
+  （skill §1/§1b 的口径）。这会改变装配面的既有形状，**属于独立一轮**，不在本条顺手做——
+  做完必须重跑九代并说明 23.3 那批读数的哪些被取代。
+- 老代次（0.1.2/0.1.5）的「值存下了但不在 schema」是否会在 UI 上被内核的行渲染忽略，
+  未在真 GUI 上取证（沙箱只跑最新内核）。
+- 本条**没有**跑真实「回合结束 → 生成建议」（要模型，成本与不确定性都高，沿用矩阵原有边界）。
