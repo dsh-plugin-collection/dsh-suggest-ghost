@@ -48,6 +48,7 @@ const WORDING: Record<KeyAction, { zh: string; en: string }> = {
   word: { zh: '逐词', en: 'word' },
   regen: { zh: '换一条', en: 'another' },
   dismiss: { zh: '关闭', en: 'dismiss' },
+  forget: { zh: '别再补', en: 'forget' },
 };
 
 /**

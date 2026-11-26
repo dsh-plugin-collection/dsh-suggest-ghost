@@ -196,14 +196,27 @@ export function bindingConflict(spec: string, others: Record<string, string>): s
 
 ```ts
 /** 一次按键最多归一个动作。顺序即优先级；采纳是主操作，故在重出之前。 */
-export const KEY_ACTION_PRIORITY = ['accept', 'word', 'regen', 'dismiss'] as const;
+export const KEY_ACTION_PRIORITY = ['accept', 'word', 'regen', 'dismiss', 'forget'] as const;
 /** 这一键此刻归谁（纯函数，输入 = 生效键位表 + 事件事实）。 */
 export function ownerOfKey(table: BindingTable, event: KeyFacts): Action | null;
 ```
 
-顺序取 **accept > word > regen > dismiss**，与注释里那份既有语义（`Tab 永远采纳`）一致，
-也修掉 §1.4-3 的反话。`dismiss` 排最后因为它**只藏浮层**、不写字，抢输的代价最小。
+顺序取 **accept > word > regen > dismiss > forget**，与注释里那份既有语义（`Tab 永远采纳`）一致，
+也修掉 §1.4-3 的反话。`dismiss` 排在 `forget` 之前，因为前者**只藏浮层**、什么都不写，
+而后者是一条**要用户去设置页才能撤销的持久写**：同键时先关掉（代价可忽略），
+别让一次误按变成数据变更。`forget` 因此排最后——本表里代价最大的一格。
 这条顺序**必须进冒烟**（§6）：三对键各配成同值，断言只有优先级高的那支执行。
+
+### 3.4-续 `forgetKey`：「别再补这句」（本单新增的第六格）
+
+`forget` 是**跨表**动作：它不是「再要一条」也不是「藏起来」，而是把当前候选写进
+**忽略表**（`src/forget.ts`）并同步删掉热表那条。判据与实现要点见 PR 描述；
+与本设计文档相关的只有两条：
+
+1. 它**三形态都接管**（`llm` / `history` / `inline`），与 `dismiss` 同一圈——用户对一条
+   建议说「我不想要」的意图不因它来自模型还是历史而不同；
+2. 它**允许留空**（与 `dismissKey` 同一条 schema 口径）。「不接管」是一个用户能明确
+   表达的意愿；把它当成「缺失回落默认」等于逼所有人配一个会改数据的键。
 
 ### 3.4 `dismissKey`：把「Esc 关闭」这句承诺补成真实现
 

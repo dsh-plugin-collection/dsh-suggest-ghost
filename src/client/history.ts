@@ -12,6 +12,8 @@
  * 3. **跨会话热度合并**（C）：host 端 HotnessTable 的 top-K 频次（经 settings
  *    `_push` 送达）始终参与打分；`extraCandidates`（跨会话候选文本）仅在用户
  *    开启「跨会话搜索」时由调用方传入，作为 recency=0 的额外候补参与竞争。
+ * 4. **忽略表**（本单）：`ignored` 命中的文本不进入候选集（见 `src/forget.ts`）。
+ *    位置在候选构造循环里，所以会话历史与跨会话候选**两条来源同时生效**。
  * @module dsh-suggest-ghost/client/history
  */
 
@@ -148,6 +150,19 @@ export interface HistoryOptions {
    * 与会话历史重复的文本自动去重（其热度经 hotCounts 生效）。
    */
   extraCandidates?: readonly { text: string; count: number }[];
+  /**
+   * 忽略表（归一化文本集合）：命中的文本**不进入候选集**。
+   *
+   * 这是「别再给我补这句」的第 1 处判定，也是**唯一**覆盖到两个来源的一处：
+   * 会话历史环（`history`）与跨会话候选（`extraCandidates`）在下面走的是同一个
+   * 候选构造循环，所以在这里筛一次 = 两条路径同时不再出现。分散到调用方各筛一遍
+   * 是另一种做法，但它要求每个调用点都记得做——而本仓已经有过「两条路径各实现一次
+   * 判据、然后分叉」的教训（`accept-key.ts` 头部那条 #167）。
+   *
+   * ⚠️ 这**不是**热表的 `delete`：热表里那条被删了，历史环里那句仍然会补出来
+   * （环是从会话日志物化的，与热表无关）。两者是两张表，见 `src/forget.ts` 模块注释。
+   */
+  ignored?: ReadonlySet<string>;
 }
 
 /** 打分候选（内部聚合形态）。 */
@@ -177,10 +192,15 @@ export function historySuggestion(
   const entries = opts.maxEntries > 0 ? history.slice(-opts.maxEntries) : history;
 
   // 1) 聚合会话内候选：按归一化文本去重，记录最近位置与出现次数。
+  //    忽略表在这一层筛：`history` 与下面的 `extraCandidates` 是两条来源，
+  //    在这里各筛一次就能保证「两条路径都不再出现」，不需要调用方分别记得。
+  const ignored = opts.ignored;
+  const skipIgnored = ignored !== undefined && ignored.size > 0;
   const byNorm = new Map<string, ScoredCandidate>();
   entries.forEach((raw, idx) => {
     const norm = normalizeForMatch(raw);
     if (norm === '') return;
+    if (skipIgnored && ignored.has(norm)) return;
     const prev = byNorm.get(norm);
     if (prev === undefined) {
       byNorm.set(norm, { text: raw, norm, bestIdx: idx, localCount: 1 });
@@ -198,6 +218,7 @@ export function historySuggestion(
     for (const item of opts.extraCandidates) {
       const norm = normalizeForMatch(item.text);
       if (norm === '' || byNorm.has(norm)) continue;
+      if (skipIgnored && ignored.has(norm)) continue;
       byNorm.set(norm, { text: item.text, norm, bestIdx: -1, localCount: 0 });
     }
   }

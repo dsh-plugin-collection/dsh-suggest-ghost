@@ -87,7 +87,7 @@ export function keyEventToSpec(event: KeyboardEvent): string | undefined {
 // `.tsx`/大文件载不动，而这几条判据必须能被冒烟直接驱动（`docs/keybinding-settings-design.md` §6）。
 
 /** 一个可自定义的按键动作。设置项、运行时、卡片文案共用这一套标识。 */
-export type KeyAction = 'accept' | 'word' | 'regen' | 'dismiss';
+export type KeyAction = 'accept' | 'word' | 'regen' | 'dismiss' | 'forget';
 
 /**
  * 一次按键**最多归一个动作**，数组顺序即优先级。
@@ -97,9 +97,12 @@ export type KeyAction = 'accept' | 'word' | 'regen' | 'dismiss';
  *    「同键时采纳优先」——而旧代码里 regen 支写在采纳之前，注释与执行顺序是**反的**，
  *    还连带让 `regenKey='Tab'` 把历史/续写形态的采纳整条挡死。这张表把那句话变成事实。
  *  - `word` 在 `regen` 前：逐词是采纳的一部分（同一目标文本，只是分段写入）。
- *  - `dismiss` 最后：它什么都不写、随时能再来一次，抢输的代价最小。
+ *  - `dismiss` 在 `forget` 前：关掉幽灵**不动数据**，忽略则是一条**不可撤销的持久写**
+ *    （要用户去设置页才能恢复）⇒ 同键时先关掉（代价可忽略），别让一次误按变成数据变更。
+ *  - `forget` 最后：它是本表里代价最大的一格（会永久改变「以后补什么」），
+ *    任何同键竞争都该由别人赢。
  */
-export const KEY_ACTION_PRIORITY: readonly KeyAction[] = Object.freeze(['accept', 'word', 'regen', 'dismiss']);
+export const KEY_ACTION_PRIORITY: readonly KeyAction[] = Object.freeze(['accept', 'word', 'regen', 'dismiss', 'forget']);
 
 /** 键位表：动作 -> spec。缺省或空串 = 该动作不接管任何键（永不命中）。 */
 export type BindingTable = Readonly<Partial<Record<KeyAction, string>>>;

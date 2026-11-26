@@ -134,6 +134,9 @@ const SETTING_SPECS: Record<keyof FlatConfig, FieldSpec> = {
   localAcceptKey: STR(false),
   wordAcceptKey: STR(false),
   dismissKey: STR(true),
+  // 本单：「别再给我补这句」的键。与 `dismissKey` 同一条判据 —— 空串是**合法值**
+  // （= 不接管这个动作），用 `STR(false)` 会把用户明确表达的「关掉」还原成默认键。
+  forgetKey: STR(true),
   // #157：键位提示开关。与 `wordAccept` 同族（纯客户端展示开关），进同样的 spec 表。
   showKeyHint: BOOL,
   // #127 重出。**只有这两键是配置项**：上限与冷却是安全边界、钉成常量

@@ -49,6 +49,22 @@ export const DEFAULT_REGEN_KEY = 'Alt+G';
 /** 关闭幽灵键的 schema 默认值；留空 = 本插件不接管关闭动作（唯一允许空的一项）。 */
 export const DEFAULT_DISMISS_KEY = 'Escape';
 
+/**
+ * 「别再补这句」键的 schema 默认值（本单新增）。
+ *
+ * 为什么是 `Alt+X` 而不是 `Shift+Delete`（fish 的做法）或 `Alt+D`：
+ *  - `Shift+Delete`/`Delete` **不在** `keyspec.ts` 的 `KEY_CODES` 里，而且
+ *    `scripts/keyspec-smoke.mjs` 明确钉着「Delete 不支持」（一条已钉住的约定，
+ *    要动它得连冒烟一起改，属于另一件事）；
+ *  - `Alt+D` 在 Chrome/Edge 里是「聚焦地址栏」——那是**浏览器原生绑定**，
+ *    `yield-key.ts` 的让路判据（`defaultPrevented`）防不住它（原生动作不会设这个位）
+ *    ⇒ 用户按下去会先被地址栏吃掉。这条是本仓「让路判据救不了原生键」的直接推论。
+ *  - `Alt+X` 在三大浏览器与常见桌面环境里都没有原生绑定，且带修饰键 ⇒
+ *    `isSafeActionKey` 通过（不会吃掉正在打的字）。
+ * 与 `dismissKey` 一样允许留空（`''` = 不接管这个动作）：不该逼所有人都用一个
+ * 「会永久改数据」的键。 */
+export const DEFAULT_FORGET_KEY = 'Alt+X';
+
 /** 组一张键位表所需的输入（全部来自当前生效的设置 + 幽灵形态）。 */
 export interface GhostKeyInputs {
   /** 幽灵形态。 */
@@ -63,6 +79,8 @@ export interface GhostKeyInputs {
   regenKey?: string | undefined;
   /** 设置项 `dismissKey`（空串 = 不接管）。 */
   dismissKey?: string | undefined;
+  /** 设置项 `forgetKey`（空串 = 不接管）。 */
+  forgetKey?: string | undefined;
   /** 逐词采纳开关（关 ⇒ 表里没有 `word` 这一格）。 */
   wordAccept?: boolean;
   /** 换一条开关（关 ⇒ 表里没有 `regen` 这一格）。 */
@@ -90,6 +108,11 @@ export function bindingTableFor(input: GhostKeyInputs): BindingTable {
     table.regen = input.regenKey ?? DEFAULT_REGEN_KEY;
   }
   if (input.dismissKey !== undefined && input.dismissKey !== '') table.dismiss = input.dismissKey;
+  // 忽略键与 dismiss 同款：空串是**合法值**（= 本插件不接管这个动作）。
+  // ⚠️ 它**不进形态闸**：三类形态的幽灵都可能被用户想「以后别出现这句话」
+  // （`llm` 的建议虽然来自模型、不进历史环，但用户按下去时想要的是「这条我不接受」，
+  // 而它的文本同样会在热表/历史里出现——所以三形态都接管，与 dismiss 一致）。
+  if (input.forgetKey !== undefined && input.forgetKey !== '') table.forget = input.forgetKey;
   return table;
 }
 

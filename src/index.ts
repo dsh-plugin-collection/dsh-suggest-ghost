@@ -320,6 +320,19 @@ const EditableFields = {
    */
   dismissKey: z.string().default('Escape').volatile(),
   /**
+   * **「别再给我补这句」**的快捷键 spec（本单，默认 `Alt+X`；**空串 = 不接管**）。
+   *
+   * 为什么与 `dismissKey` 同一条 schema 判据（`z.string()` 不带 `min(1)`）：留空是
+   * 用户能明确表达的意愿（「我不要这个动作」），不能当成「缺失回落默认」。
+   *
+   * 为什么默认是 `Alt+X` 而不是 fish 的 `Shift+Delete`：`Delete` 不在
+   * `src/client/keyspec.ts` 的 `KEY_CODES` 里，而且 `scripts/keyspec-smoke.mjs` 明确
+   * 钉着「Delete 不支持」（要动那条约定得连冒烟一起改，属另一件事）；`Alt+D` 则是
+   * Chrome/Edge 的「聚焦地址栏」——**浏览器原生绑定**，`yield-key.ts` 的让路判据
+   * （读 `defaultPrevented`）防不住它（原生动作不会设这个位）。
+   */
+  forgetKey: z.string().default('Alt+X').volatile(),
+  /**
    * 建议语言模式：'auto' = 自动推断（结合 UI 语言 + 用户消息文字分布）；
    * 'zh' / 'zh-TW' / 'en' / 'ja' / 'ko' / 'ru' / 'fr' / 'de' / 'es' = 强制指定语言。
    * 未知代码在 host 端回退 English（见 generate.ts 的 LANGUAGE_NAMES）。
@@ -427,6 +440,8 @@ export interface PluginConfigValues {
   localAcceptKey: Volatile<string>;
   wordAcceptKey: Volatile<string>;
   dismissKey: Volatile<string>;
+  /** 本单：「别再给我补这句」的快捷键（空串 = 不接管这个动作）。 */
+  forgetKey: Volatile<string>;
   /** #157：幽灵显示时浮一行键位提示（默认开）。 */
   showKeyHint: Volatile<boolean>;
   // #127 重出。两键都进 `Volatile<...>`（`.volatile()` 把输出映射成引用，见本接口头部），
@@ -629,7 +644,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
   const tracked = new Set<SessionState>();
   // 全局跨会话热度表（增量，随 user/message 事件累积），并经 storageDomain
   // 持久化频次（宿主未挂 storageDomain 时自动降级为纯内存）。
-  const { hotness, persistence } = setupHotnessPersistence(ctx);
+  // `forget` = 忽略表（「别再给我补这句」）：与热表同域、另一张表，判据见 `src/forget.ts`。
+  const { hotness, forget, persistence } = setupHotnessPersistence(ctx);
 
   // ── 流式投递的宿主侧通道（#108 决策 ①，默认关）────────────────────────────
   // 帧只活在这个内存对象上：**不写 settings、不落盘、不碰 configEditor.edit**
@@ -1714,6 +1730,17 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     readonly history: readonly string[] | null;
     /** history 所属会话；null 同步 history 为 null。 */
     readonly historySessionId: string | null;
+    /**
+     * 忽略表快照（「别再给我补这句」的已忽略条目）。
+     *
+     * 走 `_hot` 那一格与 `hot`/`history` 并列，理由与它们同一条：**客户端算幽灵时
+     * 必须能拿到它**（候选过滤在浏览器里做，`historySuggestion` 的 `ignored` 参数）。
+     * 放配置项不行——忽略表是用户数据、会长会变，而配置项的每次变化都是一次整档写。
+     *
+     * 省略语义：`null`/缺省 = 「这一格没说话」⇒ 保留 client 现值；显式 `[]`
+     * 才是「已忽略列表被清空」。与 `hot` 同款判据，见客户端 `_hot` 解析处。
+     */
+    readonly ignored?: readonly { readonly norm: string; readonly text: string }[] | null;
     /** 行内续写：null = 清空当前续写；undefined = 不携带（保留 client 现值）。 */
     readonly completion?: { readonly draft: string; readonly text: string; readonly final?: boolean } | null;
     /** completion 所属会话（归属守卫：切会话时清掉上一个会话的续写）。 */
@@ -1793,6 +1820,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     readonly total: number;
     readonly history?: readonly string[];
     readonly historySessionId?: string | null;
+    /** 忽略表快照（见 `ClientPush.ignored`）；进指纹的理由同 `hot` —— 它变了一次就真是一次变更。 */
+    readonly ignored?: readonly { readonly norm: string; readonly text: string }[] | null;
   };
 
   const pushSigOf = (o: PushSig): string => {
@@ -1825,7 +1854,12 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       || o.historySessionId === null || o.historySessionId === undefined
       ? '∅'
       : `${o.historySessionId}#${o.history.length}:${o.history[o.history.length - 1] ?? ''}`;
-    return `<HOT>${hotKey}<T>${o.total}<HIST>${historyKey}`;
+    // 忽略表进指纹：它变了就该推一次（否则用户在 A 页按了忽略、B 页的幽灵照旧出现）。
+    // 只在有内容时写，空表与「从没忽略过」同形 ⇒ 不因清空而多写一次。
+    const ignoredKey = o.ignored === undefined || o.ignored === null || o.ignored.length === 0
+      ? '∅'
+      : o.ignored.map(i => i.norm).sort().join('|');
+    return `<HOT>${hotKey}<T>${o.total}<HIST>${historyKey}<IGN>${ignoredKey}`;
   };
 
   /** 建议格的载荷（建议 / 续写 / 错误；热度与环在 `_hot` 那一格）。 */
@@ -1875,6 +1909,10 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     ...(p.history !== null && p.historySessionId !== null
       ? { history: [...p.history], historySessionId: p.historySessionId }
       : {}),
+    // `ignored` 恒写（配置值语义，与 `history` 的省略语义不同）：省略会让客户端保留旧值，
+    // 而「用户点了恢复、列表变空」必须能让客户端读到空表。空表写 `null` 省字节，
+    // 客户端把 `null` 与 `[]` 读成同一个「没有忽略条目」。
+    ignored: p.ignored !== undefined && p.ignored !== null && p.ignored.length > 0 ? [...p.ignored] : null,
   });
 
   /**
@@ -2023,11 +2061,20 @@ export function apply(ctx: Context, config: GenerateConfig): void {
     const history = Array.isArray(payload.history)
       ? payload.history.filter((text): text is string => typeof text === 'string')
       : undefined;
+    // 忽略表：盘上那一份同样并进指纹（否则第一次 pull 会因为「盘上有、内存算出的没有」
+    // 或多写一次、或漏写一次，两种都让 #50 的「第一次 pull 零写」失效）。
+    const ignored = Array.isArray(payload.ignored)
+      ? payload.ignored.filter((entry): entry is { norm: string; text: string } =>
+        typeof entry === 'object' && entry !== null
+        && typeof (entry as { norm?: unknown }).norm === 'string'
+        && typeof (entry as { text?: unknown }).text === 'string')
+      : null;
     return hotSigOf({
       hot,
       total: typeof payload.total === 'number' ? payload.total : 0,
       ...(history === undefined ? {} : { history }),
       historySessionId: typeof payload.historySessionId === 'string' ? payload.historySessionId : null,
+      ignored,
     });
   };
 
@@ -2923,6 +2970,8 @@ export function apply(ctx: Context, config: GenerateConfig): void {
       total: hotness.size,
       history: ring === undefined ? null : ring.slice(-HISTORY_PUSH_CAP),
       historySessionId: ring === undefined ? null : sessionId,
+      // 忽略表（本单）。与 `hot` 同格：客户端算幽灵时必须读得到它。
+      ignored: forget.snapshot(),
       ...(sessionId !== null && completionCache.has(sessionId)
         ? { completion: completionCache.get(sessionId)!, completionSessionId: sessionId }
         : lastCompletion !== null

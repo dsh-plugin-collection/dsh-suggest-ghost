@@ -153,9 +153,16 @@ await scenario('级别切分：产物里恰好两处 hotnessTrace(…, \'warn\')
   }
   const calls = callSites;
   const warned = calls.filter(([, t]) => /,\s*'warn'\s*\)/.test(t));
-  // #88 续：warn 集合现在恰好是这五条 —— 两条原有失败 + 三条「不吭声就会静默丢数据」的
+  // #88 续：warn 集合现在恰好是这七条 —— 两条原有失败 + 三条「不吭声就会静默丢数据」的
+  // + 本单新增的两条同族（忽略表的丢弃路径）
   const needles = ['hotness domain unavailable', 'hotness restore FAILED',
-    'hotness persistence absent', 'hotness restore grace elapsed', 'hotness dirty cap cleared'];
+    'hotness persistence absent', 'hotness restore grace elapsed', 'hotness dirty cap cleared',
+    // 本单（忽略表）新增的两条：与 `hotness dirty cap cleared` **同一类** ——
+    // 它们只在「已经丢数据 / 已经放弃落盘」时说，默认阈值下不说就等于让用户
+    // 「按了忽略、重启后它又回来了」而日志一个字没有。
+    //  · `forget dirty cap cleared` = 持久层未就绪期间忽略表的脏标记撞上限被清；
+    //  · `forget flush skipped` = 介质那张表没拿到（降级路径），这批忽略不会落盘。
+    'forget dirty cap cleared', 'forget flush skipped'];
   assert.ok(warned.length >= 1,
     `没有任何 hotnessTrace 走 warn ⇒ #97 的提级没落地（共 ${calls.length} 个调用点）`);
   for (const n of needles) {

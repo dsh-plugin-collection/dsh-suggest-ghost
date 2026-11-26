@@ -277,6 +277,17 @@ export const GHOST_FIELDS: ReadonlyArray<{
     writable: true,
   },
   {
+    key: 'forgetKey',
+    label: { zh: '「别再补这句」快捷键', en: 'Forget-this-suggestion shortcut' },
+    hint: {
+      zh: '看到不想再被补全的那句时按下它：这句会从候选里永久移除，之后打字不会再补出来，也不会再计入热度。留空 = 不接管这个动作。改错了可以在下面的「已忽略」里恢复。',
+      en: 'Press it on a ghost you are done with: that line leaves the candidate pool for good and stops counting toward hotness. Empty = no key. Restore it under Ignored below.',
+    },
+    kind: 'key',
+    section: 'keybinds',
+    writable: true,
+  },
+  {
     key: 'dismissKey',
     label: { zh: '关闭幽灵快捷键', en: 'Dismiss shortcut' },
     hint: {
@@ -629,6 +640,13 @@ const zhStrings = {
   hotDelete: '删除',
   hotClear: '清空全部',
   hotClearConfirm: '确认清空？',
+  // —— 已忽略（本单）——
+  sectionIgnored: '已忽略（不会再被补全）',
+  ignoredHint: '这些句子被「别再补这句」键移出了候选池，也停止计入热度。点「恢复」让它们重新参与补全；恢复不补回频次（频次是观测值，被忽略期间本来就没再记过账）。',
+  ignoredEmpty: '还没有忽略任何句子。用幽灵提示的「别再补这句」快捷键即可加入这里。',
+  ignoredRestore: '恢复',
+  ignoredClear: '全部恢复',
+  ignoredMeta: (total: number): string => `共忽略 ${total} 条`,
   hotMeta: (total: number, shown: number): string =>
     total > shown ? `共 ${total} 条，显示热度最高的 ${shown} 条` : `共 ${total} 条`,
   // —— 目录型下拉框的占位项与档位诊断 ——
@@ -695,6 +713,13 @@ const enStrings: { [K in keyof typeof zhStrings]: (typeof zhStrings)[K] } = {
   hotDelete: 'Delete',
   hotClear: 'Clear all',
   hotClearConfirm: 'Confirm clear?',
+  // —— Ignored (this change) ——
+  sectionIgnored: 'Ignored (no longer completed)',
+  ignoredHint: 'These lines were removed from the candidate pool by the forget shortcut, and stop counting toward hotness. Restore puts them back into completion; it does not restore the tally, since nothing was counted while they were ignored.',
+  ignoredEmpty: 'Nothing ignored yet. Use the forget shortcut on a ghost to add entries here.',
+  ignoredRestore: 'Restore',
+  ignoredClear: 'Restore all',
+  ignoredMeta: (total: number): string => `${total} ignored`,
   hotMeta: (total: number, shown: number): string =>
     total > shown ? `${total} total, showing the top ${shown} by heat` : `${total} total`,
   catalogDeployDefault: '(follow the deployment default)',
@@ -865,6 +890,10 @@ const KEY_BINDINGS: Record<string, { action: KeyAction; resetTo: string; safety:
   wordAcceptKey: { action: 'word', resetTo: 'Right', safety: 'block' },
   regenKey: { action: 'regen', resetTo: 'Alt+G', safety: 'warn' },
   dismissKey: { action: 'dismiss', resetTo: 'Escape', safety: 'block' },
+  // 忽略键：`safety: 'block'` —— 它是**三形态都生效**的动作，配成裸字母键就等于
+  // 在用户每次打那个字母时都删掉一条候选（不可逆，且用户看不出是自己配的）。
+  // 与 `localAcceptKey` / `wordAcceptKey` 同一条理由。
+  forgetKey: { action: 'forget', resetTo: 'Alt+X', safety: 'block' },
 };
 
 /** 动作名（摘要行用）。与提示行的措辞同源同义，只是那边写「Tab 采纳」这边写「采纳：Tab」。 */
@@ -873,6 +902,7 @@ const ACTION_WORD: Record<KeyAction, { zh: string; en: string }> = {
   word: { zh: '逐词', en: 'word' },
   regen: { zh: '换一条', en: 'another' },
   dismiss: { zh: '关闭', en: 'dismiss' },
+  forget: { zh: '别再补', en: 'forget' },
 };
 
 /**
@@ -893,6 +923,7 @@ const KEY_FIELD_OF: Partial<Record<KeyAction, string>> = {
   word: 'wordAcceptKey',
   regen: 'regenKey',
   dismiss: 'dismissKey',
+  forget: 'forgetKey',
 };
 
 const KEY_TABLES: Record<string, readonly ('llm' | 'local')[]> = {
@@ -901,6 +932,9 @@ const KEY_TABLES: Record<string, readonly ('llm' | 'local')[]> = {
   localAcceptKey: ['local'],
   wordAcceptKey: ['local'],
   dismissKey: ['llm', 'local'],
+  // 忽略键三形态都接管（与 dismiss 同一圈）：`llm` 的建议文本同样进热表，
+  // 用户对它的「别再补这句」意图一致。
+  forgetKey: ['llm', 'local'],
 };
 
 /** 一张表里各字段的 spec（`switches` 提供两个开关的当前值）。 */
@@ -912,6 +946,7 @@ const tableOf = (which: 'llm' | 'local', read: (k: string) => string, switches: 
       regenKey: read('regenKey'),
       regenEnabled: switches.regen,
       dismissKey: read('dismissKey'),
+      forgetKey: read('forgetKey'),
     }
     : {
       kind: 'history',
@@ -919,6 +954,7 @@ const tableOf = (which: 'llm' | 'local', read: (k: string) => string, switches: 
       wordAcceptKey: read('wordAcceptKey'),
       wordAccept: switches.word,
       dismissKey: read('dismissKey'),
+      forgetKey: read('forgetKey'),
     });
 
 /**
@@ -1012,7 +1048,7 @@ function HotnessSection({ scope, pushRaw, hotRaw, writable, busy, lang, t, uiLoc
    * `_push.hot` ⇒ **永远读到空**，界面上表现为"共 0 条"，且刷新/重启都救不回来
    * （宿主明明一直在写 `_hot`）。所以顺序必须是：**先 `_hot`，再 `_push`（旧宿主）**。
    */
-  const parseHotCell = (raw: unknown): { hot?: HotPushEntry[]; total?: number } | null => {
+  const parseHotCell = (raw: unknown): { hot?: HotPushEntry[]; total?: number; ignored?: unknown } | null => {
     if (typeof raw !== 'string' || raw === '' || raw === 'null') return null;
     try {
       return JSON.parse(raw) as { hot?: HotPushEntry[]; total?: number };
@@ -1026,6 +1062,15 @@ function HotnessSection({ scope, pushRaw, hotRaw, writable, busy, lang, t, uiLoc
   let hot: readonly HotPushEntry[] = Array.isArray(hotSource?.hot) ? hotSource.hot : [];
   let total = typeof hotSource?.total === 'number' ? hotSource.total : 0;
   if (!Number.isFinite(total) || total < hot.length) total = hot.length;
+  // 已忽略（本单）：与 `hot` 同格、同一条「先 `_hot`，再 `_push`」的读取顺序。
+  // 残缺项直接过滤（载荷来自宿主，但演示/旧宿主可能缺字段，不能让一处畸形打死整张卡片）。
+  const ignored: readonly { norm: string; text: string }[] = Array.isArray(hotSource?.ignored)
+    ? (hotSource.ignored as unknown[]).filter(
+      (e): e is { norm: string; text: string } =>
+        typeof e === 'object' && e !== null
+        && typeof (e as { norm?: unknown }).norm === 'string'
+        && typeof (e as { text?: unknown }).text === 'string')
+    : [];
 
   /** 发送一批管理操作（幂等协议；rev 仅用于 client 侧递增）。 */
   const sendOps = (ops: readonly HotnessOp[]): void => {
@@ -1132,6 +1177,55 @@ function HotnessSection({ scope, pushRaw, hotRaw, writable, busy, lang, t, uiLoc
           {confirmClear ? t.hotClearConfirm : t.hotClear}
         </button>
       </div>
+
+      {/* ── 已忽略（本单）───────────────────────────────────────────────────
+          为什么它必须在这里、而不是只做成一个快捷键：
+          「别再补这句」是一条**要用户去别处才能撤销**的持久写。没有恢复入口，
+          一次误按就等于永久删掉一句常用话 —— 那种设计没人敢用第二次。
+          列表读的是与候选过滤**同一个** `ignored` 载荷字段（不是另建一条管理通道），
+          所以「按忽略键看到的变化」与「这里列出的条目」不可能分叉。 */}
+      <h4 className="sgc-section-heading sgc-ignoredHeading">{t.sectionIgnored}</h4>
+      <p className="sgc-hint">{t.ignoredHint}</p>
+      {ignored.length === 0 ? (
+        <p className="sgc-hint">{t.ignoredEmpty}</p>
+      ) : (
+        <div className="sgc-hotList" role="list">
+          {ignored.map(entry => (
+            <div className="sgc-hotRow" role="listitem" key={entry.norm}>
+              <span className="sgc-hotText" title={entry.text}>{entry.text}</span>
+              <button
+                type="button"
+                className="sgc-hotBtn"
+                disabled={disabled}
+                // `restore` 的载荷是**原文**（宿主自己做归一化，与 `forget` 对称）：
+                // 客户端送 `norm` 也能命中（宿主对两者都跑一次归一化），但原文更可读，
+                // 且留痕里能看出「恢复的是哪一句」。
+                onClick={() => sendOps([{ op: 'restore', text: entry.text }])}
+              >
+                {t.ignoredRestore}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {ignored.length > 0 && (
+        <div className="sgc-hotMeta">
+          <span className="sgc-hint">{t.ignoredMeta(ignored.length)}</span>
+          <button
+            type="button"
+            className="sgc-hotBtn"
+            disabled={disabled}
+            // 全部恢复**不做二次确认**：它与「清空全部热度」不同 —— 这个动作只是把
+            // 候选池恢复原样，代价是「那些句子又会出现了」，而不是丢数据。
+            // 一次误点的后果可忽略，加确认反而是麻烦。
+            onClick={() => {
+              for (const entry of ignored) sendOps([{ op: 'restore', text: entry.text }]);
+            }}
+          >
+            {t.ignoredClear}
+          </button>
+        </div>
+      )}
     </>
   );
 }
@@ -1422,9 +1516,10 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
           const trimmed = String(raw).trim();
           // 空串丢弃只对**必填**的键位成立：host 端那些字段是 `z.string().min(1)`，
           // 写空串会在 `SettingsForms` 那一步整笔事务失败（不是静默无效，是保存不了）。
-          // `dismissKey` 是唯一允许留空的（空 = 不接管关闭动作，见 index.ts 的字段注释），
-          // 把它一起丢掉的话，「关掉这个动作」就永远写不进去——用户只能看见值弹回 Escape。
-          if (trimmed === '' && key !== 'dismissKey') continue;
+          // `dismissKey` / `forgetKey` 是允许留空的（空 = 不接管该动作，见 index.ts 的
+          // 字段注释）；把它们一起丢掉的话，「关掉这个动作」就永远写不进去
+          // ——用户只能看见值弹回默认。
+          if (trimmed === '' && key !== 'dismissKey' && key !== 'forgetKey') continue;
           final = trimmed;
         }
         await scope.set(key, final);

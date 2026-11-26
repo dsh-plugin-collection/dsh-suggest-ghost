@@ -204,9 +204,10 @@ console.log('【keyspec 快捷键映射冒烟测试】\n');
 }
 
 
-// ─── 26+. 默认值可识别性（五个键位，缺一个就静默不生效）─────────────────
+// ─── 26+. 默认值可识别性（六个键位，缺一个就静默不生效）─────────────────
 const {
   DEFAULT_ACCEPT_KEY, DEFAULT_WORD_ACCEPT_KEY, DEFAULT_REGEN_KEY, DEFAULT_DISMISS_KEY,
+  DEFAULT_FORGET_KEY,
 } = await import('../src/client/accept-key.ts');
 
 const DEFAULTS = {
@@ -236,7 +237,7 @@ for (const [name, spec] of Object.entries(DEFAULTS)) {
   assert.equal(specMatches({ ...keyFactsOf(fakeEvent), shift: true }, spec), false,
     `${name} 的默认值 "${spec}" 被 Shift 变体误命中`);
 }
-console.log('✅ 五个键位默认值全部可识别、可打印、可命中');
+console.log('✅ 六个键位默认值全部可识别、可打印、可命中');
 
 // Escape 必须在主键表里：它是 dismissKey 的默认值，而 #166 之前这张表没有它。
 assert.equal(keyCodeOf('Escape'), 'Escape');
@@ -298,7 +299,7 @@ console.log('✅ sameSpec：大小写/空格无关；Shift 差异算不同键；
 // ─── 30+. 冲突与提示段：都从同一张表投影 ────────────────────────────────
 assert.deepEqual(bindingConflicts({ accept: 'Tab', word: 'Right', regen: 'Alt+Tab', dismiss: 'Tab' }, 'accept'), ['dismiss']);
 assert.deepEqual(bindingConflicts({ accept: 'Tab', regen: 'Tab' }, 'word'), []);
-assert.deepEqual(KEY_ACTION_PRIORITY, ['accept', 'word', 'regen', 'dismiss']);
+assert.deepEqual(KEY_ACTION_PRIORITY, ['accept', 'word', 'regen', 'dismiss', 'forget'], '优先序本单加了 forget（末位）');
 assert.deepEqual(hintSegments({ accept: 'Right', word: 'Tab' }).map((x) => x.action), ['accept', 'word']);
 assert.equal(hintSegments({ accept: 'Right' })[0].keycap, '→');
 assert.deepEqual(hintSegments({ accept: 'Delete' }), [], '认不出的键不印上屏');

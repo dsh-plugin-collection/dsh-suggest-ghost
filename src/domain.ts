@@ -76,6 +76,11 @@ export interface SuggestGhostHotEntry {
  * 会话时请求 host 立即推送该会话的历史环（历史环只在事件到达时播种，
  * pull 关闭「切会话后无历史」的窗口）。
  *
+ * ⚠️ **这个联合体早就不只是「热度」操作了**（`pull` / `complete` / `regen` 都不是热度变更，
+ * 现在又多了 `forget` / `restore`）：名字停在历史上，实际语义是「client 经 `_ops` 发给 host
+ * 的一条管理动作」。改名会连带动 schema 推导、消费方断言与本文件的类型名，属另一件事，
+ * 本单不顺手改——只在这里说清，免得后来者按名字推断它只该装热度操作。
+ *
  * ⚠️ **`regen` 打破上面那句「幂等」**：它的每一次执行都是一次真实的模型调用。
  * 挡着它的不是操作自身的幂等性，而是两道外部闸——宿主的载荷字节判重
  * （`_ops` 同一份字节只消费一次，`src/index.ts` 的 `lastOpsPayload`）与
@@ -102,7 +107,9 @@ export type HotnessOp =
   | { readonly op: 'clear' }
   | { readonly op: 'pull'; readonly sessionId: string }
   | { readonly op: 'complete'; readonly sessionId: string; readonly draft: string }
-  | { readonly op: 'regen'; readonly sessionId: string; readonly basisRev: number; readonly shownHash: number };
+  | { readonly op: 'regen'; readonly sessionId: string; readonly basisRev: number; readonly shownHash: number }
+  | { readonly op: 'forget'; readonly text: string }
+  | { readonly op: 'restore'; readonly text: string };
 
 /**
  * `suggest-ghost/hot-index` 事件的载荷——跨会话历史热度快照。

@@ -105,6 +105,8 @@ export interface EditableConfig {
     wordAcceptKey?: Volatile<string> | string;
     /** 关闭幽灵键 spec；空串 = 不接管（唯一允许空的一项）。 */
     dismissKey?: Volatile<string> | string;
+    /** 忽略键 spec（本单）；空串 = 不接管（与 `dismissKey` 同一条判据）。 */
+    forgetKey?: Volatile<string> | string;
     languageMode?: Volatile<string> | string;
     uiLocaleWeight?: Volatile<number> | number;
     inlineEnabled?: Volatile<boolean> | boolean;
@@ -141,6 +143,8 @@ export type FlatConfig = Config & {
     localAcceptKey: string;
     wordAcceptKey: string;
     dismissKey: string;
+    /** 本单：忽略键（空串 = 不接管）。 */
+    forgetKey: string;
     languageMode: string;
     uiLocaleWeight: number;
     inlineEnabled: boolean;

@@ -45,7 +45,10 @@ const ALLOWED = [
   // `llm-form-guard` / `replay-history` / `hot-window-*` / `scaffold-opener-hitrate`）⇒
   // 写成 `'../text-match.js'` 会当场 `ERR_MODULE_NOT_FOUND`（同一机理，见上面那段的实测）。
   // 代价：客户端诊断面多一条 TS5097（7 → 8），是 lead 明确授权的变化，见 #127。
-  { file: 'history.ts', line: 72, specifier: '../text-match.ts' },
+  // ⚠️ 行号随上方注释长度漂移：本单在 `HistoryOptions` 前面加了一段 `ignored` 的说明
+  // ⇒ 这条 import 从 72 挪到 74。改它必须同时确认**那 5 条按 TS 源码直载的冒烟**
+  // 仍然走 `src/`（它们是这条白名单存在的全部理由）。
+  { file: 'history.ts', line: 74, specifier: '../text-match.ts' },
 ];
 
 /** 带 `.ts` / `.tsx` 扩展名的**相对**说明符（指向本仓源码；不含 `@deepseek-ai/*` 那类裸包名）。 */
