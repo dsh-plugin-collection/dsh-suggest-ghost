@@ -29,6 +29,7 @@ import { traceAt } from './trace.js';
 import type { TraceLevel } from './trace.js';
 import type { HotnessChangeHook, HotnessOp } from './hotness.js';
 import { HOT_TABLE_MAX_ENTRIES, HotnessTable } from './hotness.js';
+import { FORGET_MAX_ENTRIES, ForgetTable } from './forget.js';
 import { acquireDomain, type DomainLease } from './hotness-domain-pool.js';
 
 /** 持久层一条记录：一个去重用户文本的累计频次（lastSeq 不持久化，见模块注释）。
@@ -107,17 +108,33 @@ const HOTNESS_OPEN_MAX_ATTEMPTS = 40;
 const HOTNESS_RESTORE_GRACE_MS = 5000;
 
 /** 域声明：名字须匹配 UNIT_NAME_RE（小写字母开头的 [a-z0-9_]）。
- * `pinned` 为可选字段（v1 内演进，不 bump 版本——旧介质照常打开）。 */
+ * `pinned` 为可选字段（v1 内演进，不 bump 版本——旧介质照常打开）。
+ *
+ * ⚠️ **`ignored` 这张表是本单新增的，而版本号仍是 1**——这不是遗漏，是实测过的结论：
+ *  `openSingleUnit` 读盘时按 `descriptor.tables` **逐个查**、查不到就当空表
+ *  （`node_modules/@deepseek-ai/dsh-storage-json/lib/index.js` 的 `parse`），
+ *  而 `parse` 只比对 `unit.version`。所以「给 v1 加一张表」对旧盘是**无损**的：
+ *  旧文件没有这个键 ⇒ 空表 ⇒ 用户看到「没有忽略条目」，正是正确语义。
+ *  反过来 bump 到 2 会让旧盘直接 `version-mismatch` 拒开 —— 而那等于**丢掉热表**
+ *  （用户几千条频次），是本单绝对不能付的代价。 */
 const hotnessDomainSpec = defineDomain({
   name: 'suggest_ghost_hotness',
   version: 1,
-  tables: { entries: domainTable(
-    z.object({
-      text: z.string().min(1).max(RECORD_TEXT_MAX_CHARS),
-      count: z.number().int().positive(),
-      pinned: z.boolean().optional(),
-    }),
-  ) },
+  tables: {
+    entries: domainTable(
+      z.object({
+        text: z.string().min(1).max(RECORD_TEXT_MAX_CHARS),
+        count: z.number().int().positive(),
+        pinned: z.boolean().optional(),
+      }),
+    ),
+    /** 忽略表：一条 = 一个「别再补这句」的原文（键是归一化文本，见 `src/forget.ts`）。 */
+    ignored: domainTable(
+      z.object({
+        text: z.string().min(1).max(RECORD_TEXT_MAX_CHARS),
+      }),
+    ),
+  },
 });
 
 type HotnessDomain = Domain<typeof hotnessDomainSpec>;
@@ -129,6 +146,11 @@ type HotnessDomain = Domain<typeof hotnessDomainSpec>;
  */
 const HOTNESS_DOMAIN_KEY = 'suggest_ghost_hotness';
 type EntriesTable = KvTable<string, HotEntryRecord>;
+/** 忽略表的介质记录：只存原文（键就是归一化文本，`ForgetTable` 的内存形态一致）。 */
+interface IgnoredRecord {
+  text: string;
+}
+type IgnoredTable = KvTable<string, IgnoredRecord>;
 
 /** `_ops` 反向通道载荷（client 管理面板写入 settings 的 JSON）。 */
 export interface HotnessOpsPayload {
@@ -181,6 +203,8 @@ export interface HotnessPersistence {
  */
 export function setupHotnessPersistence(ctx: Context): {
   hotness: HotnessTable;
+  /** 忽略表（「别再给我补这句」）；`index.ts` 用它推载荷与回推忽略列表。 */
+  forget: ForgetTable;
   persistence: HotnessPersistence;
 } {
   // 本 fiber 的留痕通道：每条自动带 `fiber=<序号>`，让「谁开的、谁关的、谁卡住的」可对得上。
@@ -192,6 +216,36 @@ export function setupHotnessPersistence(ctx: Context): {
   /** 脏标记：text → 最新记账值（null = 待删除）。flush 前累积，flush 取快照清空。 */
   const dirty = new Map<string, Readonly<{ count: number; lastSeq: number; pinned: boolean }> | null>();
   let entries: EntriesTable | null = null;
+  /**
+   * 忽略表的持久化状态（本单新增，与热表共用同一个域、**不同的表**）。
+   *
+   * 为什么和热表挤在一个域里而不是新开一个 `suggest_ghost_forget`：
+   *  - 域是**进程级独占**资源，多开一个域就多一份「already-open 重试 6s」的风险面
+   *    （见 `hotness-domain-pool.ts` 的模块注释，那是本仓花过两天查的故障）；
+   *  - 两者同生命周期（都由本 fiber 的 `ctx.effect` 释放），没有独立回收的需求；
+   *  - 域内多一张表在介质上是**无损的**（见 `hotnessDomainSpec` 上方那段实测）。
+   *
+   * 脏标记与热表分开：一次忽略只该重写那个小表，不该把 2000 条热度一起重写。
+   */
+  let ignoredTable: IgnoredTable | null = null;
+  /** 忽略表的脏标记：归一化键 -> 原文（null = 待删除）。与 `dirty` 同款语义。 */
+  const dirtyIgnored = new Map<string, string | null>();
+  /**
+   * 忽略表本体（host 唯一一份）。
+   *
+   * `onChange` 在这里只负责标脏：它跑在 `ForgetTable` 的同步路径上（用户按键 → `_ops`
+   * → `applyOps`），而落盘要等 `flush()`（与热表同一节奏：回合结束 + 卸载兜底）。
+   * 逐条写盘会让「按一次忽略键」直接变成一次文件重写。
+   */
+  const forget = new ForgetTable((entry, norm) => {
+    dirtyIgnored.set(norm, entry === null ? null : entry.text);
+    if (!ready && dirtyIgnored.size >= FORGET_MAX_ENTRIES * 2) {
+      // 与热表同一条护栏：持久层未就绪时脏标记永远不被消费，超硬上限就清空并留痕。
+      // 清空不丢正确性（忽略表以内存态为准），最多损失 open 之前的几条落盘意图。
+      hotnessTrace(`forget dirty cap cleared: n=${dirtyIgnored.size} limit=${FORGET_MAX_ENTRIES * 2}`, 'warn');
+      dirtyIgnored.clear();
+    }
+  });
   let domain: HotnessDomain | null = null;
   /** 域租约：`close()` 时归还（只减引用，见池的模块注释）。 */
   let domainLease: DomainLease<HotnessDomain> | null = null;
@@ -258,7 +312,11 @@ export function setupHotnessPersistence(ctx: Context): {
     }
     dirty.set(text, entry);
   };
-  const hotness = new HotnessTable(onChange);
+  // 记账闸：忽略表命中 ⇒ `recordUserText` 直接不计账（见 `hotness.ts` 的 `isIgnored` 字段）。
+  // 传**谓词**而不是快照：忽略表在进程内可变，快照会让「刚按下的忽略」在下一句
+  // 输入前不生效 —— 而那个窗口正好是最容易被用户观察到的（删完立刻再打一次）。
+  // 判据本体仍在 `forget.ts`（`ForgetTable.has` 转发 `isForgotten`），这里只接线。
+  const hotness = new HotnessTable(onChange, (text) => forget.has(text));
   // 兜底：若某个组合里回调拿到了 facility 却卡在别处（永远没走到 open），也别把格子扣死。
   const grace = setTimeout(() => {
     // 两支都要开口（#88）：原来只覆盖 `pending`，而「服务不存在」这一支的初始状态是
@@ -292,16 +350,36 @@ export function setupHotnessPersistence(ctx: Context): {
 
   const flush = async (): Promise<void> => {
     const table = entries;
-    if (table === null || !ready || dirty.size === 0) return;
-    const batch = [...dirty];
+    if (table === null || !ready) return;
+    // ⚠️ 两个脏标记各自判空，**不能**在最外层写 `dirty.size === 0` 的早退：
+    // 忽略表与热表是两张独立的表，一次「只忽略了一句」的 flush 里 `dirty`（热表）可能
+    // 一条都没有——那样用户按下忽略键后永远看不到落盘（重启即复活，正是本单要修的形态）。
+    const hotBatch = dirty.size === 0 ? [] : [...dirty];
+    const ignoredBatch = dirtyIgnored.size === 0 ? [] : [...dirtyIgnored];
+    if (hotBatch.length === 0 && ignoredBatch.length === 0) return;
     dirty.clear();
-    const results = await Promise.allSettled(batch.map(([text, entry]) =>
-      entry === null
+    dirtyIgnored.clear();
+    const ignored = ignoredTable;
+    const writes: Promise<unknown>[] = [];
+    for (const [text, entry] of hotBatch) {
+      writes.push(entry === null
         ? table.delete(text)
         // pinned 仅 true 时落盘（可选字段，与 v1 介质兼容；false 省略）
         : entry.pinned
           ? table.put(text, { text, count: entry.count, pinned: true })
-          : table.put(text, { text, count: entry.count })));
+          : table.put(text, { text, count: entry.count }));
+    }
+    if (ignored !== null) {
+      for (const [norm, text] of ignoredBatch) {
+        writes.push(text === null
+          ? ignored.delete(norm)
+          : ignored.put(norm, { text }));
+      }
+    } else if (ignoredBatch.length > 0) {
+      // 介质这张表没拿到（open 走的是旧代码路径 / 极端降级）：不能假装写了。
+      hotnessTrace(`forget flush skipped: n=${ignoredBatch.length} (ignored table unavailable)`, 'warn');
+    }
+    const results = await Promise.allSettled(writes);
     for (const result of results) {
       if (result.status === 'rejected') {
         ctx.logger.warn(`dsh-suggest-ghost: hotness persist write failed: ${String(result.reason)}`);
@@ -325,6 +403,7 @@ export function setupHotnessPersistence(ctx: Context): {
       domain = null;
       domainLease = null;
       entries = null;
+      ignoredTable = null;
       ready = false;
       // ⚠️ **只归还租约，不直接关域**（见 hotness-domain-pool.ts）：
       // 域是进程级资源，池里还可能有别的 fiber 在用；关它是池的职责（引用归零
@@ -424,6 +503,9 @@ export function setupHotnessPersistence(ctx: Context): {
         // （同一个 root 上还有 `ctx.plugin()` 之类的别人家的钩子，一起跑会把 fiber 也拆了）。
         ctx.effect(() => () => void close(), 'hotness domain close');
         const table = opened.table('entries');
+        // 忽略表：与热表**并列**的一张表（同一个域、同一个打开时机），
+        // 所以它的恢复也必须在同一个 try 里 —— 单独再 open 一次域会撞 already-open。
+        const ignoredTab = opened.table('ignored') as IgnoredTable;
         // 恢复：count 降序截断到容量上限（防御历史超限 / 未来上限调小），合并进活表。
         const records = [...table.entries()]
           .map(([, record]) => record)
@@ -431,6 +513,13 @@ export function setupHotnessPersistence(ctx: Context): {
           .slice(0, HOT_TABLE_MAX_ENTRIES);
         for (const record of records) hotness.restoreEntry(record.text, record.count, record.pinned === true);
         entries = table;
+        // 忽略表恢复：键即归一化文本（写入时就是这个键），防御性截断到容量上限。
+        const ignoredRecords = [...ignoredTab.entries()].map(([norm, record]) => ({ norm, record })).slice(0, FORGET_MAX_ENTRIES);
+        for (const { norm, record } of ignoredRecords) forget.restoreEntry(record.text, norm);
+        ignoredTable = ignoredTab;
+        if (ignoredRecords.length > 0) {
+          hotnessTrace(`forget restored n=${ignoredRecords.length} tableSize=${forget.size}`);
+        }
         // 恢复条数必须打出来：#88 的「共 0 条」到底是没恢复、还是恢复了却被当空发出去，靠这行分。
         hotnessTrace(`hotness restored n=${records.length} tableSize=${hotness.size}`);
         restored = true;
@@ -456,6 +545,7 @@ export function setupHotnessPersistence(ctx: Context): {
 
   return {
     hotness,
+    forget,
     persistence: {
       get ready(): boolean {
         return ready;
@@ -489,6 +579,18 @@ export function setupHotnessPersistence(ctx: Context): {
             case 'clear':
               changed += hotness.clearAll();
               break;
+            case 'forget':
+              // 忽略一条：先记进忽略表（候选过滤 + 记账闸都读它），再把热表里那条清掉。
+              // 两笔都要：只记忽略表 ⇒ 设置页的热门短语列表里它还在（用户会以为没删掉）；
+              // 只删热表 ⇒ 本会话的幽灵照旧出现（环是另一张表，见 `src/forget.ts`）。
+              if (forget.add(op.text)) changed += 1;
+              if (hotness.deleteEntry(op.text)) changed += 1;
+              break;
+            case 'restore':
+              // 恢复一条：只动忽略表，**不**把频次写回热表 —— 频次是观测值，凭空补一条
+              // 等于伪造历史；被忽略期间它本来就没再记过账。
+              if (forget.remove(op.text)) changed += 1;
+              break;
             default:
               // 未知操作忽略（前后版本协议差异下保持宽容）。
               // ⚠️ #127 的 `regen` **落在这一支是刻意的**，不是漏接线：它不是热度变更，
@@ -514,6 +616,10 @@ const opsPayloadSchema = z.object({
       z.object({ op: z.literal('pin'), text: z.string().min(1).max(RECORD_TEXT_MAX_CHARS), pinned: z.boolean() }),
       z.object({ op: z.literal('add'), text: z.string().min(1).max(RECORD_TEXT_MAX_CHARS), pinned: z.boolean().optional() }),
       z.object({ op: z.literal('clear') }),
+      // 本单（「别再给我补这句」）：`forget` 记进忽略表并清掉热表那条；
+      // `restore` 只从忽略表里摘掉。两者都幂等（重复按同一个键不产生第二次写）。
+      z.object({ op: z.literal('forget'), text: z.string().min(1).max(RECORD_TEXT_MAX_CHARS) }),
+      z.object({ op: z.literal('restore'), text: z.string().min(1).max(RECORD_TEXT_MAX_CHARS) }),
       z.object({ op: z.literal('pull'), sessionId: z.string().min(1) }),
       z.object({ op: z.literal('complete'), sessionId: z.string().min(1), draft: z.string().min(1) }),
       // #127 重出。载荷**不带被拒正文**（只带它的 32 位摘要）：`_ops` 会落进 profile 文档，

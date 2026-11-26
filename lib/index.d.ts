@@ -63,6 +63,8 @@ export interface PluginConfigValues {
     localAcceptKey: Volatile<string>;
     wordAcceptKey: Volatile<string>;
     dismissKey: Volatile<string>;
+    /** 本单：「别再给我补这句」的快捷键（空串 = 不接管这个动作）。 */
+    forgetKey: Volatile<string>;
     /** #157：幽灵显示时浮一行键位提示（默认开）。 */
     showKeyHint: Volatile<boolean>;
     regenEnabled: Volatile<boolean>;
@@ -271,6 +273,19 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      * 现在补上实现，并把键面交给用户；留空时提示行也不再出现这一句。
      */
     dismissKey: z<string, string, "volatile-defined">;
+    /**
+     * **「别再给我补这句」**的快捷键 spec（本单，默认 `Alt+X`；**空串 = 不接管**）。
+     *
+     * 为什么与 `dismissKey` 同一条 schema 判据（`z.string()` 不带 `min(1)`）：留空是
+     * 用户能明确表达的意愿（「我不要这个动作」），不能当成「缺失回落默认」。
+     *
+     * 为什么默认是 `Alt+X` 而不是 fish 的 `Shift+Delete`：`Delete` 不在
+     * `src/client/keyspec.ts` 的 `KEY_CODES` 里，而且 `scripts/keyspec-smoke.mjs` 明确
+     * 钉着「Delete 不支持」（要动那条约定得连冒烟一起改，属另一件事）；`Alt+D` 则是
+     * Chrome/Edge 的「聚焦地址栏」——**浏览器原生绑定**，`yield-key.ts` 的让路判据
+     * （读 `defaultPrevented`）防不住它（原生动作不会设这个位）。
+     */
+    forgetKey: z<string, string, "volatile-defined">;
     /**
      * 建议语言模式：'auto' = 自动推断（结合 UI 语言 + 用户消息文字分布）；
      * 'zh' / 'zh-TW' / 'en' / 'ja' / 'ko' / 'ru' / 'fr' / 'de' / 'es' = 强制指定语言。
@@ -514,6 +529,19 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      * 现在补上实现，并把键面交给用户；留空时提示行也不再出现这一句。
      */
     dismissKey: z<string, string, "volatile-defined">;
+    /**
+     * **「别再给我补这句」**的快捷键 spec（本单，默认 `Alt+X`；**空串 = 不接管**）。
+     *
+     * 为什么与 `dismissKey` 同一条 schema 判据（`z.string()` 不带 `min(1)`）：留空是
+     * 用户能明确表达的意愿（「我不要这个动作」），不能当成「缺失回落默认」。
+     *
+     * 为什么默认是 `Alt+X` 而不是 fish 的 `Shift+Delete`：`Delete` 不在
+     * `src/client/keyspec.ts` 的 `KEY_CODES` 里，而且 `scripts/keyspec-smoke.mjs` 明确
+     * 钉着「Delete 不支持」（要动那条约定得连冒烟一起改，属另一件事）；`Alt+D` 则是
+     * Chrome/Edge 的「聚焦地址栏」——**浏览器原生绑定**，`yield-key.ts` 的让路判据
+     * （读 `defaultPrevented`）防不住它（原生动作不会设这个位）。
+     */
+    forgetKey: z<string, string, "volatile-defined">;
     /**
      * 建议语言模式：'auto' = 自动推断（结合 UI 语言 + 用户消息文字分布）；
      * 'zh' / 'zh-TW' / 'en' / 'ja' / 'ko' / 'ru' / 'fr' / 'de' / 'es' = 强制指定语言。

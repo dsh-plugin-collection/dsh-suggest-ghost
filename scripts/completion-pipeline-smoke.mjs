@@ -323,7 +323,7 @@ run('上界按真宿主实测分布取值，不是按快样本的算术', () => 
   );
 });
 
-run('设置页字段集合与基线一致（共 37 项：两个推理档位、流式投递、路由继承、两个生成中指示开关、键位提示、两个提示词模板，以及五个键位项）', () => {
+run('设置页字段集合与基线一致（共 38 项：两个推理档位、流式投递、路由继承、两个生成中指示开关、键位提示、两个提示词模板，以及六个键位项）', () => {
   const hostSource = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta.url)), 'utf8');
   // 只截 `const EditableFields = {` 这个对象字面量本身：从起始 brace 找到它自己的
   // `};`。上一版在这里用 indexOf('/** 配置 schema') 取右边界，而源码里那句写在
@@ -395,6 +395,10 @@ run('设置页字段集合与基线一致（共 37 项：两个推理档位、�
     // 这一项进基线同时意味着一次语义变更：`dismissKey` 之前**没有**设置项，
     // 而提示行一直写着「Esc 关闭」——现在那句话有了实现，也允许用户留空关掉。
     'localAcceptKey', 'wordAcceptKey', 'dismissKey',
+    // 本单：「别再给我补这句」键（声明在 `dismissKey` 之后、`languageMode` 之前）。
+    // 与上三键同族 ⇒ 五处登记（schema / 两处 readVolatile / live-settings 键表 /
+    // 设置卡 / 客户端解析），集合比对见 `scripts/keybinding-registration-smoke.mjs`。
+    'forgetKey',
     'languageMode', 'uiLocaleWeight', '_ops', '_push', '_hot', '_residual',
   ];
   assert.deepEqual(

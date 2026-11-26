@@ -455,6 +455,8 @@ type HotPushedPayload = {
   total?: unknown;
   history?: unknown;
   historySessionId?: unknown;
+  /** 忽略表快照（「别再给我补这句」）。`null`/缺省 = 这一格没说话（保留现值）。 */
+  ignored?: unknown;
 };
 
 /** 投影键（与 host 端 PROJECTION_KEY 一致）。 */
@@ -1918,7 +1920,14 @@ function applyBody(ctx: Context): void {
     localAcceptKey: string;
     /** 关闭幽灵的键 spec；空串 = 不接管（唯一允许空的一项）。 */
     dismissKey: string;
-    /** #157：幽灵显示时浮一行键位提示。 */
+    /**
+     * 「别再给我补这句」的快捷键（本单，默认 `Alt+X`；空串 = 不接管）。
+     *
+     * 与 `dismissKey` 同一判据（空串合法、`STR(true)`），理由也一致：
+     * 不接管是一个用户能明确表达的意愿，不能当成「缺失回落默认」。
+     */
+    forgetKey: string;
+    /** 键位提示开关（#157）。 */
     showKeyHint: boolean;
     /** #127：换一条的开关与快捷键（宿主侧 `.volatile()` ⇒ 卡片可改、即时生效）。 */
     regenEnabled: boolean;
@@ -1953,6 +1962,14 @@ function applyBody(ctx: Context): void {
     completionSessionId: string | null;
     /** host 实时推送：跨会话热度快照。 */
     hot: readonly { text: string; count: number }[] | null;
+    /**
+     * host 实时推送：忽略表（归一化键 + 原文）。
+     *
+     * 与 `hot` 同一个格（`_hot`）同一条缺省语义：**读不到就保留现值**，绝不落到「清空」。
+     * 客户端只用它的 `norm` 做候选过滤（`historySuggestion` 的 `ignored`），
+     * `text` 供设置卡片展示「已忽略」列表。
+     */
+    ignored: readonly { norm: string; text: string }[];
     /** host 实时推送：当前会话的最近用户输入文本（时间序，历史补全文本源）。 */
     history: readonly string[];
     /** history 所属会话；与当前会话不符时不做会话内补全（退化为纯热度候选）。 */
@@ -1976,6 +1993,9 @@ function applyBody(ctx: Context): void {
     wordAcceptKey: 'Right',
     localAcceptKey: 'Tab',
     dismissKey: 'Escape',
+    // 忽略键（本单）。与上面三键同款：初值与 `accept-key.ts` 的 `DEFAULT_FORGET_KEY`
+    // 逐字同值（集合比对钉在 `scripts/keybinding-registration-smoke.mjs` 的 ⑥）。
+    forgetKey: 'Alt+X',
     // #157：幽灵显示时浮一行键位提示（默认开）。
     showKeyHint: false,
     regenEnabled: true,
@@ -1994,6 +2014,10 @@ function applyBody(ctx: Context): void {
     completionFrame: LEGACY_FRAME_HINT,
     completionSessionId: null,
     hot: cached.hot ?? null,
+    // 忽略表不冷启动缓存：它是用户数据、下一次 pull 就带回来；先按空表起步不会
+    // 造成任何错误行为（空表 = 不过滤，与「没忽略过」同形），而缓存它要新增一份
+    // 冷启动载荷字段，属于另一件事。
+    ignored: [],
     history: cached.history ?? [],
     historySessionId: cached.historySessionId ?? null,
     suggestionSessionId: cached.suggestionSessionId ?? null,
@@ -2024,12 +2048,18 @@ function applyBody(ctx: Context): void {
       wordAcceptKey: settings.wordAcceptKey,
       regenKey: settings.regenKey,
       dismissKey: settings.dismissKey,
+      // 忽略键（本单）：与 dismissKey 同款，空串 = 不接管。
+      forgetKey: settings.forgetKey,
       wordAccept: settings.wordAccept,
       regenEnabled: settings.regenEnabled,
     });
 
   /** hotCounts Map 缓存：按 hot 数组引用失效，避免每次按键重建 2000 条归一化。 */
   let hotCountsCache: { src: readonly { text: string; count: number }[] | null; map: Map<string, number> | undefined } | null = null;
+  /** 忽略表 Set 缓存：按 `ignored` 数组引用失效（与 `hotCountsCache` 同款）。
+   *  每按键一次就会重新算幽灵，而忽略表条目最多 2000 条；不缓存等于每次按键 2000 次
+   *  归一化 —— 那是比前缀匹配本身还贵的一步，且完全是重复劳动。 */
+  let ignoredCache: { src: readonly { norm: string; text: string }[]; set: Set<string> } | null = null;
 
   /** ghostContent 结果缓存：按 (draft, settingsEpoch, composing, running, currentId) 失效。 */
   let ghostContentCache: {
@@ -2249,10 +2279,18 @@ function applyBody(ctx: Context): void {
         hotCountsCache = { src: hot, map };
       }
       const hotCounts = hotCountsCache.map;
+      // 忽略表（本单）：直接以宿主推来的归一化键为准 —— 客户端**不再算一次归一化**，
+      // 否则「宿主记的键」与「客户端算的键」就成了两份实现（两把尺子必然分叉）。
+      const ignored = settings.ignored;
+      if (ignoredCache === null || ignoredCache.src !== ignored) {
+        ignoredCache = { src: ignored, set: new Set(ignored.map(e => e.norm)) };
+      }
+      const ignoredSet = ignoredCache.set;
       const full = historySuggestion(history, contentDraft, {
         minChars: settings.historyMinChars,
         maxEntries: settings.historyMaxEntries,
         hotCounts,
+        ignored: ignoredSet,
         extraCandidates: settings.historyCrossSession ? hot ?? undefined : undefined,
       });
       if (full === undefined) return null; // 无候选（前缀超限/低于阈值等），本帧不显示
@@ -2829,6 +2867,47 @@ function applyBody(ctx: Context): void {
     );
   };
 
+  /**
+   * 「别再给我补这句」（本单）：把当前幽灵的**目标文本**发给宿主，记进忽略表。
+   *
+   * ## 为什么要发 `acceptTarget(content)` 而不是屏幕上那段尾巴
+   *
+   * 忽略表按**完整文本**记账（用户下次打前缀时，要比对的正是完整候选）。幽灵只画出
+   * 尾巴（`suffix`），拼回完整文本这件事已经有唯一实现（`acceptTarget`），所以这里
+   * 直接复用——顺手还能保证「按忽略键记下的那句」与「按采纳键会写进去的那句」逐字相同。
+   * 另外两种形态（`history` / `inline`）的 `full` 含命令前缀回填，这条一致性同样成立。
+   *
+   * ## 为什么不做本地乐观更新
+   *
+   * 忽略表的权威态在宿主（它也落盘）。客户端本地先删一遍能让幽灵立刻消失，但那会让
+   * `_push` 回来时出现「本地已删 / 宿主仍在」的短暂分叉，而这条通道的既有判重是按
+   * 载荷内容做的 ⇒ 分叉会被下一次无关推送抹平，用户看到的是「闪了一下又回来」。
+   * 所以这里**只发不猜**：宿主落定后会推一份带新 `ignored` 的载荷（`changed > 0` 时
+   * 立刻回推，见 `consumeOps`），幽灵在那一帧消失。代价是一个往返（实测几十毫秒到
+   * 数百毫秒），换来的是「不会闪回来」。
+   *
+   * ## 为什么顺手关掉浮层
+   *
+   * 用户按这个键的意图是「这条我不要了」。若等宿主往返再消失，中间那段里那条幽灵
+   * 仍然挂在输入框上、**还按得动 Tab**——那是一次「你以为已经删掉的采纳」。
+   * 所以立刻 `overlay.hide()` + `shown = null`（与 dismiss 同款零副作用），
+   * 下一个触发点若宿主还没落定，会重新算一次而忽略表尚未生效 ⇒ 可能再出现一次；
+   * 那也比「按得动」安全，且实测往返很短。
+   */
+  const requestForget = (content: GhostContent): void => {
+    const target = acceptTarget(content);
+    if (target.trim() === '') return;
+    forgetRev += 1;
+    traceOnce('forget-requested', 'sent', ` kind=${content.kind} chars=${target.length}`);
+    void writeOps(
+      JSON.stringify({ rev: forgetRev, ops: [{ op: 'forget', text: target }] }),
+      'forget',
+    );
+    overlay.hide();
+    setKeyHint(null);
+    shown = null;
+  };
+
   const scheduleInlineTrigger = (currentId: string | undefined, ghostKind: InlineArmGhostKind): void => {
     const sessionId = bound === null ? null : currentId ?? null;
     const obs = {
@@ -2896,6 +2975,8 @@ function applyBody(ctx: Context): void {
   let pullRev = 0;
   /** #127：换一条的写序号（与 pull 分开，便于留痕里区分两类写入）。 */
   let regenRev = 0;
+  /** 本单：忽略 / 恢复的写序号（与其它两类分开，留痕里能分辨）。 */
+  let forgetRev = 0;
   let lastPulledSessionId: string | undefined;
   /** 尚未确认收到应答的 pull（见 retryPendingPull）；null = 无待确认请求。 */
   let pendingPull: { sessionId: string; attempts: number } | null = null;
@@ -3165,6 +3246,11 @@ function applyBody(ctx: Context): void {
             // `dismissKey` 与上面两键**不同判据**：空串是合法值（= 不接管关闭动作），
             // 所以这里只判类型、不把空串当缺失。`?? 'Escape'` 只在键缺席（旧宿主）时兜底。
             dismissKey: typeof v.dismissKey === 'string' ? v.dismissKey : 'Escape',
+            // 与 dismissKey 同一条判据：空串合法（= 不接管），只判类型。
+            // 兜底写成字面量（与 `DEFAULT_FORGET_KEY` 同值，由
+            // `scripts/keybinding-registration-smoke.mjs` 的 ⑥ 逐字比对钉住）：
+            // 那一道闸读的就是客户端里的字面量，写成常量会让它「找不到兜底」。
+            forgetKey: typeof v.forgetKey === 'string' ? v.forgetKey : 'Alt+X',
             showKeyHint: typeof v.showKeyHint === 'boolean' ? v.showKeyHint : false,
             regenEnabled: typeof v.regenEnabled === 'boolean' ? v.regenEnabled : true,
             regenKey: typeof v.regenKey === 'string' && v.regenKey.trim().length > 0 ? v.regenKey : 'Alt+G',
@@ -3178,6 +3264,19 @@ function applyBody(ctx: Context): void {
             hot: hotSource.hot === null || hotSource.hot === undefined
               ? (hotPushed === null && pushed?.hot === undefined ? settings.hot : null)
               : (hotSource.hot as typeof settings.hot),
+            // 忽略表：与 `hot` **同一条缺省判据**（这一格没说话 ⇒ 保留现值），
+            // 但**多一层**：`null` 在宿主侧是有意义的值（「没有忽略条目」），
+            // 所以这里显式 `null` ⇒ `[]`，不能走「保留现值」那一支——否则用户
+            // 点完「全部恢复」后列表永远停在旧内容。
+            ignored: hotSource.ignored === undefined
+              ? settings.ignored
+              : Array.isArray(hotSource.ignored)
+                ? (hotSource.ignored as unknown[]).filter(
+                  (e): e is { norm: string; text: string } =>
+                    typeof e === 'object' && e !== null
+                    && typeof (e as { norm?: unknown }).norm === 'string'
+                    && typeof (e as { text?: unknown }).text === 'string')
+                : [],
             // history 省略 = host 本次推送不携带历史（保留现值）。启动对账推送正是
             // 这种形态：它只负责恢复建议，历史留给紧随其后的 pull 应答，此时若把
             // 本地历史清成 [] 会把「切回会话仍有历史」的体验一起清掉。
@@ -3247,6 +3346,7 @@ function applyBody(ctx: Context): void {
           settingsEpoch++;
           clearNormalizeCache();
           hotCountsCache = null;
+          ignoredCache = null;
           ghostContentCache = null;
           settings = next;
           // ── 熄灭（A 方案的收口侧）─────────────────────────────────
@@ -3416,6 +3516,16 @@ function applyBody(ctx: Context): void {
       event.preventDefault();
       event.stopPropagation();
       requestRegen(content, base);
+      return;
+    }
+    // ── 忽略这条（forget，本单新增）────────────────────────────────────────
+    // 排在最末（`KEY_ACTION_PRIORITY` 里也是最后一个）：这一格是本表里**代价最大**的动作
+    // ——它会持久改变「以后补什么」，要用户去设置页才能恢复；而 dismiss 只关一次浮层。
+    // 所以同键竞争时，任何别的动作都该赢。
+    if (owner === 'forget') {
+      event.preventDefault();
+      event.stopPropagation();
+      requestForget(content);
       return;
     }
     if (owner === 'accept') {

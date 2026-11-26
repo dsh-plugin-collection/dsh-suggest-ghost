@@ -34,7 +34,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_ACCEPT_KEY, DEFAULT_DISMISS_KEY, DEFAULT_REGEN_KEY, DEFAULT_WORD_ACCEPT_KEY } from '../src/client/accept-key.ts';
+import { DEFAULT_ACCEPT_KEY, DEFAULT_DISMISS_KEY, DEFAULT_FORGET_KEY, DEFAULT_REGEN_KEY, DEFAULT_WORD_ACCEPT_KEY } from '../src/client/accept-key.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(join(root, rel), 'utf8');
@@ -50,18 +50,20 @@ const run = (name, fn) => {
   }
 };
 
-/** 键位字段 -> 期望默认值（空串合法的那一项单独标记）。 */
+/** 键位字段 -> 期望默认值（空串合法的那些单独标记）。 */
 const KEYS = [
   { key: 'acceptKey', def: DEFAULT_ACCEPT_KEY, allowEmpty: false },
   { key: 'localAcceptKey', def: DEFAULT_ACCEPT_KEY, allowEmpty: false },
   { key: 'wordAcceptKey', def: DEFAULT_WORD_ACCEPT_KEY, allowEmpty: false },
   { key: 'regenKey', def: DEFAULT_REGEN_KEY, allowEmpty: false },
   { key: 'dismissKey', def: DEFAULT_DISMISS_KEY, allowEmpty: true },
+  // 本单：「别再给我补这句」。与 `dismissKey` 同一条空串口径（不接管是合法意愿）。
+  { key: 'forgetKey', def: DEFAULT_FORGET_KEY, allowEmpty: true },
 ];
 const NAMES = KEYS.map((k) => k.key);
 
 // ── ① schema：都在、默认值正确、都标了 volatile ──────────────────────────
-run('① src/index.ts：五个键位字段齐、默认值一致、都标 .volatile()', () => {
+run('① src/index.ts：六个键位字段齐、默认值一致、都标 .volatile()', () => {
   const host = read('src/index.ts');
   for (const { key, def, allowEmpty } of KEYS) {
     // 中间那段（可能含 `.min(1)`）用 (.*?) 捕获：写成正则字符类时容易漏掉括号转义，
@@ -95,7 +97,7 @@ run('② src/generate.ts：flattenConfig 与 resolveConfig 两处兜底都与 sc
 });
 
 // ── ③ live-settings 键表 ────────────────────────────────────────────────
-run('③ src/live-settings.ts：五键都在 SETTING_SPECS，空串口径正确', () => {
+run('③ src/live-settings.ts：六键都在 SETTING_SPECS，空串口径正确', () => {
   const ls = read('src/live-settings.ts');
   for (const { key, allowEmpty } of KEYS) {
     const want = allowEmpty ? 'true' : 'false';
@@ -105,7 +107,7 @@ run('③ src/live-settings.ts：五键都在 SETTING_SPECS，空串口径正确'
 });
 
 // ── ④ 设置卡片 ──────────────────────────────────────────────────────────
-run('④ settings-card.tsx：五行卡片都在、可写、且都归进 keybinds 分区', () => {
+run('④ settings-card.tsx：六行卡片都在、可写、且都归进 keybinds 分区', () => {
   const card = read('src/client/settings-card.tsx');
   for (const key of NAMES) {
     const block = new RegExp(`key: '${key}'[\\s\\S]{0,700}?section: '([a-z]+)'`).exec(card);
@@ -126,7 +128,7 @@ run('④ settings-card.tsx：五行卡片都在、可写、且都归进 keybinds
 });
 
 // ── ⑤ README 两份 ───────────────────────────────────────────────────────
-run('⑤ 两份 README 都写了五个键位字段', () => {
+run('⑤ 两份 README 都写了六个键位字段', () => {
   for (const file of ['README.md', 'README.en.md']) {
     const doc = read(file);
     for (const key of NAMES) assert.ok(doc.includes(key), `${file} 里没有 ${key}`);

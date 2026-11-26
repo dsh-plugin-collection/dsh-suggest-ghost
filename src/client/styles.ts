@@ -126,6 +126,10 @@ const COMPONENTS = [
   '.sgc-hotAdd .sgc-input{flex:1;min-width:0;min-height:30px;height:30px;font-size:12px}',
   '.sgc-hotMeta{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:8px 0 0}',
   '.sgc-hotDanger{color:var(--dsw-alias-state-error-primary)}',
+  // 「已忽略」子标题（本单）：与 `.sgc-section-heading` 同字号，加一条上分隔线区分
+  // 「热度管理」与「已忽略」两块——两者语义相反（一个进候选池、一个出候选池），
+  // 挤在同一块视觉里会让人以为它们是同一件事。
+  '.sgc-ignoredHeading{margin-top:16px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2)}',
 ].join('\n');
 
 /** 幂等样式注入（与 dsh-later 的 injectStyles 同一模式）。 */

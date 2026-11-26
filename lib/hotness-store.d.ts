@@ -18,6 +18,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { HotnessOp } from './hotness.js';
 import { HotnessTable } from './hotness.js';
+import { ForgetTable } from './forget.js';
 /** `_ops` 反向通道载荷（client 管理面板写入 settings 的 JSON）。 */
 export interface HotnessOpsPayload {
     readonly rev: number;
@@ -70,6 +71,8 @@ export interface HotnessPersistence {
  */
 export declare function setupHotnessPersistence(ctx: Context): {
     hotness: HotnessTable;
+    /** 忽略表（「别再给我补这句」）；`index.ts` 用它推载荷与回推忽略列表。 */
+    forget: ForgetTable;
     persistence: HotnessPersistence;
 };
 /**

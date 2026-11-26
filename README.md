@@ -76,7 +76,8 @@ dsh plugin --profile web add .
 | LLM 下一条建议 | 启用开关、输出令牌上限、建议字符上限、参考回合数、转录字符预算、超时（毫秒）、provider / model 路由（留空继承主请求）、**建议推理档位 `suggestionReasoningEffort`（默认为空 = 不传）**、**建议提示词 `suggestionPrompt`（默认为空 = 内置模板）** |
 | 停顿续写 | 启用开关、停顿时长（默认 100ms）、最少输入字符（停顿续写）、续写长度上限、**续写推理档位 `completionReasoningEffort`（默认为空 = 不传）**、**续写提示词 `completionPrompt`（默认为空 = 内置模板）** |
 | 历史前缀补全 | 启用开关、跨会话搜索、最大历史条目、最少输入字符（历史补全）|键位在「键位」分组 |
-| 键位 | **五个动作全部可自定义**：`acceptKey`（下一条建议的采纳）、`localAcceptKey`（历史补全 / 停顿续写的采纳，默认 Tab）、`wordAcceptKey`（逐词采纳，默认 `→`）、`regenKey`（换一条，默认 `Alt+G`）、`dismissKey`（关闭幽灵，默认 `Esc`，**留空 = 不接管这个动作**）；另有两个开关（逐词采纳、换一条）与「键位提示」开关。分区顶部有一行**当前生效**摘要，读的就是按键时那张仲裁表 |
+| 键位 | **六个动作全部可自定义**：`acceptKey`（下一条建议的采纳）、`localAcceptKey`（历史补全 / 停顿续写的采纳，默认 Tab）、`wordAcceptKey`（逐词采纳，默认 `→`）、`regenKey`（换一条，默认 `Alt+G`）、`dismissKey`（关闭幽灵，默认 `Esc`，**留空 = 不接管这个动作**）、`forgetKey`（**别再补这句**，默认 `Alt+X`，见下条）；另有两个开关（逐词采纳、换一条）与「键位提示」开关。分区顶部有一行**当前生效**摘要，读的就是按键时那张仲裁表 |
+| 别再补这句 | 幽灵出现时按 `Alt+X`，当前这句就**从候选池永久移除**：之后打字不会再补出来，也不会再计入热度（**再打一次也不会复活**），同时从「热度管理」里删掉。可在同一个分区下方的「已忽略」列表里逐条恢复或全部恢复。改键、留空关闭都在 `forgetKey` 里 |
 | 热度管理 | 跨会话高频短语列表：固定（不参与淘汰、候选恒置顶）、删除、手工新增（默认固定）、清空全部——即时生效，无需保存 |
 
 **推理档位为什么默认留空**：`reasoningEffort` 是**按 provider、按 model** 声明的，不是全局开关。
@@ -110,6 +111,7 @@ dsh plugin --profile web add .
     localAcceptKey: Tab        # 历史补全 / 停顿续写的采纳快捷键
     wordAcceptKey: Right       # 逐词采纳快捷键（显示名 Right = 裸右方向键）
     dismissKey: Escape         # 关闭幽灵的快捷键（留空 = 不接管这个动作）
+    forgetKey: Alt+X           # 「别再补这句」的快捷键（留空 = 不接管这个动作）
     regenKey: Alt+G            # 「换一条」快捷键
     llmEnabled: true           # LLM 建议开关
     suggestionReasoningEffort: ''  # 建议调用的推理档位（默认为空 = 不传 = 沿用路由默认）

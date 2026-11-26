@@ -38,10 +38,39 @@ export declare class HotnessTable {
     private heap;
     /** 变更回调（持久化脏标记来源）；缺省为纯内存用法。 */
     private readonly onChange;
-    constructor(onChange?: HotnessChangeHook);
+    /**
+     * 「这条文本是否被忽略」的**判定钩子**（缺省 = 没有忽略表）。
+     *
+     * **为什么闸必须开在记账这一侧**（本单的核心判据）：删掉热表条目之后，
+     * 用户只要**再打一次那句话**，`recordUserText` 就会把它以 `×1` 重新收进表里
+     * （实测：同会话隔一句、或换个会话，都是 `×1` 回来）。于是「删掉」变成一个
+     * 只在下次输入前有效的临时状态，而用户的理解是永久的。
+     * 这一侧不设闸，另外两处（候选过滤、热表删除）都会在下一次输入后失效。
+     *
+     * 传**钩子**而不是构造时拷一份快照：忽略表在进程内可变，快照会让「刚按下的忽略」
+     * 在下一句输入前不生效 —— 而那个窗口正好是最容易被观察到的（删完立刻再打一次）。
+     *
+     * ⚠️ 形状是**谓词**而不是 `ReadonlySet<string>`：判据本体（含归一化比对）住在
+     * `forget.ts`，本文件是宿主编译单元（`tsconfig.json` 的 NodeNext 只认 `.js`
+     * 说明符），而 `forget.ts` 依赖 `text-match.js`。若这里 `import` 它，那么
+     * `scripts/hotness-consume-smoke.mjs` / `hotness-persist-smoke.mjs` 这类
+     * **用 `--experimental-strip-types` 直载 `src/hotness.ts`** 的冒烟会当场
+     * `ERR_MODULE_NOT_FOUND`（Node 的 strip-only 模式不做 `.js → .ts` 回退，本仓
+     * 已在 `src/client/history.ts` 上踩过同一条）。注入谓词让本文件继续保持**零宿主依赖**，
+     * 而「什么算被忽略」仍然只有 `forget.ts` 一份实现。
+     */
+    private readonly isIgnored;
+    constructor(onChange?: HotnessChangeHook, isIgnored?: (text: string) => boolean);
     /**
      * 记账一次出现：同一会话内与上一条相邻重复的文本不再累计频次
      * （同一时刻重发 / 回放重复派发不应虚增热度）；跨会话的再次出现正常累计。
+     *
+     * ⚠️ **忽略表命中时直接不计账**（见 `ignored` 字段的注释）：这条闸是「删掉之后
+     * 不会再复活」的唯一保证。位置在**去重判据之后、写表之前**——
+     *   - 放在去重之前：`lastTextBySession` 不会更新 ⇒ 同一通话再说一次仍会被视作
+     *     「没说过」，与真实语义相反；
+     *   - 放在写表之后：已经 `set` 进去了，只能再删一次，等于每次都要多一次变更上报。
+     * 现在这个位置让「相邻去重」保持原样、被忽略的文本连一次 `onChange` 都不产生。
      */
     recordUserText(text: string, seq: number, sessionId?: string): void;
     /**

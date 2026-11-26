@@ -173,6 +173,8 @@ export interface EditableConfig {
   wordAcceptKey?: Volatile<string> | string;
   /** 关闭幽灵键 spec；空串 = 不接管（唯一允许空的一项）。 */
   dismissKey?: Volatile<string> | string;
+  /** 忽略键 spec（本单）；空串 = 不接管（与 `dismissKey` 同一条判据）。 */
+  forgetKey?: Volatile<string> | string;
   languageMode?: Volatile<string> | string;
   uiLocaleWeight?: Volatile<number> | number;
   inlineEnabled?: Volatile<boolean> | boolean;
@@ -226,6 +228,8 @@ export type FlatConfig = Config & {
   localAcceptKey: string;
   wordAcceptKey: string;
   dismissKey: string;
+  /** 本单：忽略键（空串 = 不接管）。 */
+  forgetKey: string;
   languageMode: string;
   uiLocaleWeight: number;
   inlineEnabled: boolean;
@@ -262,6 +266,7 @@ export function flattenConfig(config: ResolvedPluginConfig): FlatConfig {
     localAcceptKey: readVolatile(config.localAcceptKey, 'Tab'),
     wordAcceptKey: readVolatile(config.wordAcceptKey, 'Right'),
     dismissKey: readVolatile(config.dismissKey, 'Escape'),
+    forgetKey: readVolatile(config.forgetKey, 'Alt+X'),
     historyEnabled: readVolatile(config.historyEnabled, true),
     historyCrossSession: readVolatile(config.historyCrossSession, false),
     historyMaxEntries: readVolatile(config.historyMaxEntries, 50),
@@ -313,6 +318,8 @@ export function resolveConfig(config: Config): Config {
     // `dismissKey` 的空串是**合法值**（= 不接管关闭动作），所以兜底只在缺失时生效，
     // 不能像上面两项那样把空串当缺失丢掉——与 suggestionPrompt / 档位同一判据。
     dismissKey: readVolatile(raw.dismissKey, 'Escape'),
+    // 与 `dismissKey` 同一条判据：空串是合法值（= 不接管忽略动作）。
+    forgetKey: readVolatile(raw.forgetKey, 'Alt+X'),
     llmEnabled: readVolatile(raw.llmEnabled, true),
     streamingDelivery: readVolatile(raw.streamingDelivery, false),
     inlineEnabled: readVolatile(raw.inlineEnabled, true),
@@ -403,6 +410,9 @@ export function resolveConfig(config: Config): Config {
   }
   if (value.dismissKey !== undefined && typeof value.dismissKey !== 'string') {
     throw new Error('dsh-suggest-ghost: dismissKey must be a shortcut string (empty = off)');
+  }
+  if (value.forgetKey !== undefined && typeof value.forgetKey !== 'string') {
+    throw new Error('dsh-suggest-ghost: forgetKey must be a shortcut string (empty = off)');
   }
   if (value.llmEnabled !== undefined && typeof value.llmEnabled !== 'boolean') {
     throw new Error('dsh-suggest-ghost: llmEnabled must be a boolean');
