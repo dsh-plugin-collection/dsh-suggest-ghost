@@ -534,50 +534,43 @@ const originUrl = `http://127.0.0.1:${originServer.address().port}/`;
  *  2. 命中次数必须**恰好 1**，否则判脚本漂移并退出 3；
  *  3. 改写后必须**逐字变了**（空操作同样退出 3）。
  */
-const REGEN_BLOCK = /if \(content\.kind !== "llm"\) \{\s*\n\s*traceOnce\("regen-skipped", "not-llm", ` kind=\$\{content\.kind\}`\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*event\.preventDefault\(\);\s*\n\s*event\.stopPropagation\(\);\s*\n\s*requestRegen\(content, base\);\s*\n\s*return;/;
+const REGEN_BLOCK = /if \(settings\.regenEnabled && specMatches\(facts, settings\.regenKey\) && content\.kind !== "llm"\) \{\s*\n\s*traceOnce\("regen-skipped", "not-llm", ` kind=\$\{content\.kind\}`\);\s*\n\s*\}/;
+// ⚠️ 锚点随本单搬了位置，**判据没变**：旧实现把「形态判定 + 吞键」挤在 regen 支里，
+// 现在键位归谁由 `keyspec.ts` 的 `ownerOfKey` 一次判完，非 llm 形态的 regen 键根本不在表里，
+// 于是这条留痕搬到 `owner === null` 的诊断支。锚点跟着搬——
+// 吞键与留痕必须**分居两支**，正是这条单要保住的东西。
 
 const legacyInjectedBundle = (raw, mode) => {
   const matches = raw.match(new RegExp(REGEN_BLOCK.source, 'g'));
   const hits = matches === null ? 0 : matches.length;
   if (hits !== 1) {
     throw new Error(
-      `bundle 里「先判 kind 后吞键」的块命中 ${hits} 次（期望 1 次）：`
+      `bundle 里 regen 诊断支（留痕那块）命中 ${hits} 次（期望 1 次）：`
       + '产物形状已漂移，--inject-legacy 的改写会变成空操作，故拒绝继续');
   }
   const byMode = {
-    // 历史 bug 形态：先 preventDefault + stopPropagation，再判 kind。
-    'swallow-first': () => raw.replace(REGEN_BLOCK, `{
+    // 历史 bug 形态：在**诊断支**里就吞键（什么都不做，还把键扣下）。
+    // 期望红：A 段 ①（defaultPrevented）与 ②′（dispatchEvent 返回 true）。
+    'swallow-first': () => raw.replace(REGEN_BLOCK, `if (settings.regenEnabled && specMatches(facts, settings.regenKey) && content.kind !== "llm") {
           event.preventDefault();
           event.stopPropagation();
-          if (content.kind === "llm") {
-            requestRegen(content, base);
-          } else {
-            traceOnce("regen-skipped", "not-llm", \` kind=\${content.kind}\`);
-          }
-          return;
+          traceOnce("regen-skipped", "not-llm", \` kind=\${content.kind}\`);
         }`),
-    // issue 里写的退路：只 preventDefault、不 stopPropagation。
-    'stop-prop-only': () => raw.replace(REGEN_BLOCK, `{
-          if (content.kind !== "llm") {
-            event.preventDefault();
-            traceOnce("regen-skipped", "not-llm", \` kind=\${content.kind}\`);
-            return;
-          }
+    // issue 里写的退路：只 preventDefault、不 stopPropagation ⇒ ①/②′ 红。
+    'stop-prop-only': () => raw.replace(REGEN_BLOCK, `if (settings.regenEnabled && specMatches(facts, settings.regenKey) && content.kind !== "llm") {
           event.preventDefault();
-          event.stopPropagation();
-          requestRegen(content, base);
-          return;
+          traceOnce("regen-skipped", "not-llm", \` kind=\${content.kind}\`);
         }`),
-    // 只摘留痕：证"留痕断言"是活的（其余判据仍应全绿）。
-    'no-trace': () => raw.replace(REGEN_BLOCK, `{
-          if (content.kind !== "llm") {
-            return;
-          }
-          event.preventDefault();
-          event.stopPropagation();
-          requestRegen(content, base);
-          return;
+    // 只摘留痕：证 ④ 这条「唯一观测面」断言是活的（其余判据应全绿）。
+    'no-trace': () => raw.replace(REGEN_BLOCK, `if (false) {
         }`),
+    // 本单新增：**把形态闸从键位表里摘掉**（regen 无差别进表）。
+    // 这不再是吞键问题，而是让 `regenKey=Tab` 重新挡死历史/续写的采纳。
+    // 期望红：`scripts/accept-key-smoke.mjs` 的「回归（#1.4-3）」那条；本脚本 A/B 段照旧绿
+    // （A/B 只按 Alt+G，两种形态下都仍然没有 regen 动作）⇒ 由 keybinding-regression 那条链跑。
+    'regen-any-kind': () => raw.replace(
+      'if (input.kind === "llm" && input.regenEnabled !== false)',
+      'if (input.regenEnabled !== false)'),
   };
   const apply = byMode[mode];
   if (apply === undefined) {

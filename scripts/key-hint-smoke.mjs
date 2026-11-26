@@ -25,79 +25,106 @@ import { keyHintText } from '../src/client/key-hint-text.ts';
 
 /** @type {{name:string, fn:()=>boolean, detail:()=>string}[]} */
 const cases = [];
-/**
- * 登记一条用例。
- * @param name 用例名（红的时候直接打出来）。
- * @param fn 返回是否通过。
- * @param detail 失败时打印的实际值。
- */
 const test = (name, fn, detail) => { cases.push({ name, fn, detail }); };
 
-const base = {
-  kind: /** @type {const} */ ('history'),
+// 提示行的输入**不是散字段**，而是「设置 -> 键位表 -> 段」这条链的末端。
+// 本文件因此从 `bindingTableFor` 起算：文案断言与仲裁断言（accept-key-smoke）共用同一条链，
+// 谁漂移都会红——过去这里直接手写 `acceptKey/wordAccept` 字段，等于测试自己复刻了一遍判据。
+import { bindingTableFor } from '../src/client/accept-key.ts';
+import { hintSegments, keyFactsOf, specMatches } from '../src/client/keyspec.ts';
+
+const SETTINGS = {
   acceptKey: 'Tab',
+  localAcceptKey: 'Tab',
+  wordAcceptKey: 'Right',
   regenKey: 'Alt+G',
+  dismissKey: 'Escape',
   wordAccept: true,
   regenEnabled: true,
-  lang: /** @type {const} */ ('zh'),
 };
 
-test('默认设置（history，zh）= Tab 采纳 · → 逐词 · Esc 关闭',
-  () => keyHintText(base) === 'Tab 采纳 · → 逐词 · Esc 关闭',
-  () => keyHintText(base));
+/** 设置 -> 提示行文本（与 index.ts 的 render 路径逐字同一串调用）。 */
+const hintText = (kind, over = {}, lang = 'zh') => {
+  const settings = { ...SETTINGS, ...over };
+  return keyHintText({ kind, segments: hintSegments(bindingTableFor({ ...settings, kind })), lang });
+};
 
-test('llm 形态**不出现** →（该形态下裸 → 是原生光标移动）',
-  () => !keyHintText({ ...base, kind: 'llm' }).includes('→'),
-  () => keyHintText({ ...base, kind: 'llm' }));
+const base = { kind: 'history', lang: 'zh' };
+
+test('默认设置（history，zh）= Tab 采纳 · → 逐词 · Alt+G 换一条? 不——换一条只属于 llm ⇒ Tab 采纳 · → 逐词 · Esc 关闭',
+  () => hintText('history') === 'Tab 采纳 · → 逐词 · Esc 关闭',
+  () => hintText('history'));
+
+test('llm 形态**不出现** →（该形态下逐词整段不接管，写上去就是错的说明）',
+  () => !hintText('llm').includes('→') && !hintText('llm').includes('逐词'),
+  () => hintText('llm'));
+
+test('llm 形态 = Tab 采纳 · Alt+G 换一条 · Esc 关闭（段序 = 仲裁优先级）',
+  () => hintText('llm') === 'Tab 采纳 · Alt+G 换一条 · Esc 关闭',
+  () => hintText('llm'));
 
 test('inline 形态出现 →（停顿续写支持逐词）',
-  () => keyHintText({ ...base, kind: 'inline' }).includes('→'),
-  () => keyHintText({ ...base, kind: 'inline' }));
+  () => hintText('inline').includes('→ 逐词'),
+  () => hintText('inline'));
 
 test('wordAccept=false 时不出现 →',
-  () => !keyHintText({ ...base, wordAccept: false }).includes('→'),
-  () => keyHintText({ ...base, wordAccept: false }));
+  () => !hintText('history', { wordAccept: false }).includes('→'),
+  () => hintText('history', { wordAccept: false }));
 
-test('采纳键跟随设置：acceptKey=F2 ⇒ 文案里是 F2 且不含 Tab',
-  () => {
-    const s = keyHintText({ ...base, acceptKey: 'F2' });
-    return s.includes('F2') && !s.includes('Tab');
-  },
-  () => keyHintText({ ...base, acceptKey: 'F2' }));
+test('采纳键跟随设置（llm）：acceptKey=F2 ⇒ 整行等值，不含 Tab',
+  () => hintText('llm', { acceptKey: 'F2' }) === 'F2 采纳 · Alt+G 换一条 · Esc 关闭',
+  () => hintText('llm', { acceptKey: 'F2' }));
 
-test('default 口径：非 Tab 的 acceptKey 在 zh 文案里替换掉 Tab（不是追加）',
-  () => {
-    // 这条是「硬编码 Tab」的专用捕获：上一版只断言「含 F2 且不含 Tab」，
-    // 而硬编码实现如果写成 `Tab 采纳 · F2 ...` 就漏过了 —— 实测变异没变红，
-    // 所以判据改成**整行等值**：非 default 键位下，文案必须逐字等于只含该键的形态。
-    const s = keyHintText({ ...base, acceptKey: 'F2' });
-    return s === 'F2 采纳 · → 逐词 · Esc 关闭';
-  },
-  () => keyHintText({ ...base, acceptKey: 'F2' }));
+test('历史/续写的采纳键跟 localAcceptKey，不跟 acceptKey（#167 的作用域）',
+  () => hintText('history', { acceptKey: 'F2', localAcceptKey: 'Tab' }) === 'Tab 采纳 · → 逐词 · Esc 关闭',
+  () => hintText('history', { acceptKey: 'F2', localAcceptKey: 'Tab' }));
 
-test('采纳键跟随设置：acceptKey=Ctrl+Enter 原样透出',
-  () => keyHintText({ ...base, acceptKey: 'Ctrl+Enter' }).includes('Ctrl+Enter'),
-  () => keyHintText({ ...base, acceptKey: 'Ctrl+Enter' }));
+test('localAcceptKey=F3 时整行等值替换（不是追加）',
+  () => hintText('history', { localAcceptKey: 'F3' }) === 'F3 采纳 · → 逐词 · Esc 关闭',
+  () => hintText('history', { localAcceptKey: 'F3' }));
+
+test('逐词键跟随 wordAcceptKey：Up ⇒ 显示 ↑ 逐词',
+  () => hintText('history', { wordAcceptKey: 'Up' }).includes('↑ 逐词'),
+  () => hintText('history', { wordAcceptKey: 'Up' }));
+
+test('Ctrl+Enter 这类组合键原样透出',
+  () => hintText('llm', { acceptKey: 'Ctrl+Enter' }).startsWith('Ctrl+Enter 采纳'),
+  () => hintText('llm', { acceptKey: 'Ctrl+Enter' }));
+
+test('认不出的主键**不印上屏**（宁缺毋滥：写了就是承诺一个按不动的键）',
+  () => hintText('llm', { acceptKey: 'Delete' }) === 'Alt+G 换一条 · Esc 关闭',
+  () => hintText('llm', { acceptKey: 'Delete' }));
 
 test('「换一条」只在 llm 形态出现',
-  () => keyHintText({ ...base, kind: 'llm' }).includes('Alt+G 换一条')
-    && !keyHintText({ ...base, kind: 'history' }).includes('Alt+G'),
-  () => `${keyHintText({ ...base, kind: 'llm' })} | ${keyHintText({ ...base, kind: 'history' })}`);
+  () => hintText('llm').includes('Alt+G 换一条') && !hintText('history').includes('Alt+G'),
+  () => `${hintText('llm')} | ${hintText('history')}`);
 
 test('regenEnabled=false 时不出现「换一条」',
-  () => !keyHintText({ ...base, kind: 'llm', regenEnabled: false }).includes('换一条'),
-  () => keyHintText({ ...base, kind: 'llm', regenEnabled: false }));
+  () => !hintText('llm', { regenEnabled: false }).includes('换一条'),
+  () => hintText('llm', { regenEnabled: false }));
+
+test('dismissKey 留空 ⇒ 整句「关闭」消失（不许承诺不实现的键）',
+  () => hintText('llm', { dismissKey: '' }) === 'Tab 采纳 · Alt+G 换一条',
+  () => hintText('llm', { dismissKey: '' }));
+
+test('dismissKey 换成表内组合键 ⇒ 提示行跟着变',
+  () => hintText('llm', { dismissKey: 'Alt+F5' }) === 'Tab 采纳 · Alt+G 换一条 · Alt+F5 关闭',
+  () => hintText('llm', { dismissKey: 'Alt+F5' }));
+
+// 表外主键（`Backspace` / `Delete` 不在 `KEY_CODES` 里）**既录不进也命不中**，
+// 所以提示行丢掉这一段是对的——上面那条「认不出的主键不印上屏」就是它的正证。
+test('表外主键（Alt+Backspace）不印上屏，也不接管按键',
+  () => !hintText('llm', { dismissKey: 'Alt+Backspace' }).includes('关闭')
+    && specMatches(keyFactsOf({ code: 'Backspace', alt: true, ctrl: false, meta: false, shift: false }), 'Alt+Backspace') === false,
+  () => hintText('llm', { dismissKey: 'Alt+Backspace' }));
 
 test('en 文案：Tab accept · → word · Esc dismiss',
-  () => keyHintText({ ...base, lang: 'en' }) === 'Tab accept · → word · Esc dismiss',
-  () => keyHintText({ ...base, lang: 'en' }));
+  () => hintText('history', {}, 'en') === 'Tab accept · → word · Esc dismiss',
+  () => hintText('history', {}, 'en'));
 
 test('en + llm：another 出现且不出现 →',
-  () => {
-    const s = keyHintText({ ...base, kind: 'llm', lang: 'en' });
-    return s.includes('another') && !s.includes('→');
-  },
-  () => keyHintText({ ...base, kind: 'llm', lang: 'en' }));
+  () => hintText('llm', {}, 'en') === 'Tab accept · Alt+G another · Esc dismiss',
+  () => hintText('llm', {}, 'en'));
 
 test('DOM 钩子稳定（取证脚本据此纯读 DOM）',
   () => true, () => 'n/a');

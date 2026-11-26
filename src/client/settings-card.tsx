@@ -29,7 +29,23 @@ import type { HotnessOp } from '../domain.js';
 // 提示词上限的**唯一出处**（宿主 schema 引的是同一个常量）。卡片需要它来在保存前
 // 挡住超长：内核 zod 拒绝时 `save()` 读不到结论，界面只表现为「点了保存、值没变」。
 import { PROMPT_MAX_CHARS } from '../prompt-override.js';
-import { keyEventToSpec } from './keyspec.js';
+import {
+  bindingConflicts,
+  factsOfSpec,
+  isSafeActionKey,
+  isSendCollisionKey,
+  keyEventToSpec,
+  ownerOfKey,
+  sameSpec,
+  specKeycap,
+  type KeyAction,
+} from './keyspec.js';
+// 「当前生效」摘要读的是仲裁端那张表 ⇒ 必须 import 判据本体，不许在卡片里复刻一遍。
+// ⚠️ 这一行曾经**漏了**：`.tsx` 不在 `tsc` 的 include 里，esbuild 也不查未定义标识符，
+// 于是构建全绿、冒烟全绿，真浏览器里一打开插件详情页就 `ReferenceError: bindingTableFor
+// is not defined` 把整个 slot 炸掉。现已由 `scripts/client-name-check-smoke.mjs` 拦住
+// （跑 `tsc --jsx` 只筛 TS2304/TS2552；实测 origin/main 基线该类为 0，所以这条闸不抖）。
+import { bindingTableFor } from './accept-key.js';
 import { useGhostT, type GhostLang, type LocaleFaceLike } from './useGhostT.js';
 import { injectStyles } from './styles.js';
 // 图标取自官方图标集：primitives 是 Web 壳的 platform module（冻结模块表常驻），
@@ -58,7 +74,16 @@ export const GHOST_FIELDS: ReadonlyArray<{
   readonly label: Bilingual;
   readonly hint: Bilingual;
   readonly kind: FieldKind;
-  readonly section: 'llm' | 'history' | 'inline' | 'language' | 'display';
+  /**
+   * 设置卡片分区。
+   *
+   * ⚠️ 这里曾经写着 `'display'` 而**没有任何字段用它**（三个视觉开关实际写的是
+   * `'appearance'`）。之所以两边都不报错：`tsconfig.client.json` 的 include 是
+   * 「`src/client/` 下所有 `.ts`」，本文件（`.tsx`）**不在类型检查范围内**（开 `jsx` 会照出
+   * 上百条存量问题，见该文件头部注释与 Gitea #87）。⇒ 改这个联合时**不要指望编译器**，
+   * 靠 `scripts/keybinding-registration-smoke.mjs` 的集合比对与真机渲染。
+   */
+  readonly section: 'llm' | 'history' | 'inline' | 'language' | 'appearance' | 'keybinds';
   /** 是否可经设置页写回（false = 只能改配置文件）。 */
   readonly writable: boolean;
   /**
@@ -204,7 +229,7 @@ export const GHOST_FIELDS: ReadonlyArray<{
       en: 'Shortcut to ask for another suggestion (only while the ghost is visible). Alt+G by default.',
     },
     kind: 'key',
-    section: 'llm',
+    section: 'keybinds',
     writable: true,
   },
   {
@@ -215,18 +240,51 @@ export const GHOST_FIELDS: ReadonlyArray<{
       en: 'Lets you ask for another suggestion with the shortcut above. Capped per turn so a stray keypress cannot keep calling the model.',
     },
     kind: 'boolean',
-    section: 'llm',
+    section: 'keybinds',
     writable: true,
   },
   {
     key: 'acceptKey',
-    label: { zh: '采纳快捷键（LLM 下一条建议）', en: 'Accept shortcut (LLM next suggestion)' },
+    label: { zh: '采纳快捷键（下一条建议）', en: 'Accept shortcut (next suggestion)' },
     hint: {
-      zh: '只对「下一条建议」生效，可设成字母、方向键或 F1–F12。历史补全与停顿续写固定用 Tab，屏幕上那行提示会写明当前实际生效的键。',
-      en: 'Applies to the LLM next suggestion only; letters, arrow keys and F1–F12 work here. History and pause completion always use Tab — the on-screen hint names the key that really works.',
+      zh: '只作用于「下一条建议」那条幽灵。字母键也能设，但它会吃掉你打的第一个字符，建议用 Tab、方向键或 F1–F12。',
+      en: 'Applies to the next-suggestion ghost only. Letters work too, but one swallows your first keystroke — Tab, arrow keys or F1–F12 are safer.',
     },
     kind: 'key',
-    section: 'llm',
+    section: 'keybinds',
+    writable: true,
+  },
+  {
+    key: 'localAcceptKey',
+    label: { zh: '采纳快捷键（历史补全 / 停顿续写）', en: 'Accept shortcut (history / pause completion)' },
+    hint: {
+      zh: '这两类补全是边打字边出现的，所以只能设成不打字的键：Tab、方向键、Enter、F1–F12，或带 Alt / Ctrl 的组合。',
+      en: 'These two appear while you type, so only non-typing keys are allowed: Tab, arrows, Enter, F1–F12, or a combo with Alt / Ctrl.',
+    },
+    kind: 'key',
+    section: 'keybinds',
+    writable: true,
+  },
+  {
+    key: 'wordAcceptKey',
+    label: { zh: '逐词采纳快捷键', en: 'Word-by-word accept shortcut' },
+    hint: {
+      zh: '一次吃一个词。默认 →，只作用于历史补全与停顿续写（下一条建议是整条覆盖，没有逐词这说）。',
+      en: 'Takes one chunk at a time. → by default; applies to history and pause completion (the next suggestion is replaced whole).',
+    },
+    kind: 'key',
+    section: 'keybinds',
+    writable: true,
+  },
+  {
+    key: 'dismissKey',
+    label: { zh: '关闭幽灵快捷键', en: 'Dismiss shortcut' },
+    hint: {
+      zh: '收起当前这条幽灵，不改你已输入的内容。留空 = 不接管这个动作，输入框上方那行提示也会跟着去掉这一句。',
+      en: 'Hides the current ghost without touching what you typed. Leave it empty to give the action up — the hint line drops it too.',
+    },
+    kind: 'key',
+    section: 'keybinds',
     writable: true,
   },
   {
@@ -379,24 +437,24 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'wordAccept',
     label: { zh: '逐词采纳', en: 'Word-by-word accept' },
     hint: {
-      zh: '显示建议时，按 → 一次采纳一个词；Tab 始终采纳整条。',
-      en: 'With a suggestion shown, → accepts one word at a time; Tab accepts the whole thing.',
+      zh: '关掉后不再逐词吃进建议，那个键回到它原本的作用。用哪个键逐词在「键位」里改。',
+      en: 'Off = no chunk-by-chunk take-in; that key goes back to its normal job. The key itself is set under Shortcuts.',
     },
     kind: 'boolean',
-    section: 'history',
+    section: 'keybinds',
     writable: true,
   },
   {
     key: 'showKeyHint',
     label: { zh: '键位提示', en: 'Key hint' },
     hint: {
-      zh: '建议出现时，在输入框顶部显示一行当前键位提示（内容跟随你改过的快捷键）。关掉后说明只在设置页。',
-      en: 'While a suggestion is shown, a line at the top of the composer lists the live keys (it follows any shortcut you changed). Off = the explanation lives only in settings.',
+      zh: '建议出现时显示一行当前键位，内容跟随你在「键位」里改过的每一个键。关掉后说明只在这个页面。',
+      en: 'While a suggestion is shown, one line lists the live keys — it follows every change you make under Shortcuts. Off = the explanation lives only here.',
     },
     kind: 'boolean',
-    // 归「外观」而不是「历史前缀补全」：它是**纯视觉开关**，与补全逻辑无关；
-    // 放 history 下时用户按「显示/外观」找不到它（Gitea #157 的实机反馈）。
-    section: 'appearance',
+    // 从「外观」移进「键位」：它是键位的**展示开关**，用户改完键顺手要关的就是它，
+    // 留在外观区等于让人在两个分区之间来回找（#157 的实机反馈原本是反过来找的）。
+    section: 'keybinds',
     writable: true,
   },
   // —— 停顿续写 ——
@@ -545,6 +603,18 @@ const zhStrings = {
   /** 快捷键控件 */
   keyCapturing: '按下组合键…（Esc 取消）',
   keyEmpty: '点击设置快捷键',
+  keyReset: '恢复默认',
+  // —— 键位分区 ——
+  sectionKeybinds: '键位',
+  keybindNote: '这里列的键只在幽灵出现时生效；改完保存，输入框上方那行提示会跟着变。',
+  keyUnsafe: (label: string): string => `这个键会吃掉你正在打的字，${label}换一个`,
+  keySendCollision: '用 Enter 采纳会顶掉「发送」，改用组合键更稳',
+  keyConflict: (other: string, winner: string): string =>
+    `与「${other}」用了同一个键；同时按下时由「${winner}」先拿走`,
+  keyEffective: '当前生效：',
+  keyScopeLlm: '下一条建议',
+  keyScopeLocal: '历史 / 续写',
+  keybindJoin: '；',
   // —— 热度管理 ——
   sectionHotness: '热度管理（跨会话高频短语）',
   hotHint: '即时生效，无需保存。删除只清当前统计（再次输入会重新计入）；固定后不参与淘汰、跨会话候选恒置顶。',
@@ -600,6 +670,17 @@ const enStrings: { [K in keyof typeof zhStrings]: (typeof zhStrings)[K] } = {
     `Prompts are limited to ${max} characters; this one has ${current}. Shorten it before saving`,
   keyCapturing: 'Press a key combo… (Esc to cancel)',
   keyEmpty: 'Click to set a shortcut',
+  keyReset: 'Reset',
+  sectionKeybinds: 'Shortcuts',
+  keybindNote: 'These keys only apply while a suggestion is on screen. Save, and the hint line above the composer follows.',
+  keyUnsafe: (label: string): string => `That key would eat what you are typing — pick another for ${label}`,
+  keySendCollision: 'Using Enter to accept takes over Send — a combo is safer',
+  keyConflict: (other: string, winner: string): string =>
+    `Same key as “${other}”; on that press “${winner}” takes it first`,
+  keyEffective: 'In effect: ',
+  keyScopeLlm: 'Next suggestion',
+  keyScopeLocal: 'History / pause',
+  keybindJoin: ' — ',
   // —— Hotness management ——
   sectionHotness: 'Hotness management (frequent cross-session phrases)',
   hotHint: 'Takes effect immediately, no save needed. Delete only clears the current tally (typing it again re-counts); pinned entries are exempt from eviction and always lead cross-session candidates.',
@@ -680,16 +761,36 @@ function displayValue(v: unknown): string {
   return v === undefined || v === null ? '' : String(v);
 }
 
-/** 快捷键捕获控件：点击进入录制态，按下组合键即写入规范 spec（Esc 取消）。
- * 录制经 keyspec.keyEventToSpec，产出与幽灵匹配端（parseAcceptKey）同一张表。 */
-function KeyField({ id, value, disabled, t, onChange }: {
+/**
+ * 快捷键捕获控件：点击进入录制态，按下组合键即写入规范 spec（Esc 取消录制）。
+ *
+ * 录制经 `keyspec.keyEventToSpec`，写入值与匹配端（`specMatches`）同一张主键表，
+ * 所以「卡片里录进去的键」必然「幽灵那边命中得了」——这条同表关系是本控件存在的理由,
+ * 否则又是一处「设置说一套、按键做一套」（Gitea #167 的病根）。
+ *
+ * 三件新增的事，都由 `keyspec.ts` 的判据驱动，卡片自己**不拼任何键名规则**：
+ *  - `validate`：录到不安全的键（会吃掉正在打的字）⇒ **不写入**，就地说明为什么。
+ *  - `notes`：只警告不禁止（裸 Enter 顶掉发送、与其它动作同键），因为「一个键做两件事」
+ *    是用户的表达，禁止它会把「键盘不舒服」变成「保存不了」。
+ *  - `resetTo`：恢复默认。它不只是便利——`Escape` **录不进来**（录制态里 Esc 的语义是
+ *    「取消录制」，这是键盘控件的通用约定），所以「把关闭键从别的键改回 Esc」只能走这里。
+ *    没有这颗按钮，`dismissKey` 改掉之后就再也回不到默认，那是不可逆的一次误操作。
+ */
+function KeyField({ id, value, disabled, t, onChange, validate, notes, resetTo }: {
   id: string;
   value: string;
   disabled: boolean;
   t: GhostStrings;
   onChange: (spec: string) => void;
+  /** 录到一个 spec 时是否接受；返回字符串 = 拒绝并把这句话显示给用户。 */
+  validate?: (spec: string) => string | undefined;
+  /** 常驻在按钮下方的警告行（已解析好的文案）。 */
+  notes?: readonly string[];
+  /** 默认值；与当前值不同时显示「恢复默认」。空串也是合法默认（= 不接管）。 */
+  resetTo?: string;
 }): ReactElement {
   const [capturing, setCapturing] = useState(false);
+  const [rejected, setRejected] = useState<string | null>(null);
   useEffect(() => {
     if (!capturing) return;
     const onKey = (event: KeyboardEvent): void => {
@@ -697,13 +798,20 @@ function KeyField({ id, value, disabled, t, onChange }: {
       event.stopPropagation();
       if (event.key === 'Escape') {
         setCapturing(false);
+        setRejected(null);
         return;
       }
       const spec = keyEventToSpec(event); // 纯修饰键返回 undefined，继续等待主键
-      if (spec !== undefined) {
-        onChange(spec);
-        setCapturing(false);
+      if (spec === undefined) return;
+      const refusal = validate?.(spec);
+      if (refusal !== undefined) {
+        // 拒绝时**留在录制态**：用户下一步就是再按一个键，不该逼他再点一次按钮。
+        setRejected(refusal);
+        return;
       }
+      onChange(spec);
+      setCapturing(false);
+      setRejected(null);
     };
     const cancel = (): void => setCapturing(false);
     window.addEventListener('keydown', onKey, true);
@@ -712,18 +820,154 @@ function KeyField({ id, value, disabled, t, onChange }: {
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('blur', cancel);
     };
-  }, [capturing, onChange]);
+  }, [capturing, onChange, validate]);
+  const canReset = resetTo !== undefined && resetTo !== value;
   return (
-    <button
-      type="button"
-      id={id}
-      className={capturing ? 'sgc-key sgc-keyCapturing' : 'sgc-key'}
-      disabled={disabled}
-      onClick={() => setCapturing(c => !c)}
-    >
-      {capturing ? t.keyCapturing : value === '' ? t.keyEmpty : value}
-    </button>
+    <>
+      <div className="sgc-keyRow">
+        <button
+          type="button"
+          id={id}
+          className={capturing ? 'sgc-key sgc-keyCapturing' : 'sgc-key'}
+          disabled={disabled}
+          onClick={() => { setCapturing(c => !c); setRejected(null); }}
+        >
+          {capturing ? t.keyCapturing : value === '' ? t.keyEmpty : value}
+        </button>
+        {canReset && (
+          <button type="button" className="sgc-keyReset" disabled={disabled} onClick={() => onChange(resetTo)}>
+            {t.keyReset}
+          </button>
+        )}
+      </div>
+      {rejected !== null && <p className="sgc-keyReject">{rejected}</p>}
+      {(notes ?? []).map((note) => (
+        <p key={note} className="sgc-keyWarn">{note}</p>
+      ))}
+    </>
   );
+}
+
+/**
+ * 键位字段 → 角色元数据。
+ *
+ * `safety` 取 `block` 还是 `warn` 不是审美：
+ *  - `block`（新加的三个字段）：这些形态**边打字边出幽灵**，配成打字键会吃掉用户
+ *    正在输入的内容，而且旧存档里不可能已经有这种值（字段是新的），所以拦下来不会
+ *    让任何人的既有配置变成「打开设置就报错」。
+ *  - `warn`（`acceptKey` / `regenKey`）：字段早就允许字母键，用户可能就是这么存的。
+ *    此刻把判据升级成禁止，等于让用户保存过的一份配置**当场写不回去**；
+ *    所以这里只警告，不改写、也不拦保存（Gitea #167 拍板的是范围，不是键面）。
+ */
+const KEY_BINDINGS: Record<string, { action: KeyAction; resetTo: string; safety: 'block' | 'warn' }> = {
+  acceptKey: { action: 'accept', resetTo: 'Tab', safety: 'warn' },
+  localAcceptKey: { action: 'accept', resetTo: 'Tab', safety: 'block' },
+  wordAcceptKey: { action: 'word', resetTo: 'Right', safety: 'block' },
+  regenKey: { action: 'regen', resetTo: 'Alt+G', safety: 'warn' },
+  dismissKey: { action: 'dismiss', resetTo: 'Escape', safety: 'block' },
+};
+
+/** 动作名（摘要行用）。与提示行的措辞同源同义，只是那边写「Tab 采纳」这边写「采纳：Tab」。 */
+const ACTION_WORD: Record<KeyAction, { zh: string; en: string }> = {
+  accept: { zh: '采纳', en: 'accept' },
+  word: { zh: '逐词', en: 'word' },
+  regen: { zh: '换一条', en: 'another' },
+  dismiss: { zh: '关闭', en: 'dismiss' },
+};
+
+/**
+ * 每个键位字段**参与哪张仲裁表**。
+ *
+ * 这是本条判据的全部要点：`acceptKey`（下一条建议）与 `localAcceptKey`（历史 / 续写）
+ * 默认都是 `Tab`，而它们**永远不会在同一次按键上相遇**——一个只在 `llm` 形态生效，
+ * 另一个只在 `history` / `inline` 生效。把它们放进同一个集合里比撞键，
+ * 结果是默认设置一打开就报两条警告（本单第一版真就这么写了，在沙箱里看到才发现）。
+ * 真正的竞争单位是 `ownerOfKey` 读的那张表，所以这里也按表分：
+ *  - `llm` 表：`acceptKey` / `regenKey` / `dismissKey`
+ *  - 本地表：`localAcceptKey` / `wordAcceptKey` / `dismissKey`
+ * `dismissKey` 两边都在 ⇒ 它跟任一边撞都算撞。
+ */
+/** 动作 -> 承载它的设置字段（`keyConflict` 要说清「跟谁撞了、谁赢」）。 */
+const KEY_FIELD_OF: Partial<Record<KeyAction, string>> = {
+  accept: 'acceptKey',
+  word: 'wordAcceptKey',
+  regen: 'regenKey',
+  dismiss: 'dismissKey',
+};
+
+const KEY_TABLES: Record<string, readonly ('llm' | 'local')[]> = {
+  acceptKey: ['llm'],
+  regenKey: ['llm'],
+  localAcceptKey: ['local'],
+  wordAcceptKey: ['local'],
+  dismissKey: ['llm', 'local'],
+};
+
+/** 一张表里各字段的 spec（`switches` 提供两个开关的当前值）。 */
+const tableOf = (which: 'llm' | 'local', read: (k: string) => string, switches: { word: boolean; regen: boolean }) =>
+  bindingTableFor(which === 'llm'
+    ? {
+      kind: 'llm',
+      acceptKey: read('acceptKey'),
+      regenKey: read('regenKey'),
+      regenEnabled: switches.regen,
+      dismissKey: read('dismissKey'),
+    }
+    : {
+      kind: 'history',
+      localAcceptKey: read('localAcceptKey'),
+      wordAcceptKey: read('wordAcceptKey'),
+      wordAccept: switches.word,
+      dismissKey: read('dismissKey'),
+    });
+
+/**
+ * 一个键位字段当前的警告行（可能为空）。
+ *
+ * 三条判据全部来自 `keyspec.ts`（`isSafeActionKey` / `isSendCollisionKey` / `ownerOfKey`），
+ * 卡片只负责翻成人话——**这里不许出现任何键名比较**，否则运行时判据与界面判据
+ * 又会分叉成两份（#167 那一课）。「谁赢」也不是文案编的：拿 `ownerOfKey` 判出来的
+ * 优先级胜者写进句子，改优先级表时这句话会自己跟着变。
+ */
+function keyNotes(
+  key: string,
+  value: string,
+  lang: GhostLang,
+  t: GhostStrings,
+  read: (key: string) => string,
+  switches: { word: boolean; regen: boolean },
+): string[] {
+  const meta = KEY_BINDINGS[key];
+  if (meta === undefined || value === '') return [];
+  const notes: string[] = [];
+  // 值不安全就警告，**与 safety 是 block 还是 warn 无关**：`block` 只拦录制端，
+  // 而配置文件（`cordis.patch.yml`）可以直接写进一个裸字母键位——那种值今天照样生效，
+  // 不警告就等于把「会吃掉你打的字」这个后果藏起来。
+  if (!isSafeActionKey(value)) {
+    notes.push(t.keyUnsafe(GHOST_FIELDS.find(f => f.key === key)?.label[lang] ?? key));
+  }
+  // 裸 Enter：不禁止（§7.2 拍板），但它确实顶掉「发送」，必须让用户看见这一层。
+  if (isSendCollisionKey(value)) notes.push(t.keySendCollision);
+  for (const which of KEY_TABLES[key] ?? []) {
+    const table = tableOf(which, read, switches);
+    // 撞键判定直接调 `bindingConflicts`（与运行时同一份 `specIndex` 口径），
+    // 不在卡片里手写「找另一个同键的动作」——手写那份就是第二份判据（#167 那一课）。
+    const clashes = bindingConflicts(table, meta.action);
+    if (clashes.length === 0) continue;
+    const loser = clashes[0]!;
+    // 胜者由 `ownerOfKey` 判出来（`factsOfSpec` 造一次「按对了」的事实），
+    // 不在文案里写死「采纳优先」——改优先级表时这句话会自己跟着变。
+    const facts = factsOfSpec(value);
+    const winner = facts === undefined ? meta.action : ownerOfKey({ ...table, [meta.action]: value, [loser]: value }, facts);
+    // `accept` 这个动作在 llm 表里由 `acceptKey` 承载、在本地表里由 `localAcceptKey` 承载，
+    // 所以按「正在比对哪张表」取字段，不能只查一张静态表。
+    const fieldOf = (a: KeyAction): string =>
+      (a === 'accept' && which === 'local' ? 'localAcceptKey' : KEY_FIELD_OF[a]) ?? '';
+    const labelOf = (k: string): string => String(GHOST_FIELDS.find(f => f.key === k)?.label[lang] ?? k);
+    notes.push(t.keyConflict(labelOf(fieldOf(loser)), labelOf(fieldOf(winner ?? meta.action))));
+    break;
+  }
+  return notes;
 }
 
 /** `_push` 载荷里的热度条目（管理面板消费）。 */
@@ -943,6 +1187,47 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
     if (key in edits) return String(edits[key]);
     return displayValue(value[key]);
   };
+
+  /**
+   * 「当前生效」摘要文本 —— **读仲裁端那张表，不读设置项原值**。
+   *
+   * 这是 #167 那条不变量（屏幕上写的键 == 真按得动的键）在设置页的出口：
+   * 值来自 `bindingTableFor()`，而 `onKeyDown` 读的也是它，所以这块摘要不可能承诺一个
+   * 按下去没反应的键。分两行是因为两类形态的采纳键**确实是两个键**
+   * （`acceptKey` 管「下一条建议」，`localAcceptKey` 管历史补全与停顿续写）——
+   * 写成一行「采纳：Tab」就是在撒谎。关掉的动作（逐词 / 换一条）不出现；
+   * `dismissKey` 留空时整段消失，与提示行同一判据。
+   */
+  const effectiveKeySummary = (): string => {
+    // 一律走 `fieldValue`：它已经做了「未保存的编辑优先于快照」的合并（`edits` 兜底
+    // `displayValue(value[key])`），再套一层 `edits[k] ??` 是多余的第二份口径。
+    // 布尔项在这里是 'true' / 'false' 串（`displayValue` 的产物），所以下面写成
+    // `!== 'false'`；早先一版这里按 `KEY_BINDINGS` 白名单过滤，把两个**开关**读成了
+    // 空串 ⇒ `'' !== 'false'` 恒真 ⇒ 摘要永远显示「逐词 / 换一条」在生效，
+    // 哪怕用户已经把它们关掉。开关不在白名单里，值却一定要读得到。
+    const read = (k: string): string => fieldValue(k).trim();
+    const parts: string[] = [];
+    const switches = {
+      word: read('wordAccept') !== 'false',
+      regen: read('regenEnabled') !== 'false',
+    };
+    // 两张表都走 `tableOf`——与警告行读的是同一个组装函数，摘要不可能跟警告各说各话。
+    const llm = tableOf('llm', read, switches);
+    const local = tableOf('local', read, switches);
+    const fmt = (table: ReturnType<typeof bindingTableFor>, prefix: string): string => {
+      const seg = Object.entries(table).map(([action, spec]) => {
+        const cap = specKeycap(spec);
+        if (cap === undefined) return null;
+        return `${cap} ${ACTION_WORD[action as KeyAction][lang]}`;
+      }).filter((x): x is string => x !== null);
+      return seg.length === 0 ? '' : `${prefix} ${seg.join(' · ')}`;
+    };
+    const a = fmt(llm, t.keyScopeLlm);
+    const b = fmt(local, t.keyScopeLocal);
+    if (a !== '') parts.push(a);
+    if (b !== '') parts.push(b);
+    return parts.join(t.keybindJoin);
+  };
   /** 数字字段的暂存值是否非法（空或非数字）；与官方 ValueField 校验一致。
    * 多行提示词字段另一条判据：超过 `PROMPT_MAX_CHARS` 直接挡住保存 —— 写进内核会被
    * schema 的 `.max()` 拒，而 `save()` 读不到那次拒绝，界面表现是「点了保存、值没变」。 */
@@ -1135,7 +1420,11 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
         else if (def.kind === 'boolean') final = raw === true || raw === 'true';
         else if (def.kind === 'key') {
           const trimmed = String(raw).trim();
-          if (trimmed === '') continue; // host 端 zod 要求非空，空 spec 直接丢弃
+          // 空串丢弃只对**必填**的键位成立：host 端那些字段是 `z.string().min(1)`，
+          // 写空串会在 `SettingsForms` 那一步整笔事务失败（不是静默无效，是保存不了）。
+          // `dismissKey` 是唯一允许留空的（空 = 不接管关闭动作，见 index.ts 的字段注释），
+          // 把它一起丢掉的话，「关掉这个动作」就永远写不进去——用户只能看见值弹回 Escape。
+          if (trimmed === '' && key !== 'dismissKey') continue;
           final = trimmed;
         }
         await scope.set(key, final);
@@ -1197,6 +1486,12 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
         disabled={!editable || busy}
         t={t}
         onChange={spec => setField(f.key, spec)}
+        resetTo={KEY_BINDINGS[f.key]?.resetTo}
+        validate={KEY_BINDINGS[f.key]?.safety === 'block'
+          ? (spec => (isSafeActionKey(spec) ? undefined : t.keyUnsafe(f.label[lang])))
+          : undefined}
+        notes={keyNotes(f.key, fieldValue(f.key), lang, t, fieldValue,
+          { word: fieldValue('wordAccept') !== 'false', regen: fieldValue('regenEnabled') !== 'false' })}
       />
     ) : f.kind === 'catalog' && !catalogUnavailable
       && (f.catalog !== 'efforts' || catalogOptions('efforts', fieldValue(f.key)).length > 0) ? (
@@ -1331,6 +1626,7 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
    * 用户找不到（#157 实机反馈）⇒ 统一成 appearance，标题「外观」。
    */
   const appearanceFields = GHOST_FIELDS.filter(f => f.section === 'appearance');
+  const keybindFields = GHOST_FIELDS.filter(f => f.section === 'keybinds');
 
   /** Section 布局：grid = 两列并排（适合短字段），stack = 单列堆叠。 */
   const SECTION_LAYOUT: Record<string, 'grid' | 'stack'> = {
@@ -1340,6 +1636,8 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
     language: 'grid',
     // 外观组的开关都带一句话说明 ⇒ 单列堆叠，别挤成两栏（挤了说明会折成三行）。
     appearance: 'stack',
+    // 键位组每一项都要放得下一条录制按钮 + 一到两行警告 ⇒ 同样单列。
+    keybinds: 'stack',
   };
 
   return (
@@ -1383,6 +1681,13 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
       <section className="sgc-section" aria-labelledby="sgc-section-inline">
         <h3 className="sgc-section-heading" id="sgc-section-inline">{t.sectionInline}</h3>
         <div className={SECTION_LAYOUT.inline === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{renderFieldRun(inlineFields)}</div>
+      </section>
+      <section className="sgc-section" aria-labelledby="sgc-section-keybinds">
+        <h3 className="sgc-section-heading" id="sgc-section-keybinds">{t.sectionKeybinds}</h3>
+        <p className="sgc-section-note">{t.keybindNote}</p>
+        <p className="sgc-keyEffective"><span className="sgc-keyEffectiveLabel">{t.keyEffective}</span>{effectiveKeySummary()}
+        </p>
+        <div className={SECTION_LAYOUT.keybinds === 'grid' ? 'sgc-section-fields sgc-section-fieldsGrid' : 'sgc-section-fields'}>{renderFieldRun(keybindFields)}</div>
       </section>
       <section className="sgc-section" aria-labelledby="sgc-section-appearance">
         <button

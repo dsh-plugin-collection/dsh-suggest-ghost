@@ -50,7 +50,7 @@ import {
   type FrameHint,
   type FrameLedger,
 } from './accept-guard.js';
-import { acceptKeyFor } from './accept-key.js';
+import { bindingTableFor, DEFAULT_ACCEPT_KEY } from './accept-key.js';
 // Gitea #166 方案 B1：采纳前校验「浮层画的那句」与「要写入的那句」同源。
 import { acceptSourceVerdict } from './accept-source.js';
 import { shouldYieldKey } from './yield-key.js';
@@ -79,7 +79,7 @@ import {
   type SlotEmitGate,
   type TallyState,
 } from './inline-arm-policy.js';
-import { keyCodeOf } from './keyspec.js';
+import { hintSegments, keyFactsOf, ownerOfKey, specMatches, type BindingTable } from './keyspec.js';
 /**
  * 远程 `mutate` 兑现值的分类与写后判定（纯函数模块）。#16 的实质就落在「兑现 ≠ 落盘」
  * 这一层判定上，所以它必须能离线驱动测试（`scripts/ops-write-verify-smoke.mjs`），
@@ -473,7 +473,8 @@ const PENDING_STYLE_ID = 'dsh-suggest-ghost-pending-css';
 // 本文件里有**两个**消费点 —— 键位提示行的文案（render 路径）与 `onKeyDown` 的匹配。
 // 常量曾留在这里、判据写两份，两者一致靠的是复制，而不是结构；一旦将来把 `acceptKey`
 // 扩到 history/inline，只改行为那处就会让提示行开始说假话。现在两条路径都只经
-// `acceptKeyOfContent()`（判据在 `acceptKeyFor`），本文件不再持有 `'Tab'` 那份字面量。
+// `bindingTableOfContent()`（判据在 `bindingTableFor`），本文件不再持有 `'Tab'` 那份字面量
+// —— 兜底值也从 `accept-key.ts` 导入（`DEFAULT_ACCEPT_KEY`），见下面的 `?? DEFAULT_ACCEPT_KEY`。
 /** settings 命名空间（与 host 端一致）。 */
 const SETTINGS_NAMESPACE = 'suggest-ghost';
 /**
@@ -600,21 +601,14 @@ function caretAtComposerEnd(el: HTMLElement): boolean {
   return range.endContainer === el && range.endOffset === el.childNodes.length;
 }
 
-/** 快捷键匹配：修饰键 + 主键（主键表见 keyspec.ts），如 Tab、Alt+S、Ctrl+Enter。
- * 修复：字母/数字主键此前按 event.code === 'S' 匹配，实际 code 是 'KeyS'，
- * 导致单字符 spec 永远无法命中；现统一经 keyCodeOf 映射。 */
-function parseAcceptKey(spec: string): ((event: KeyboardEvent) => boolean) | undefined {
-  const parts = spec.split('+').map(p => p.trim().toLowerCase()).filter(Boolean);
-  if (parts.length === 0) return undefined;
-  const mods = new Set(parts.slice(0, -1));
-  const keyCode = keyCodeOf(spec);
-  if (keyCode === undefined) return undefined;
-  return (event) => event.code === keyCode
-    && event.altKey === mods.has('alt')
-    && event.ctrlKey === mods.has('ctrl')
-    && event.metaKey === mods.has('meta')
-    && event.shiftKey === mods.has('shift');
-}
+/**
+ * 快捷键匹配判据**不在本文件**。
+ *
+ * 旧版这里有一份 `parseAcceptKey`（自己拆 spec、自己比 `event.code` 与四个修饰键），
+ * 而录制端在 `keyspec.ts`——两份实现读同一张主键表，一致性靠巧合。现在匹配也收进
+ * `keyspec.ts` 的 `specMatches`，本文件只用 `ownerOfKey`（一次按键 → 至多一个动作），
+ * 于是「谁处理这一键」在整个仓库里只有一处判据。
+ */
 
 /**
  * 当前应显示的幽灵内容：LLM 建议（完整文本）或历史补全（已输入前缀 + 剩余后缀）。
@@ -633,14 +627,10 @@ type GhostContent =
   | { kind: 'inline'; prefix: string; suffix: string; full: string; frame: FrameHint };
 
 /**
- * 这条幽灵**实际生效**的采纳键 —— 本文件里取采纳键的最后一步，判据本体在 `accept-key.ts`。
- *
- * 存在的理由只是类型面：`acceptKey` 字段只长在 `llm` 那一支上，要把判别联合窄化成
- * `accept-key.ts` 的入参形状，判别动作本身得发生在有类型信息的地方。判别**只此一处**、
- * 键值判据也只此一处（`acceptKeyFor`）—— 提示行与 `onKeyDown` 两条路径共用本函数。
+ * 旧版这里是模块级的 `acceptKeyOfContent`（只回一个采纳键）。它现在长成作用域内的
+ * {@link bindingTableOfContent}：一次按键要仲裁四个动作，而窄化 `GhostContent` 判别联合
+ * 需要读到 `settings`，所以那张表只能在绑定了设置快照的作用域里组。
  */
-const acceptKeyOfContent = (content: GhostContent): string =>
-  acceptKeyFor({ kind: content.kind, acceptKey: content.kind === 'llm' ? content.acceptKey : undefined });
 
 /**
  * overlay 绘制所需的最小形状（{@link decideOverlayPaint} 的入参）。
@@ -1706,13 +1696,21 @@ function applyBody(ctx: Context): void {
    * 单槽位 + 单回调这个结构本身就容不下这种时序，所以改成集合并逐个调用。
    */
   const keyHintSubs = new Set<() => void>();
+  /** 两段提示是否等价（逐项比 action + keycap，不做字符串拼接比对）。 */
+  const sameHintSegments = (
+    a: readonly { action: string; keycap: string }[],
+    b: readonly { action: string; keycap: string }[],
+  ): boolean => a.length === b.length && a.every((seg, i) => seg.action === b[i]!.action && seg.keycap === b[i]!.keycap);
   /** 设置当前提示并通知所有订阅者（值未变则什么都不做，避免无谓渲染）。 */
   const setKeyHint = (next: KeyHintInput | null): void => {
+    // 比较的是**整张键位表投影出的段序列**（`keyspec.ts` 的 `hintSegments`），不是散字段：
+    // 表是提示行的唯一输入，所以「要不要通知」的判据必须与它同形。旧写法逐字段列举
+    // （acceptKey/regenKey/wordAccept/regenEnabled），新增一个动作就得记得在这里加一行——
+    // 漏了的表现是「改了键位、提示行停在上一帧」，而编译与冒烟都不会红。
     const same = (keyHintValue === null && next === null)
       || (keyHintValue !== null && next !== null
-        && keyHintValue.kind === next.kind && keyHintValue.acceptKey === next.acceptKey
-        && keyHintValue.regenKey === next.regenKey && keyHintValue.wordAccept === next.wordAccept
-        && keyHintValue.regenEnabled === next.regenEnabled && keyHintValue.lang === next.lang);
+        && keyHintValue.kind === next.kind && keyHintValue.lang === next.lang
+        && sameHintSegments(keyHintValue.segments, next.segments));
     if (same) return;
     keyHintValue = next;
     // 复制一份再遍历：订阅者在回调里退订是正常行为，直接遍历 Set 会漏掉后面的。
@@ -1912,8 +1910,14 @@ function applyBody(ctx: Context): void {
     inlineDelayMs: number;
     /** 草稿至少输入多少字符才触发续写。 */
     inlineMinChars: number;
-    /** 幽灵显示时允许 → 逐词采纳（Tab 始终整条采纳）。 */
+    /** 幽灵显示时允许逐词采纳（开关；键面见 `wordAcceptKey`）。 */
     wordAccept: boolean;
+    /** 逐词采纳的键 spec（默认 `Right`）。 */
+    wordAcceptKey: string;
+    /** 历史补全 / 停顿续写的采纳键 spec（默认 `Tab`）。 */
+    localAcceptKey: string;
+    /** 关闭幽灵的键 spec；空串 = 不接管（唯一允许空的一项）。 */
+    dismissKey: string;
     /** #157：幽灵显示时浮一行键位提示。 */
     showKeyHint: boolean;
     /** #127：换一条的开关与快捷键（宿主侧 `.volatile()` ⇒ 卡片可改、即时生效）。 */
@@ -1965,6 +1969,13 @@ function applyBody(ctx: Context): void {
     inlineDelayMs: 100,
     inlineMinChars: 4,
     wordAccept: true,
+    // 键位三兄弟的初值：与 `src/index.ts` 的 `.default()`、`generate.ts` 的两处
+    // `readVolatile` 逐字同值（集合比对钉在 `scripts/keybinding-registration-smoke.mjs`）。
+    // 这一处最特殊：它是**旧宿主**（没有这三个配置键 / describe 读不到）时的兜底，
+    // 写错就等于在旧内核上凭空改变键位。
+    wordAcceptKey: 'Right',
+    localAcceptKey: 'Tab',
+    dismissKey: 'Escape',
     // #157：幽灵显示时浮一行键位提示（默认开）。
     showKeyHint: false,
     regenEnabled: true,
@@ -1996,6 +2007,26 @@ function applyBody(ctx: Context): void {
   let documentRevisionSeen = -1;
 
   let settingsEpoch = 0;
+
+  /**
+   * 这条幽灵**此刻的键位表** —— 采纳 / 逐词 / 换一条 / 关闭四条判据的唯一出口。
+   *
+   * 存在的理由只是类型面：`acceptKey` 字段只长在 `llm` 那一支上，要把判别联合窄化成
+   * `bindingTableFor` 的入参形状，判别动作本身得发生在有类型信息的地方。判据本体在
+   * `accept-key.ts`，**只此一处**：提示行文案、`onKeyDown` 的仲裁、设置页的生效键位摘要
+   * 三条路径都读它，所以「屏幕上写的键 == 真按得动的键」是结构性的，不靠两份实现对齐。
+   */
+  const bindingTableOfContent = (content: GhostContent): BindingTable =>
+    bindingTableFor({
+      kind: content.kind,
+      acceptKey: content.kind === 'llm' ? content.acceptKey : undefined,
+      localAcceptKey: settings.localAcceptKey,
+      wordAcceptKey: settings.wordAcceptKey,
+      regenKey: settings.regenKey,
+      dismissKey: settings.dismissKey,
+      wordAccept: settings.wordAccept,
+      regenEnabled: settings.regenEnabled,
+    });
 
   /** hotCounts Map 缓存：按 hot 数组引用失效，避免每次按键重建 2000 条归一化。 */
   let hotCountsCache: { src: readonly { text: string; count: number }[] | null; map: Map<string, number> | undefined } | null = null;
@@ -2270,7 +2301,7 @@ function applyBody(ctx: Context): void {
       return {
         kind: 'llm',
         text: streamed.text,
-        acceptKey: settings.suggestion?.acceptKey ?? 'Tab',
+        acceptKey: settings.suggestion?.acceptKey ?? DEFAULT_ACCEPT_KEY,
         frame: { frame: streamed.frame, final: streamed.final },
         // 流式帧本身就是"正在增长"，与「换一条在途」是两件事：它有自己的帧号，
         // 所以这里恒为 false（在途位只由 `_push.regenPending` 驱动）。
@@ -2503,10 +2534,7 @@ function applyBody(ctx: Context): void {
     if (overlay.isPainted && settings.showKeyHint) {
       setKeyHint({
         kind: content.kind,
-        acceptKey: acceptKeyOfContent(content),
-        regenKey: settings.regenKey,
-        wordAccept: settings.wordAccept,
-        regenEnabled: settings.regenEnabled,
+        segments: hintSegments(bindingTableOfContent(content)),
         lang: activeLang(),
       });
     } else {
@@ -3130,6 +3158,13 @@ function applyBody(ctx: Context): void {
             inlineDelayMs: typeof v.inlineDelayMs === 'number' ? v.inlineDelayMs : 100,
             inlineMinChars: typeof v.inlineMinChars === 'number' ? v.inlineMinChars : 4,
             wordAccept: typeof v.wordAccept === 'boolean' ? v.wordAccept : true,
+            wordAcceptKey: typeof v.wordAcceptKey === 'string' && v.wordAcceptKey.trim() !== ''
+              ? v.wordAcceptKey : 'Right',
+            localAcceptKey: typeof v.localAcceptKey === 'string' && v.localAcceptKey.trim() !== ''
+              ? v.localAcceptKey : 'Tab',
+            // `dismissKey` 与上面两键**不同判据**：空串是合法值（= 不接管关闭动作），
+            // 所以这里只判类型、不把空串当缺失。`?? 'Escape'` 只在键缺席（旧宿主）时兜底。
+            dismissKey: typeof v.dismissKey === 'string' ? v.dismissKey : 'Escape',
             showKeyHint: typeof v.showKeyHint === 'boolean' ? v.showKeyHint : false,
             regenEnabled: typeof v.regenEnabled === 'boolean' ? v.regenEnabled : true,
             regenKey: typeof v.regenKey === 'string' && v.regenKey.trim().length > 0 ? v.regenKey : 'Alt+G',
@@ -3334,44 +3369,56 @@ function applyBody(ctx: Context): void {
     const content = shown.content;
     // CAS 基线：这份 content **计算时**所用的草稿快照（文本 + 宿主 draftRev）。
     const base = shown.base;
-    const acceptKey = acceptKeyOfContent(content);
-    // ── #127 换一条（regen）──────────────────────────────────────────────────
-    // 只在幽灵在屏时可用（`shown !== null` 是 `onKeyDown` 的头一道门）。**排在采纳闸之前**：
-    // 若把 regen 键与 acceptKey 配成同一个键，采纳优先是本仓既有语义（Tab 永远采纳），
-    // 而 regen 是**新增**入口，不该抢走用户已经习惯的那一个。
-    // 与 `acceptKey` 不同，regen 在**真的要执行动作**时吞按键（preventDefault）：否则
-    // `Alt+G` 在某些宿主组合上会落到浏览器 / 系统的原生动作上（例如带 Alt 的菜单快捷键），
-    // 那是用户没要的副作用。
+    // ── 键位归属：一次按键最多归一个动作 ────────────────────────────────────
+    // 表由 `bindingTableOfContent` 组（判据本体在 `accept-key.ts`），缺席的格子 = 这一帧
+    // 该动作根本不接管任何键。`ownerOfKey` 按 `KEY_ACTION_PRIORITY`（采纳 → 逐词 → 换一条
+    // → 关闭）取第一个命中的，于是「同键谁赢」第一次只有一处答案。
     //
-    // ⚠️ 这条吞键理由**只对「我们要执行动作」的分支成立**（Gitea #168）。顺序曾经是先吞键
-    // 再判 kind：非 llm 形态下用户按下 `Alt+G`，屏幕上什么都没发生、键也到不了输入框，
-    // 只留一条 debug trace —— 而 `key-hint-text.ts` 的「换一条」段本就只在 llm 形态显示，
-    // 等于用户在**没有任何界面元素声称这个键有用**的形态上被吞了键，连「我们在处理它」
-    // 的借口都没有。现在先判 kind：非 llm 一律不碰事件，按键回到原生行为（插入字符 /
-    // 移焦点 / 其它组件的处理），与同函数采纳支的 #38 闸（「此刻没有可采纳的幽灵」就不
-    // 吞键）对齐到同一句判据。不执行动作时把键吞掉，副作用只是从「落到原生动作」变成
-    // 「什么都不发生」，后者并不更安全，只是更难诊断。
-    if (settings.regenEnabled) {
-      const regenMatcher = parseAcceptKey(settings.regenKey);
-      if (regenMatcher !== undefined && regenMatcher(event)) {
-        if (content.kind !== 'llm') {
-          // 只对 LLM 建议有意义：历史补全/续写是本地即时算出的，没有"再要一条"这种语义
-          // （它们的候选集合由历史环与草稿决定，重出的结果必然是同一份）。
-          // 这条 trace 是这一支**唯一**的观测面（`traceOnce` 按理由变化才打，不刷屏）。
-          // 注意：这里**不** `preventDefault` / `stopPropagation`，也不 `return` 之外的动作
-          // —— 事件必须原样交还给宿主与其它处理器（#168 的验收判据）。
-          traceOnce('regen-skipped', 'not-llm', ` kind=${content.kind}`);
-          return;
-        }
-        event.preventDefault();
-        event.stopPropagation();
-        requestRegen(content, base);
-        return;
+    // 旧写法是三段散判据串在一块（regen 用 `settings.regenKey` 配、采纳用 `acceptKey` 配、
+    // 逐词硬比 `event.code === 'ArrowRight'`），谁写在前面谁就赢。那有两个后果：
+    //  ① `index.ts` 里那句注释「同键时采纳优先（Tab 永远采纳）」与执行顺序**相反**——
+    //    regen 写在最前，实际是重出优先；
+    //  ② 更糟的是非 llm 那一支：它命中 regen 键后直接 `return`，于是把写在它后面的
+    //    采纳支整条挡死 ⇒ 用户在设置页把「换一条」设成 `Tab`，历史补全 / 停顿续写的
+    //    `Tab` 采纳就**静默失效**。现在按优先级仲裁，同键时采纳赢，那条失效路径构造性消失。
+    const table = bindingTableOfContent(content);
+    const facts = keyFactsOf(event);
+    const owner = ownerOfKey(table, facts);
+    if (owner === null) {
+      // 观测面（Gitea #168）：这一键**确实配过** regen，但被形态挡在表外 —— 与「根本没配这个键」
+      // 是两件事，排查时必须分得开。这条留痕是那一支唯一的观测面。
+      // ⚠️ 这里**绝不** `preventDefault` / `stopPropagation`：不执行动作就把键吞掉，
+      // 副作用只是从「落到原生动作」变成「什么都不发生」，后者并不更安全，只是更难诊断。
+      if (settings.regenEnabled && specMatches(facts, settings.regenKey) && content.kind !== 'llm') {
+        traceOnce('regen-skipped', 'not-llm', ` kind=${content.kind}`);
       }
+      return;
     }
-
-    const matcher = parseAcceptKey(acceptKey);
-    if (matcher !== undefined && matcher(event)) {
+    // ── 关闭幽灵（dismiss）──────────────────────────────────────────────────
+    // 兑现提示行那句「Esc 关闭」：旧代码里**没有任何 Escape 分支**，那行字承诺的是一个
+    // 不由本插件实现的键（`docs/keybinding-settings-design.md` §1.4-1）。
+    // 零副作用：只藏浮层，**不写草稿、不 abort 在途生成**，下一个触发点照样重画。
+    if (owner === 'dismiss') {
+      event.preventDefault();
+      event.stopPropagation();
+      overlay.hide();
+      setKeyHint(null);
+      shown = null;
+      traceOnce('ghost-dismissed', 'key', ` kind=${content.kind}`);
+      return;
+    }
+    // ── 换一条（regen）──────────────────────────────────────────────────────
+    // 能走到这里说明表里有 `regen` 这一格，而 `bindingTableFor` 只在 `llm` 形态且开关
+    // 开着时才给（非 llm 的处置见上面那条留痕）。与采纳键不同，这一支在**真的要执行动作**
+    // 时吞按键：否则 `Alt+G` 在某些宿主组合上会落到浏览器 / 系统的原生动作上（带 Alt 的
+    // 菜单快捷键），那是用户没要的副作用。
+    if (owner === 'regen') {
+      event.preventDefault();
+      event.stopPropagation();
+      requestRegen(content, base);
+      return;
+    }
+    if (owner === 'accept') {
       // ── #38 采纳闸（整条）：只认终帧 ─────────────────────────────────────────
       // provisional 帧（宿主显式带 `final: false`）上**直接放弃**：不写一个字符。
       // 也**不吞按键**（不 preventDefault）——这一支等价于「此刻没有可采纳的幽灵」，
@@ -3459,9 +3506,13 @@ function applyBody(ctx: Context): void {
     // 历史补全下若草稿是斜杠命令整行（如 `/later +3m 我`），命令名+参数段
     // 不在候选 `full` 里，要用剥前缀后的 contentDraft 做前缀匹配；采纳后
     // 把命令前缀段（含时间参数）一并保留，避免命令意图被破坏。
-    if (settings.wordAccept
-      && event.code === 'ArrowRight'
-      && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+    // ── 逐词采纳（word）──────────────────────────────────────────────────────
+    // 旧写法在这里硬比 `event.code === 'ArrowRight'` 加四个修饰键取反，既不认设置项
+    // （`wordAcceptKey`）也**没有形态判据**：`llm` 形态按裸 `→` 之所以不吃字，靠的是
+    // #166 同源闸把 `accepted.endsWith(painted)` 判否——巧合，不是结构。
+    // 现在键面与形态都由 `bindingTableFor` 决定（`word` 只在 `history`/`inline` 进表，
+    // 开关关掉同样不给这一格），这里只问归属。
+    if (owner === 'word') {
       const ta = focused;
       const full = acceptTarget(content);
       // ── #38 采纳闸（逐词）：只认终帧 ─────────────────────────────────────────

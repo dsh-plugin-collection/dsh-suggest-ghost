@@ -239,6 +239,14 @@ run('两个键都有卡片字段且可写，并各自独立成条', () => {
 });
 
 run('两个光效进了「外观」分组，且各自文案里仍写着实验性', () => {
+  // ⚠️ 第三次改这里的判据（#157 → 本单），原因同样记录在原地：
+  // 本单把 `showKeyHint` 从 appearance 移进了新的 **keybinds（键位）** 分组——
+  // 它是「键位要不要显示」的开关，跟着键位走才找得到；留在外观区的话，
+  // 用户改完键还得去另一个分区把它关掉。⇒ 下面第 1 条「同属 appearance」只剩两个光效，
+  // 键位提示改由第 3 条单独钉它的新归属。
+  // 顺带一条**未做的**事如实记下：appearance 分组现在只剩实验性的两个光效，
+  // 理论上「实验性」徽章可以整节挂回去（见下面 244-253 行那段历史），本单**没挂**，
+  // 因为改徽章不在键位单的范围里，且会把「外观=实验性」这个等式重新固化。
   // ⚠️ 判据在 #157 之后改过一次，原因记录在此，免得下次有人"改回去"：
   //
   // 旧判据钉的是「C1/V4 在 `section: 'display'`，且那一节标题挂 `sgc-beta` 徽章」。
@@ -253,7 +261,7 @@ run('两个光效进了「外观」分组，且各自文案里仍写着实验性
   // 徽章本身没删（betaBadge / betaBadgeAria 文案仍在，供别的实验性分组复用）。
   assert.match(card, /key: 'caretGlowEnabled'[\s\S]{0,400}?section: 'appearance'/, 'C1 不在 appearance 分组');
   assert.match(card, /key: 'boxGlowEnabled'[\s\S]{0,400}?section: 'appearance'/, 'V4 不在 appearance 分组');
-  assert.match(card, /key: 'showKeyHint'[\s\S]{0,600}?section: 'appearance'/, '键位提示不在 appearance 分组');
+  assert.match(card, /key: 'showKeyHint'[\s\S]{0,600}?section: 'keybinds'/, '键位提示没跟着键位进 keybinds 分组');
   const c1 = card.slice(card.indexOf("key: 'caretGlowEnabled'"), card.indexOf("key: 'caretGlowEnabled'") + 500);
   const v4 = card.slice(card.indexOf("key: 'boxGlowEnabled'"), card.indexOf("key: 'boxGlowEnabled'") + 500);
   assert.match(c1, /实验性/, 'C1 文案里没写「实验性」⇒ 用户不知道这是实验性功能');

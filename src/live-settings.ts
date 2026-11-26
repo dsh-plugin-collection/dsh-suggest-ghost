@@ -122,12 +122,24 @@ const SETTING_SPECS: Record<keyof FlatConfig, FieldSpec> = {
   historyMinChars: POS(1),
   wordAccept: BOOL,
   acceptKey: STR(false),
+  // 键位三兄弟（本单）。`STR(false)` = 空串非法，与 `acceptKey` 同款：空白 spec 会让
+  // `keyspec.ts` 的 `specMatches` 认不出主键、这一格永不命中（静默不生效），
+  // 宁可在读值这一步丢弃回落默认。
+  // ⚠️ `dismissKey` 是**唯一**用 `STR(true)` 的键位项：它的空串是合法值
+  // （= 本插件不接管关闭动作，提示行也不再写「Esc 关闭」），当成缺失丢掉就等于
+  // 把用户明确表达的「关掉这个功能」还原成默认键。
+  // 漏登记的后果就是 #19 那一类：设置页改了、describe() 读了、`pickLiveSettings`
+  // 把它当非设置键丢弃、生效值永远停在 boot 快照。集合比对钉在
+  // `scripts/keybinding-registration-smoke.mjs`。
+  localAcceptKey: STR(false),
+  wordAcceptKey: STR(false),
+  dismissKey: STR(true),
   // #157：键位提示开关。与 `wordAccept` 同族（纯客户端展示开关），进同样的 spec 表。
   showKeyHint: BOOL,
   // #127 重出。**只有这两键是配置项**：上限与冷却是安全边界、钉成常量
   // （`src/regen.ts` 顶部写了为什么不做成可配项，判据同 `COMPLETION_DEADLINE_MS`）。
-  // `STR(false)` = 空串非法，与 `acceptKey` 同款：空白 spec 会让 `parseAcceptKey`
-  // 返回 undefined、这一支永不命中（静默不生效），宁可在读值这一步丢弃回落默认。
+  // `STR(false)` = 空串非法，与 `acceptKey` 同款：空白 spec 会让 `keyspec.ts` 的
+  // `specMatches` 认不出主键、这一支永不命中（静默不生效），宁可在读值这一步丢弃回落默认。
   // 漏登记的后果就是 #19 那一类：设置页改了、describe() 读了、`pickLiveSettings`
   // 把它当非设置键丢弃、生效值永远停在 boot 快照。
   regenEnabled: BOOL,

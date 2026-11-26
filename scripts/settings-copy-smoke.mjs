@@ -85,8 +85,8 @@ check('没有空说明', () => {
 // 放行表：每条**必须写理由**，理由是「这不是界面文案」或「这已经是双语的第 ③ 种写法」。
 // 表里没有的中文 ⇒ 红。加一条放行等于认一次「这不是文案」，所以理由要能被下一个人反驳。
 const COPY_ALLOW = [
-  // ③ 按 lang 分支的拼装函数：zh 与 en 各写一份，等价于 { zh, en } 双值。
-  { file: 'key-hint-text.ts', re: /parts\.push|const parts = /, why: 'keyHintText 的 zh 分支（同函数上方就是 en 分支）' },
+  // （曾有一条 `key-hint-text.ts` 的放行：本文件把「按 lang 分支拼中文」改成
+  //  { zh, en } 双值的 WORDING 表之后它就空转了 ⇒ 按本闸自己的规矩删掉，不留后门。）
   // 非 UI 文本：给模型看的工具参数说明，不进界面。
   { file: 'stream-ghost.ts', re: /^\s*description:/, why: 'typert 工具参数的 description，读者是模型不是人' },
   // 非 UI 文本：诊断串，出现在 `｜目录 …` 里，是**工程读数**而非用户文案；

@@ -44,6 +44,16 @@ import { stripCommandPrefix } from '../src/client/history.ts';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const CLIENT_SRC = readFileSync(new URL('../src/client/index.ts', import.meta.url), 'utf8');
+/**
+ * 形状闸用的**去注释**源码。
+ *
+ * 为什么要有这一份：形状断言问的是「代码里有没有第二份判据」，而注释里**提到**判据
+ * 是常事——本单给逐词支写的注释正写着 `accepted.endsWith(painted)`， raw 匹配于是
+ * 把一句说明判成了违规。与本文件对 `accept-source.ts` 的处理（`:244` 那两条 replace）
+ * 同一条口径：**扫代码，不扫散文**。
+ * 只剥整行注释与块注释，不剥行尾注释 ⇒ 字符串里的 `https://` 之类不会被误伤。
+ */
+const CLIENT_CODE = CLIENT_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 const CLIENT_BUNDLE = fileURLToPath(new URL('../lib/client.js', import.meta.url));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -246,14 +256,14 @@ run('★ 形状闸：同源判据不引入宿主 DOM 遍历', () => {
   assert.doesNotMatch(src, /querySelector|querySelectorAll|closest\(|getBoundingClientRect/,
     'accept-source.ts 里出现了 DOM 查询：同源判据只许比插件自己持有的两份值（#166 评审判据）');
   // 同一份判据只许有一处：index.ts 的采纳支必须调它，不许内联第二份拼写。
-  const inlineChecks = CLIENT_SRC.match(/\.endsWith\((painted|suffix)/g) ?? [];
+  const inlineChecks = CLIENT_CODE.match(/\.endsWith\((painted|suffix)/g) ?? [];
   assert.equal(inlineChecks.length, 0, `src/client/index.ts 里出现了内联的同源比对（${inlineChecks.join(',')}）：判据必须只有一份`);
-  assert.ok((CLIENT_SRC.match(/acceptSourceVerdict\(/g) ?? []).length >= 2,
+  assert.ok((CLIENT_CODE.match(/acceptSourceVerdict\(/g) ?? []).length >= 2,
     'index.ts 应有两处调用（整条采纳 + 逐词采纳），共用同一个判据函数');
 });
 
 run('★ 形状闸：accept-guard.ts 仍是唯一一份 buildFullAccept（没有复制品）', () => {
-  assert.equal((CLIENT_SRC.match(/const accepted = buildFullAccept\(/g) ?? []).length, 1,
+  assert.equal((CLIENT_CODE.match(/const accepted = buildFullAccept\(/g) ?? []).length, 1,
     '整条采纳的 accepted 只许算一次（重复计算会让两次 derive 之间产生新窗口）');
 });
 
@@ -382,7 +392,20 @@ function makeDom() {
       : (composer.isConnected ? composer : null)),
     querySelectorAll: () => [],
     getElementById: (id) => created.find((el) => el.id === id) ?? null,
-    getSelection: () => null,
+    /**
+     * 选区桩：折叠在输入框**末尾**（`caretAtComposerEnd` 的第二条分支）。
+     *
+     * ⚠️ 这是**夹具选择**，不是对真宿主选区的模拟：本段要验的是「改过的键能不能路由到
+     * 正确的动作」，而逐词支在动作之前还有一道 `caretAtComposerEnd`——替身原来恒返回
+     * `null`，那道闸直接判假 ⇒ 整条逐词支不可达，于是 I6/I7/I8 会**全体假绿**
+     * （「什么都没发生」既可能是"键没接上"也可能是"根本没走到"）。
+     * 所以先给一个真的末尾选区，再用 I6ctl 对照臂自证逐词确实跑得通。
+     */
+    getSelection: () => ({
+      rangeCount: 1,
+      isCollapsed: true,
+      getRangeAt: () => ({ endContainer: composer, endOffset: composer.childNodes.length }),
+    }),
     // `draftEndRect()` 用 TreeWalker 找最后一个文本节点：替身给一个（内容即草稿正文），
     // 否则 history/inline 形态恒判 `no-caret`、浮层不画（与真宿主不同）。
     createTreeWalker: (root) => {
@@ -923,6 +946,105 @@ if (!fresh.ok) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+    // ── I. 键位自定义（本单）：仲裁表在真产物上的行为对照 ────────────────────
+    // 这一段证明的是**改键之后真按键的行为**，不是纯函数判据（那在 accept-key-smoke）。
+    // 每条都直接读产物输出：写没写草稿、写了什么、本插件有没有吞键、浮层还在不在。
+    const hasTrace = (r, needle) => (r.traces ?? []).some((l) => l.includes(needle));
+
+    // I1. 默认 `Escape` 关掉幽灵：不写草稿、浮层消失、吞键。
+    const I1 = await scenario({ draft: '', doc: { historyEnabled: false }, code: 'Escape', key: 'Escape' });
+    record('I1 llm 幽灵按 Escape ⇒ 浮层收起、草稿一字未写、本插件吞键',
+      I1.loadError === undefined && I1.writes.length === 0 && I1.afterDraft === ''
+      && I1.pluginPrevented === true && I1.overlayShownAfter !== '1' ? B.PASS : B.FAIL,
+      `writes=${JSON.stringify(I1.writes)} shownAfter=${I1.overlayShownAfter} prevented=${I1.pluginPrevented}`);
+
+    // I2. `dismissKey=''` ⇒ 这一格不在表里 ⇒ Escape **不吞键**、幽灵照旧在屏。
+    //     这条同时证「留空 = 不接管」是真的关掉了动作，而不是换成另一种吞键行为。
+    const I2 = await scenario({ draft: '', doc: { historyEnabled: false, dismissKey: '' }, code: 'Escape', key: 'Escape' });
+    record('I2 dismissKey 留空 ⇒ Escape 不吞键、幽灵不收起（留空 = 不接管）',
+      I2.loadError === undefined && I2.pluginPrevented === false && I2.overlayShownAfter === '1' ? B.PASS : B.FAIL,
+      `prevented=${I2.pluginPrevented} shownAfter=${I2.overlayShownAfter}`);
+
+    // I3. **回归（本单修的失效面）**：`regenKey=Tab` 时 history 形态按 Tab 必须仍然采纳。
+    //     旧实现里 regen 支写在采纳之前并早退 ⇒ 这一条当时是**红的**（用户把「换一条」
+    //     设成 Tab 就把历史补全的采纳整条关掉）。现在按优先级表，采纳赢。
+    const I3 = await scenario({ draft: DRAFT, doc: { historyEnabled: true, inlineEnabled: false, regenKey: 'Tab' }, code: 'Tab', key: 'Tab' });
+    record('I3 ★ regenKey=Tab + history 形态 ⇒ Tab 仍然采纳（旧实现在这里失效）',
+      I3.loadError === undefined && I3.writes.length === 1 && I3.writes[0] === `${DRAFT}再跑一遍冒烟` ? B.PASS : B.FAIL,
+      `writes=${JSON.stringify(I3.writes)} 期望=${JSON.stringify([`${DRAFT}再跑一遍冒烟`])}`);
+
+    // I4. `localAcceptKey=F4`：Tab 不再采纳，F4 采纳（设置项真的管到 history 形态）。
+    const I4a = await scenario({ draft: DRAFT, doc: { historyEnabled: true, inlineEnabled: false, localAcceptKey: 'F4' }, code: 'Tab', key: 'Tab' });
+    const I4b = await scenario({ draft: DRAFT, doc: { historyEnabled: true, inlineEnabled: false, localAcceptKey: 'F4' }, code: 'F4', key: 'F4' });
+    record('I4 localAcceptKey=F4 ⇒ Tab 不采纳、F4 采纳',
+      I4a.loadError === undefined && I4a.writes.length === 0
+      && I4b.writes.length === 1 && I4b.writes[0] === `${DRAFT}再跑一遍冒烟` ? B.PASS : B.FAIL,
+      `Tab: ${JSON.stringify(I4a.writes)} / F4: ${JSON.stringify(I4b.writes)}`);
+
+    // I5. `acceptKey` 与 `localAcceptKey` 各管各的：只改前者，history 形态的 Tab 不受影响。
+    const I5 = await scenario({ draft: DRAFT, doc: { historyEnabled: true, inlineEnabled: false, acceptKey: 'F2' }, code: 'Tab', key: 'Tab' });
+    record('I5 只改 acceptKey ⇒ history 形态的 Tab 照旧采纳（#167 的作用域不越界）',
+      I5.loadError === undefined && I5.writes.length === 1 ? B.PASS : B.FAIL,
+      `writes=${JSON.stringify(I5.writes)}`);
+
+    // ── ✋ 已知缺陷绊线：逐词采纳在真产物上写不出字 ──────────────────────────
+    //
+    // **不是本单造成的**：同一份场景跑在 `origin/main` 的产物上读数完全相同
+    // （实测：两侧都 `writes=[]`、`pluginPrevented=false`）。根因是 #166 的同源闸与
+    // 逐词的天然形状冲突：
+    //   浮层画的是**后缀**（history/inline 只画 suffix），而逐词的 `accepted` 只前进
+    //   一个片段 ⇒ `accepted.endsWith(painted)` 恒假 ⇒ 走 `word-abandon` 早退。
+    //   只有「剩余部分恰好就是一个片段」时才会放行——那时逐词等价于整条采纳。
+    // 于是 README/提示行宣传的「→ 逐词采纳」在多个片段的候选上**一直**是空转的。
+    // 留痕是 debug 级（默认静音），所以现场只有"按了没反应"，这就是它从没被测到的原因。
+    //
+    // 这里**断言当前行为**（而不是修它，也不是标成 NOT-COVERED 假装没看见）：
+    // 修好那一天本条会红，逼着改动的人同步更新这段说明与工单状态。
+    const I6ctl = await scenario({ draft: DRAFT, doc: { historyEnabled: true, inlineEnabled: false }, code: 'ArrowRight', key: 'ArrowRight' });
+    record('I6ctl ✋ 已知缺陷绊线：默认 → 逐词当前写不出字（同源闸 × 逐词，Gitea #185）',
+      I6ctl.loadError === undefined && I6ctl.writes.length === 0 && I6ctl.pluginPrevented === false ? B.PASS : B.FAIL,
+      `prevented=${I6ctl.pluginPrevented} writes=${JSON.stringify(I6ctl.writes)}`
+      + '（若本条转红 ⇒ 逐词被修好了：删掉这条绊线、把 I6 升级为真断言，并更新 Gitea #185）');
+
+    // I6. `wordAcceptKey=Up` 的**行为**面：当前量具测不到 ⇒ 如实标 NOT-COVERED。
+    //
+    // 为什么不能标 PASS：逐词支在 `preventDefault` **之前**就要过同源闸（见 I6ctl 那条
+    // 绊线），而那道闸现在恒判否 ⇒ 「键已改到 ↑」与「键压根没接上」在 DOM 读数上
+    // **完全同形**（都是 writes=[] / prevented=false）。拿同形当证据就是假绿。
+    // 为什么也不算 FAIL：判据本身有覆盖——`scripts/accept-key-smoke.mjs` 用的是**产物里
+    // 那份 `ownerOfKey`**（不再是副本），已经断言过 `word` 格的键跟着设置变。
+    // ⇒ 键面归属＝判据已覆盖、端到端未覆盖；同源闸缺陷修好后本条应升级为真断言。
+    record('I6 wordAcceptKey 改键的端到端行为',
+      B.NC,
+      '缺前置：逐词支在吞键/写入之前被 #166 同源闸挡住（I6ctl 绊线），两种情形读数同形 ⇒ 端到端未验；'
+      + '键面归属由 accept-key-smoke 的 ownerOfKey 断言覆盖。'
+      + '（同源闸缺陷修好后本条要改成真断言：↑ 吞键并写入一个片段、→ 完全不接管。）');
+
+    // I7. 开关关掉 ⇒ 那把键**整个还给原生**（不是「按了没反应」地吞掉）。
+    const I7 = await scenario({ draft: DRAFT, doc: { historyEnabled: true, inlineEnabled: false, wordAccept: false }, code: 'ArrowRight', key: 'ArrowRight' });
+    record('I7 wordAccept=false ⇒ → 不吞键、不写字（回到原生光标移动）',
+      I7.loadError === undefined && I7.pluginPrevented === false && I7.writes.length === 0 ? B.PASS : B.FAIL,
+      `prevented=${I7.pluginPrevented} writes=${JSON.stringify(I7.writes)}`);
+
+    // I8. llm 形态按 →：表里没有 word 格 ⇒ 不接管。
+    // ⚠️ 这条的**证据强度有限**：逐词支本来就写不出字（I6ctl），所以「不写」同时符合
+    // 「形态闸生效」与「缺陷本身」两种解释。形态闸真正的钉子是 accept-key-smoke 里
+    // 「llm 表不含 word」那条判据断言；这里只作为「没有误吞键」的行为面补一条。
+    const I8 = await scenario({ draft: '', doc: { historyEnabled: false }, code: 'ArrowRight', key: 'ArrowRight' });
+    record('I8 llm 形态按 → ⇒ 不写草稿也不吞键（行为面；形态闸本身由 accept-key-smoke 钉）',
+      I8.loadError === undefined && I8.writes.length === 0 && I8.pluginPrevented === false ? B.PASS : B.FAIL,
+      `writes=${JSON.stringify(I8.writes)} prevented=${I8.pluginPrevented} shownAfter=${I8.overlayShownAfter}`);
+
+    // I9. **优先级表**的行为面：llm 形态把 `regenKey` 配成与采纳键同一个 `Tab`
+    //     ⇒ 那一下必须仍然是**采纳**（写草稿），不是去排队重出。
+    //     旧代码是 regen 支写在采纳之前（注释却声称相反），这一条跑在基线产物上必红；
+    //     把 `KEY_ACTION_PRIORITY` 改成 regen 优先也必红（变异已实测）。
+    const I9 = await scenario({ draft: '', doc: { historyEnabled: false, regenKey: 'Tab' }, code: 'Tab', key: 'Tab' });
+    record('I9 ★ llm 形态 regenKey=Tab ⇒ 那一下仍是采纳（优先级表第一次被行为断言钉住）',
+      I9.loadError === undefined && I9.writes.length === 1 && I9.afterDraft === SUGG_TEXT ? B.PASS : B.FAIL,
+      `writes=${JSON.stringify(I9.writes)} draftAfter=${JSON.stringify(I9.afterDraft)} 期望 draftAfter=${JSON.stringify(SUGG_TEXT)}`);
+
+
 // 汇总
 // ═══════════════════════════════════════════════════════════════════════════
 const behaviorFail = results.filter((r) => r.status === B.FAIL).length;

@@ -167,6 +167,12 @@ export interface EditableConfig {
   historyMinChars?: Volatile<number> | number;
   wordAccept?: Volatile<boolean> | boolean;
   acceptKey?: Volatile<string> | string;
+  /** 历史补全 / 停顿续写的采纳键 spec。纯客户端判据，host 只负责把它带到 describe() 里。 */
+  localAcceptKey?: Volatile<string> | string;
+  /** 逐词采纳键 spec（默认 `Right`）。 */
+  wordAcceptKey?: Volatile<string> | string;
+  /** 关闭幽灵键 spec；空串 = 不接管（唯一允许空的一项）。 */
+  dismissKey?: Volatile<string> | string;
   languageMode?: Volatile<string> | string;
   uiLocaleWeight?: Volatile<number> | number;
   inlineEnabled?: Volatile<boolean> | boolean;
@@ -217,6 +223,9 @@ export type FlatConfig = Config & {
   historyMinChars: number;
   wordAccept: boolean;
   acceptKey: string;
+  localAcceptKey: string;
+  wordAcceptKey: string;
+  dismissKey: string;
   languageMode: string;
   uiLocaleWeight: number;
   inlineEnabled: boolean;
@@ -247,6 +256,12 @@ export function flattenConfig(config: ResolvedPluginConfig): FlatConfig {
     boxGlowEnabled: readVolatile(config.boxGlowEnabled, false),
     showKeyHint: readVolatile(config.showKeyHint, false),
     acceptKey: readVolatile(config.acceptKey, 'Tab'),
+    // 键位三兄弟。默认值与 `index.ts` 的 `.default()` **逐字同值**，也与
+    // `src/client/accept-key.ts` 的 `DEFAULT_*` 常量同值（三处一致性由
+    // `scripts/keybinding-registration-smoke.mjs` 集合比对钉住，不靠人对眼）。
+    localAcceptKey: readVolatile(config.localAcceptKey, 'Tab'),
+    wordAcceptKey: readVolatile(config.wordAcceptKey, 'Right'),
+    dismissKey: readVolatile(config.dismissKey, 'Escape'),
     historyEnabled: readVolatile(config.historyEnabled, true),
     historyCrossSession: readVolatile(config.historyCrossSession, false),
     historyMaxEntries: readVolatile(config.historyMaxEntries, 50),
@@ -293,6 +308,11 @@ export function resolveConfig(config: Config): Config {
     provider: readVolatile(raw.provider, ''),
     model: readVolatile(raw.model, ''),
     acceptKey: readVolatile(raw.acceptKey, 'Tab'),
+    localAcceptKey: readVolatile(raw.localAcceptKey, 'Tab'),
+    wordAcceptKey: readVolatile(raw.wordAcceptKey, 'Right'),
+    // `dismissKey` 的空串是**合法值**（= 不接管关闭动作），所以兜底只在缺失时生效，
+    // 不能像上面两项那样把空串当缺失丢掉——与 suggestionPrompt / 档位同一判据。
+    dismissKey: readVolatile(raw.dismissKey, 'Escape'),
     llmEnabled: readVolatile(raw.llmEnabled, true),
     streamingDelivery: readVolatile(raw.streamingDelivery, false),
     inlineEnabled: readVolatile(raw.inlineEnabled, true),
@@ -368,6 +388,21 @@ export function resolveConfig(config: Config): Config {
   }
   if (value.regenEnabled !== undefined && typeof value.regenEnabled !== 'boolean') {
     throw new Error('dsh-suggest-ghost: regenEnabled must be a boolean');
+  }
+  // 键位三兄弟（本单）。`localAcceptKey` / `wordAcceptKey` 与 `acceptKey` 逐字同套
+  // （空/空白 = 永不命中，是配置错误而不是「关闭」——关闭各有开关）；
+  // `dismissKey` **反过来**：空串是合法值（= 不接管关闭动作），所以只校验类型。
+  // ⚠️ 这里**不**校验 spec 能否被 `keyCodeOf` 认得：那张主键表在 `src/client/keyspec.ts`，
+  // 而 `tsconfig.json` 把 `src/client` 排除在 host 编译之外，跨不过去。
+  // 「默认值必须被认得」这条钉在客户端侧的 `scripts/keyspec-smoke.mjs`。
+  for (const key of ['localAcceptKey', 'wordAcceptKey'] as const) {
+    const v = (value as Record<string, unknown>)[key];
+    if (v !== undefined && (typeof v !== 'string' || v.trim().length === 0)) {
+      throw new Error(`dsh-suggest-ghost: ${key} must be a non-empty shortcut string`);
+    }
+  }
+  if (value.dismissKey !== undefined && typeof value.dismissKey !== 'string') {
+    throw new Error('dsh-suggest-ghost: dismissKey must be a shortcut string (empty = off)');
   }
   if (value.llmEnabled !== undefined && typeof value.llmEnabled !== 'boolean') {
     throw new Error('dsh-suggest-ghost: llmEnabled must be a boolean');

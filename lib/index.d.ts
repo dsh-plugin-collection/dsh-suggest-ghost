@@ -60,6 +60,9 @@ export interface PluginConfigValues {
     completionPrompt: Volatile<string>;
     wordAccept: Volatile<boolean>;
     acceptKey: Volatile<string>;
+    localAcceptKey: Volatile<string>;
+    wordAcceptKey: Volatile<string>;
+    dismissKey: Volatile<string>;
     /** #157：幽灵显示时浮一行键位提示（默认开）。 */
     showKeyHint: Volatile<boolean>;
     regenEnabled: Volatile<boolean>;
@@ -207,7 +210,7 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
     /**
      * 幽灵显示时，在输入框顶部显示一行「当前键位」提示（#157，默认**关**）。
      *
-     * 文案由当前生效的 `acceptKey` / `regenKey` / `wordAccept` **动态拼出**，
+     * 文案由当前生效的**键位表**（`accept-key.ts` 的 `bindingTableFor`）动态拼出，
      * 改键后提示自动跟着变；语言跟随宿主界面语言。
      *
      * ⚠️ 默认关是**用户明确要求的**（2026-11-12，Gitea #157）：
@@ -235,6 +238,39 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      * 是本仓真实踩过的坑（`src/client/index.ts` 的 `parseAcceptKey` 注释）。
      */
     regenKey: z<string, string, "volatile-defined">;
+    /**
+     * 采纳**历史前缀补全 / 停顿续写**的快捷键 spec（默认 `Tab`）。
+     *
+     * 为什么单列一项而不是把 `acceptKey` 的作用域扩过去（Gitea #167 → 本单）：
+     * `acceptKey` 的含义已经写在用户手上（只管「下一条建议」），同一个值在两种形态上
+     * 解释不同 = 又说一套做一套。拆成两项之后每项各自说清自己管到哪。
+     *
+     * 允许配到字母键吗？**不允许**，但判据不在 schema 而在卡片录制端
+     * （`keyspec.ts` 的 `isSafeActionKey`）：这两个形态是**边打字边出幽灵**，
+     * 设成 `F` 就变成每打一个字母命中采纳、输入被建议吞掉。判据走函数而不是
+     * `regex` 收窄，是因为它要能给人话报错，而 schema 拒绝只会静默写不进去。
+     */
+    localAcceptKey: z<string, string, "volatile-defined">;
+    /**
+     * **逐词采纳**的快捷键 spec（默认 `Right` = 裸右方向键）。
+     *
+     * 旧实现这里没有设置项：`onKeyDown` 硬比 `event.code === 'ArrowRight'`，
+     * `wordAccept` 只是开关。默认值写 `Right` 而不是 `ArrowRight`——
+     * 前者是 `keyNameOfCode` 给出的显示名，录制端回放出来的字与存的值才一致
+     * （两者都能被 `keyCodeOf` 命中，但写 `ArrowRight` 会让卡片里显示成另一个词）。
+     */
+    wordAcceptKey: z<string, string, "volatile-defined">;
+    /**
+     * **关闭幽灵**的快捷键 spec（默认 `Escape`；**空串 = 本插件不接管关闭动作**）。
+     *
+     * 这一项是五个键位里唯一允许留空的：`min(1)` 会让「关掉这个动作」写不进去
+     * （与 `suggestionPrompt` 同一判据——空串是合法取值，不是缺失）。
+     *
+     * 为什么需要它：提示行一直写着「Esc 关闭」，而 `onKeyDown` 里**从来没有** Escape 分支
+     * ——那行字承诺的是一个不由本插件实现的键（`docs/keybinding-settings-design.md` §1.4-1）。
+     * 现在补上实现，并把键面交给用户；留空时提示行也不再出现这一句。
+     */
+    dismissKey: z<string, string, "volatile-defined">;
     /**
      * 建议语言模式：'auto' = 自动推断（结合 UI 语言 + 用户消息文字分布）；
      * 'zh' / 'zh-TW' / 'en' / 'ja' / 'ko' / 'ru' / 'fr' / 'de' / 'es' = 强制指定语言。
@@ -417,7 +453,7 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
     /**
      * 幽灵显示时，在输入框顶部显示一行「当前键位」提示（#157，默认**关**）。
      *
-     * 文案由当前生效的 `acceptKey` / `regenKey` / `wordAccept` **动态拼出**，
+     * 文案由当前生效的**键位表**（`accept-key.ts` 的 `bindingTableFor`）动态拼出，
      * 改键后提示自动跟着变；语言跟随宿主界面语言。
      *
      * ⚠️ 默认关是**用户明确要求的**（2026-11-12，Gitea #157）：
@@ -445,6 +481,39 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      * 是本仓真实踩过的坑（`src/client/index.ts` 的 `parseAcceptKey` 注释）。
      */
     regenKey: z<string, string, "volatile-defined">;
+    /**
+     * 采纳**历史前缀补全 / 停顿续写**的快捷键 spec（默认 `Tab`）。
+     *
+     * 为什么单列一项而不是把 `acceptKey` 的作用域扩过去（Gitea #167 → 本单）：
+     * `acceptKey` 的含义已经写在用户手上（只管「下一条建议」），同一个值在两种形态上
+     * 解释不同 = 又说一套做一套。拆成两项之后每项各自说清自己管到哪。
+     *
+     * 允许配到字母键吗？**不允许**，但判据不在 schema 而在卡片录制端
+     * （`keyspec.ts` 的 `isSafeActionKey`）：这两个形态是**边打字边出幽灵**，
+     * 设成 `F` 就变成每打一个字母命中采纳、输入被建议吞掉。判据走函数而不是
+     * `regex` 收窄，是因为它要能给人话报错，而 schema 拒绝只会静默写不进去。
+     */
+    localAcceptKey: z<string, string, "volatile-defined">;
+    /**
+     * **逐词采纳**的快捷键 spec（默认 `Right` = 裸右方向键）。
+     *
+     * 旧实现这里没有设置项：`onKeyDown` 硬比 `event.code === 'ArrowRight'`，
+     * `wordAccept` 只是开关。默认值写 `Right` 而不是 `ArrowRight`——
+     * 前者是 `keyNameOfCode` 给出的显示名，录制端回放出来的字与存的值才一致
+     * （两者都能被 `keyCodeOf` 命中，但写 `ArrowRight` 会让卡片里显示成另一个词）。
+     */
+    wordAcceptKey: z<string, string, "volatile-defined">;
+    /**
+     * **关闭幽灵**的快捷键 spec（默认 `Escape`；**空串 = 本插件不接管关闭动作**）。
+     *
+     * 这一项是五个键位里唯一允许留空的：`min(1)` 会让「关掉这个动作」写不进去
+     * （与 `suggestionPrompt` 同一判据——空串是合法取值，不是缺失）。
+     *
+     * 为什么需要它：提示行一直写着「Esc 关闭」，而 `onKeyDown` 里**从来没有** Escape 分支
+     * ——那行字承诺的是一个不由本插件实现的键（`docs/keybinding-settings-design.md` §1.4-1）。
+     * 现在补上实现，并把键面交给用户；留空时提示行也不再出现这一句。
+     */
+    dismissKey: z<string, string, "volatile-defined">;
     /**
      * 建议语言模式：'auto' = 自动推断（结合 UI 语言 + 用户消息文字分布）；
      * 'zh' / 'zh-TW' / 'en' / 'ja' / 'ko' / 'ru' / 'fr' / 'de' / 'es' = 强制指定语言。
