@@ -323,7 +323,7 @@ run('上界按真宿主实测分布取值，不是按快样本的算术', () => 
   );
 });
 
-run('设置页字段集合与基线一致（#108 之后共 34 项，含两个推理档位、流式投递、路由继承、两个生成中指示开关、#157 键位提示与 #182 两个提示词模板）', () => {
+run('设置页字段集合与基线一致（共 37 项：两个推理档位、流式投递、路由继承、两个生成中指示开关、键位提示、两个提示词模板，以及五个键位项）', () => {
   const hostSource = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta.url)), 'utf8');
   // 只截 `const EditableFields = {` 这个对象字面量本身：从起始 brace 找到它自己的
   // `};`。上一版在这里用 indexOf('/** 配置 schema') 取右边界，而源码里那句写在
@@ -388,6 +388,13 @@ run('设置页字段集合与基线一致（#108 之后共 34 项，含两个推
     // 配额与冷却是常量、**刻意不是**字段（它们是安全边界，可配就等于把「连按刷调用」的上限
     // 交给用户关掉，取舍见 `src/regen.ts` 模块头）。顺序必须与 `EditableFields` 一致。
     'regenEnabled', 'regenKey',
+    // 键位三兄弟（本单，声明在 `regenKey` 之后）：**历史/续写的采纳键**、**逐词采纳键**、
+    // **关闭幽灵键**。与 `acceptKey` / `regenKey` 同族 ⇒ schema / generate 两处 readVolatile /
+    // live-settings 键表 / 设置卡 / 客户端解析**五处**都登记，集合比对单独钉在
+    // `scripts/keybinding-registration-smoke.mjs`。
+    // 这一项进基线同时意味着一次语义变更：`dismissKey` 之前**没有**设置项，
+    // 而提示行一直写着「Esc 关闭」——现在那句话有了实现，也允许用户留空关掉。
+    'localAcceptKey', 'wordAcceptKey', 'dismissKey',
     'languageMode', 'uiLocaleWeight', '_ops', '_push', '_hot', '_residual',
   ];
   assert.deepEqual(

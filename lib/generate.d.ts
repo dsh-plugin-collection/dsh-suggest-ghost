@@ -99,6 +99,12 @@ export interface EditableConfig {
     historyMinChars?: Volatile<number> | number;
     wordAccept?: Volatile<boolean> | boolean;
     acceptKey?: Volatile<string> | string;
+    /** 历史补全 / 停顿续写的采纳键 spec。纯客户端判据，host 只负责把它带到 describe() 里。 */
+    localAcceptKey?: Volatile<string> | string;
+    /** 逐词采纳键 spec（默认 `Right`）。 */
+    wordAcceptKey?: Volatile<string> | string;
+    /** 关闭幽灵键 spec；空串 = 不接管（唯一允许空的一项）。 */
+    dismissKey?: Volatile<string> | string;
     languageMode?: Volatile<string> | string;
     uiLocaleWeight?: Volatile<number> | number;
     inlineEnabled?: Volatile<boolean> | boolean;
@@ -132,6 +138,9 @@ export type FlatConfig = Config & {
     historyMinChars: number;
     wordAccept: boolean;
     acceptKey: string;
+    localAcceptKey: string;
+    wordAcceptKey: string;
+    dismissKey: string;
     languageMode: string;
     uiLocaleWeight: number;
     inlineEnabled: boolean;

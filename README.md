@@ -73,9 +73,10 @@ dsh plugin --profile web add .
 
 | 分组 | 字段 |
 |---|---|
-| LLM 下一条建议 | 启用开关、输出令牌上限、建议字符上限、参考回合数、转录字符预算、超时（毫秒）、采纳快捷键、provider / model 路由（留空继承主请求）、**建议推理档位 `suggestionReasoningEffort`（默认为空 = 不传）**、**建议提示词 `suggestionPrompt`（默认为空 = 内置模板）** |
+| LLM 下一条建议 | 启用开关、输出令牌上限、建议字符上限、参考回合数、转录字符预算、超时（毫秒）、provider / model 路由（留空继承主请求）、**建议推理档位 `suggestionReasoningEffort`（默认为空 = 不传）**、**建议提示词 `suggestionPrompt`（默认为空 = 内置模板）** |
 | 停顿续写 | 启用开关、停顿时长（默认 100ms）、最少输入字符（停顿续写）、续写长度上限、**续写推理档位 `completionReasoningEffort`（默认为空 = 不传）**、**续写提示词 `completionPrompt`（默认为空 = 内置模板）** |
-| 历史前缀补全 | 启用开关、跨会话搜索、最大历史条目、最少输入字符（历史补全）、逐词采纳 |
+| 历史前缀补全 | 启用开关、跨会话搜索、最大历史条目、最少输入字符（历史补全）|键位在「键位」分组 |
+| 键位 | **五个动作全部可自定义**：`acceptKey`（下一条建议的采纳）、`localAcceptKey`（历史补全 / 停顿续写的采纳，默认 Tab）、`wordAcceptKey`（逐词采纳，默认 `→`）、`regenKey`（换一条，默认 `Alt+G`）、`dismissKey`（关闭幽灵，默认 `Esc`，**留空 = 不接管这个动作**）；另有两个开关（逐词采纳、换一条）与「键位提示」开关。分区顶部有一行**当前生效**摘要，读的就是按键时那张仲裁表 |
 | 热度管理 | 跨会话高频短语列表：固定（不参与淘汰、候选恒置顶）、删除、手工新增（默认固定）、清空全部——即时生效，无需保存 |
 
 **推理档位为什么默认留空**：`reasoningEffort` 是**按 provider、按 model** 声明的，不是全局开关。
@@ -105,7 +106,11 @@ dsh plugin --profile web add .
     contextSummaryEnabled: true  # 长会话摘要开关（旧消息被裁剪时提取摘要）
     contextSummaryChars: 1500    # 摘要字符预算
     maxSuggestionChars: 240    # 建议可见字符上限
-    acceptKey: Tab             # 采纳快捷键
+    acceptKey: Tab             # 下一条建议的采纳快捷键
+    localAcceptKey: Tab        # 历史补全 / 停顿续写的采纳快捷键
+    wordAcceptKey: Right       # 逐词采纳快捷键（显示名 Right = 裸右方向键）
+    dismissKey: Escape         # 关闭幽灵的快捷键（留空 = 不接管这个动作）
+    regenKey: Alt+G            # 「换一条」快捷键
     llmEnabled: true           # LLM 建议开关
     suggestionReasoningEffort: ''  # 建议调用的推理档位（默认为空 = 不传 = 沿用路由默认）
     completionReasoningEffort: ''  # 续写调用的推理档位（同上）
