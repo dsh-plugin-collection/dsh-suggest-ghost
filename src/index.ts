@@ -72,6 +72,7 @@ import { createLiveSettings } from './live-settings.js';
 import { parseHotnessOps, setupHotnessPersistence } from './hotness-store.js';
 import type { ParsedOpsResult } from './hotness-store.js';
 import { applySuggestGhostProjection, initSuggestGhostProjection, suggestGhostSchema } from './projection.js';
+import { PROMPT_MAX_CHARS, promptSource } from './prompt-override.js';
 import { EMPTY_PUSH, mergeLiveConfig, SUGGEST_GHOST_NAMESPACE } from './settings.js';
 import { prefixSafeClean } from './sanitize.js';
 import { GhostStreamHub } from './stream.js';
@@ -235,6 +236,23 @@ const EditableFields = {
    * 之后没人等。想压续写的首块延迟，先在这里填一个**该模型声明过**的档位。
    */
   completionReasoningEffort: z.string().default('').volatile(),
+  /**
+   * 「下一条建议」的提示词（Gitea #182）。**默认空串 = 内置模板逐字不变**。
+   *
+   * 三条与 `completionReasoningEffort` 同族的判据，都因为同一个理由：
+   *  - 不能写 `min(1)`：空串是这一项的**默认形态**（= 用内置），必填等于把插件逼成
+   *    「不抄一份提示词就不能启动」，而「清空回内置」这条路径会当场写不进去；
+   *  - `.max(PROMPT_MAX_CHARS)`：唯一的硬上限在 schema，卡片只是提前挡一道（写失败时
+   *    卡片的 `save()` 读不到结论，表现是「点了保存、值没变」，所以必须客户端先拦）；
+   *  - 必须标 `.volatile()`：内核 `SettingsForms.write()` 只接受 volatile 路径，
+   *    非 volatile 直接抛（与 `_ops` / `_push` 那几个载体同一判据）。
+   *
+   * 展开规则（`{{builtin}}` / `{{language}}` / `{{maxChars}}`）与续写路径共用
+   * `src/prompt-override.ts`，推导见 `docs/editable-prompt-design.md`。
+   */
+  suggestionPrompt: z.string().max(PROMPT_MAX_CHARS).default('').volatile(),
+  /** 停顿续写的提示词，语义同 `suggestionPrompt`（内置的是 `inlinePrompt()`）。 */
+  completionPrompt: z.string().max(PROMPT_MAX_CHARS).default('').volatile(),
   /** 幽灵显示时允许 → 逐词采纳。 */
   wordAccept: z.boolean().default(true).volatile(),
   /**
@@ -363,6 +381,10 @@ export interface PluginConfigValues {
   inlineMinChars: Volatile<number>;
   inlineMaxChars: Volatile<number>;
   completionReasoningEffort: Volatile<string>;
+  // 提示词模板（Gitea #182）。类型必须是 `Volatile<string>` 而不是裸值，理由与本接口
+  // 头部那条相同；读值一律走 `flattenConfig()` 的 `readVolatile()`。
+  suggestionPrompt: Volatile<string>;
+  completionPrompt: Volatile<string>;
   wordAccept: Volatile<boolean>;
   acceptKey: Volatile<string>;
   /** #157：幽灵显示时浮一行键位提示（默认开）。 */
@@ -1599,7 +1621,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
             // #137：dropped 这一支也带判定入参与结论——「生成了但被净化链丢弃」时，
             // language=/uiLocale= 是唯一还能证明「当时界面语言到没到」的读数
             // （本轮注入实测：①「从未捎带」那一发正落在这条支上，不补键就重新变成静默）。
-            traceOps(`completion dropped (empty or filtered) session=${sessionId} draftChars=${draftChars} in ${elapsedMs}ms ${stream} at=${Date.now()}${languageTraceKeys({ language: value.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })}`);
+            traceOps(`completion dropped (empty or filtered) session=${sessionId} draftChars=${draftChars} in ${elapsedMs}ms ${stream} at=${Date.now()}${languageTraceKeys({ language: value.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })} prompt=${value.promptSource}`);
             return;
           }
           cacheCompletion(sessionId, draft, value.text);
@@ -1611,7 +1633,7 @@ export function apply(ctx: Context, config: GenerateConfig): void {
           // 只打字符数：续写正文是模型对用户草稿的模仿，抄进 tee 日志等于把用户输入的第二份副本落到盘上。
           // #137：行尾追加语言判定的入参与结论（既有键序与前缀一字未动，`sandbox.greps`
           // 与 dev-sandbox 的抓行照旧命中）。只打标签与毫秒数，不打正文。
-          traceOps(`completion generated session=${sessionId} draftChars=${draftChars} chars=${value.text.length} in ${elapsedMs}ms ${stream} at=${Date.now()}${languageTraceKeys({ language: value.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })}`);
+          traceOps(`completion generated session=${sessionId} draftChars=${draftChars} chars=${value.text.length} in ${elapsedMs}ms ${stream} at=${Date.now()}${languageTraceKeys({ language: value.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })} prompt=${value.promptSource}`);
         },
       },
       {
@@ -3455,10 +3477,12 @@ export function apply(ctx: Context, config: GenerateConfig): void {
             + ` on=${effective().streamingDelivery ? 1 : 0} subs=${streamHub.channelCount}`;
           if (result.suggestion === undefined) {
             // #137：与续写那两行同口径——四条产出行（generated/dropped × 建议/续写）都带键。
-            traceOps(`suggestion dropped (empty or filtered) session=${session.id} turn=${turn} in ${Date.now() - genStartedAt}ms ${stream}${streamGate()} at=${Date.now()}${languageTraceKeys({ language: result.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })}`);
+            traceOps(`suggestion dropped (empty or filtered) session=${session.id} turn=${turn} in ${Date.now() - genStartedAt}ms ${stream}${streamGate()} at=${Date.now()}${languageTraceKeys({ language: result.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })} prompt=${result.promptSource}`);
           } else {
             // #137：行尾追加语言判定的入参与结论（与续写那条同键同名，既有键序未动）。
-            traceOps(`suggestion generated session=${session.id} turn=${turn} chars=${result.suggestion.text.length} frame=${String(result.suggestion.frame ?? 1)} in ${Date.now() - genStartedAt}ms ${stream}${streamGate()} at=${Date.now()}${languageTraceKeys({ language: result.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })}`);
+            // #182：再行尾追加 `prompt=`，回答「这一轮用的是内置还是自定义提示词」——
+            // 判据来自生成侧的返回值而不是这里再读一次配置，理由见 generate.ts 的同名字段。
+            traceOps(`suggestion generated session=${session.id} turn=${turn} chars=${result.suggestion.text.length} frame=${String(result.suggestion.frame ?? 1)} in ${Date.now() - genStartedAt}ms ${stream}${streamGate()} at=${Date.now()}${languageTraceKeys({ language: result.language, uiLocale: genUiLocale, uiLocaleAgeMs: genUiLocaleAgeMs })} prompt=${result.promptSource}`);
           }
           // 流式收口：**终帧之后上面那次 `_push` 照旧发生**（权威态不因开流而省掉）。
           // 空建议/被过滤时只关订阅、不发空终帧 ⇒ 客户端等 `_push` 的 null 去清幽灵。

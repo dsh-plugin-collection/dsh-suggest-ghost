@@ -56,6 +56,8 @@ export interface PluginConfigValues {
     inlineMinChars: Volatile<number>;
     inlineMaxChars: Volatile<number>;
     completionReasoningEffort: Volatile<string>;
+    suggestionPrompt: Volatile<string>;
+    completionPrompt: Volatile<string>;
     wordAccept: Volatile<boolean>;
     acceptKey: Volatile<string>;
     /** #157：幽灵显示时浮一行键位提示（默认开）。 */
@@ -183,6 +185,23 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      * 之后没人等。想压续写的首块延迟，先在这里填一个**该模型声明过**的档位。
      */
     completionReasoningEffort: z<string, string, "volatile-defined">;
+    /**
+     * 「下一条建议」的提示词（Gitea #182）。**默认空串 = 内置模板逐字不变**。
+     *
+     * 三条与 `completionReasoningEffort` 同族的判据，都因为同一个理由：
+     *  - 不能写 `min(1)`：空串是这一项的**默认形态**（= 用内置），必填等于把插件逼成
+     *    「不抄一份提示词就不能启动」，而「清空回内置」这条路径会当场写不进去；
+     *  - `.max(PROMPT_MAX_CHARS)`：唯一的硬上限在 schema，卡片只是提前挡一道（写失败时
+     *    卡片的 `save()` 读不到结论，表现是「点了保存、值没变」，所以必须客户端先拦）；
+     *  - 必须标 `.volatile()`：内核 `SettingsForms.write()` 只接受 volatile 路径，
+     *    非 volatile 直接抛（与 `_ops` / `_push` 那几个载体同一判据）。
+     *
+     * 展开规则（`{{builtin}}` / `{{language}}` / `{{maxChars}}`）与续写路径共用
+     * `src/prompt-override.ts`，推导见 `docs/editable-prompt-design.md`。
+     */
+    suggestionPrompt: z<string, string, "volatile-defined">;
+    /** 停顿续写的提示词，语义同 `suggestionPrompt`（内置的是 `inlinePrompt()`）。 */
+    completionPrompt: z<string, string, "volatile-defined">;
     /** 幽灵显示时允许 → 逐词采纳。 */
     wordAccept: z<boolean, boolean, "volatile-defined">;
     /**
@@ -376,6 +395,23 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
      * 之后没人等。想压续写的首块延迟，先在这里填一个**该模型声明过**的档位。
      */
     completionReasoningEffort: z<string, string, "volatile-defined">;
+    /**
+     * 「下一条建议」的提示词（Gitea #182）。**默认空串 = 内置模板逐字不变**。
+     *
+     * 三条与 `completionReasoningEffort` 同族的判据，都因为同一个理由：
+     *  - 不能写 `min(1)`：空串是这一项的**默认形态**（= 用内置），必填等于把插件逼成
+     *    「不抄一份提示词就不能启动」，而「清空回内置」这条路径会当场写不进去；
+     *  - `.max(PROMPT_MAX_CHARS)`：唯一的硬上限在 schema，卡片只是提前挡一道（写失败时
+     *    卡片的 `save()` 读不到结论，表现是「点了保存、值没变」，所以必须客户端先拦）；
+     *  - 必须标 `.volatile()`：内核 `SettingsForms.write()` 只接受 volatile 路径，
+     *    非 volatile 直接抛（与 `_ops` / `_push` 那几个载体同一判据）。
+     *
+     * 展开规则（`{{builtin}}` / `{{language}}` / `{{maxChars}}`）与续写路径共用
+     * `src/prompt-override.ts`，推导见 `docs/editable-prompt-design.md`。
+     */
+    suggestionPrompt: z<string, string, "volatile-defined">;
+    /** 停顿续写的提示词，语义同 `suggestionPrompt`（内置的是 `inlinePrompt()`）。 */
+    completionPrompt: z<string, string, "volatile-defined">;
     /** 幽灵显示时允许 → 逐词采纳。 */
     wordAccept: z<boolean, boolean, "volatile-defined">;
     /**

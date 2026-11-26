@@ -323,7 +323,7 @@ run('上界按真宿主实测分布取值，不是按快样本的算术', () => 
   );
 });
 
-run('设置页字段集合与基线一致（#108 之后共 32 项，含两个推理档位、流式投递、路由继承、两个生成中指示开关与 #157 键位提示）', () => {
+run('设置页字段集合与基线一致（#108 之后共 34 项，含两个推理档位、流式投递、路由继承、两个生成中指示开关、#157 键位提示与 #182 两个提示词模板）', () => {
   const hostSource = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta.url)), 'utf8');
   // 只截 `const EditableFields = {` 这个对象字面量本身：从起始 brace 找到它自己的
   // `};`。上一版在这里用 indexOf('/** 配置 schema') 取右边界，而源码里那句写在
@@ -371,6 +371,12 @@ run('设置页字段集合与基线一致（#108 之后共 32 项，含两个推
     'historyEnabled', 'historyCrossSession',
     'historyMaxEntries', 'historyMinChars',
     'inlineEnabled', 'inlineDelayMs', 'inlineMinChars', 'inlineMaxChars', 'completionReasoningEffort',
+    // #182 两条（提示词模板，声明在 `completionReasoningEffort` 之后、`wordAccept` 之前）：
+    // **默认空串 = 内置模板逐字不变**，所以它们进基线不改变任何默认行为。
+    // 与档位同族：schema / generate 两处 readVolatile / live-settings 键表 / 设置卡四处都登记，
+    // 漏任一处就是「设置页改了不生效」那个老形状（#19）。展开规则单点在
+    // `src/prompt-override.ts`，判据钉在 `scripts/prompt-override-smoke.mjs`。
+    'suggestionPrompt', 'completionPrompt',
     'wordAccept',
     // #157：幽灵显示时的就地键位提示（默认开）。**只影响一行小字**：不参与生成、
     // 不进提示词、不改采纳语义。进 schema / live-settings 键表 / 设置卡 / 客户端解析四处，
