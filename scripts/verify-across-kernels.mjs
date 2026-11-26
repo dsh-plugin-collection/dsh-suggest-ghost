@@ -239,6 +239,119 @@ try {
       reason: regs instanceof Map ? 'registrations 里没有该 key' : 'sessionProjections.registrations 不是 Map（可能未组合）',
     };
   }
+  // ── 判据 4：设置面（本单新增：五个键位里三个是新 volatile 配置项）──────────
+  //
+  // 装配绿 ≠ 用户改得动键。键位设置要真的生效，必须同时满足：
+  //   (a) 该代次把这三个键**投影**进了设置面（0.1.7 起 = 内核把插件 Config 的
+  //       'volatile' 字段投成表单；≤0.1.5 命名空间是本插件自己 register 的
+  //       TransportSchema，只有 4 个 JSON 串，**天然没有这些键**）；
+  //   (b) 该代次的 settings.update() 收得下这个写入（内核 'SettingsForms.write'
+  //       只接受 volatile 路径，且 'dismissKey: ''' 是**空串合法**的新形态）；
+  //   (c) 写完**再读**能拿回新值，且插件自己的实时合并层（pickLiveSettings +
+  //       mergeLiveConfig）把它带进 effective() —— 这才是「改了立即生效」，
+  //       不是「值存下了但生成路径还读 boot 快照」（#19 那个老形状）。
+  // 观测面全部走**真服务对象**，不 grep 文本。
+  try {
+    const NS = 'suggest-ghost';
+    const NEW_KEYS = ['localAcceptKey', 'wordAcceptKey', 'dismissKey'];
+    const svc = ctx.get?.('settings') ?? null;
+    const desc0 = typeof svc?.describe === 'function' ? svc.describe() : null;
+    const rows = (v) => {
+      if (!v) return null;
+      if (Array.isArray(v)) return v;
+      if (Array.isArray(v.namespaces)) return v.namespaces;
+      if (v instanceof Map) return [...v.values()];
+      return null;
+    };
+    const entry = (rows(desc0) ?? []).find((r) => (r && (r.ns ?? r.namespace ?? r.id)) === NS) ?? null;
+    const keys0 = entry ? Object.keys(entry.value ?? entry.config ?? entry.fields ?? {}) : [];
+    // 写一笔：两个非空 + 一个空串（空串是 dismissKey 的合法「不接管」取值，
+    // 如果哪一代把空串吞成缺失，(c) 的读回会露出来）。
+    let threw = null;
+    let attempts = 0;
+    // 就绪重试：合成 boot 里 profile 的 hmr 之类条目可能还没激活，此时 settings.update()
+    // 抛的是**启动期警告**（"1 entry did not activate / requires application readiness"），
+    // 与「这个键被 schema 拒」是两件事。混成一件就会把量具问题报成插件回归。
+    const notReady = (m) => /did not activate|readiness|pending|not started|activat/i.test(String(m ?? ''));
+    try {
+      if (typeof svc?.update === 'function') {
+        // 必须 await：0.2.2 上 update() 走 config-editor 的异步事务，
+        // 不 await 的拒绝是 unhandled rejection —— 它会把 worker 进程在回报之前带走
+        // （实测：rc.5 那一次 workerExit=1、marker 没打出来，红得毫无信息量）。
+        for (let i = 0; i < 4; i += 1) {
+          attempts += 1;
+          try {
+            await svc.update(NS, { localAcceptKey: 'F9', wordAcceptKey: 'Up', dismissKey: '' });
+            threw = null;
+            break;
+          } catch (e) {
+            threw = String((e && e.message) ?? e).slice(0, 200);
+            if (!notReady(threw)) break;
+            await new Promise((r) => setTimeout(r, 400));
+          }
+        }
+      } else if (typeof svc?.set === 'function') {
+        await svc.set(NS, { localAcceptKey: 'F9', wordAcceptKey: 'Up', dismissKey: '' });
+      } else {
+        threw = 'no-update-api';
+      }
+    } catch (e) { threw = String((e && e.message) ?? e).slice(0, 160); }
+    await new Promise((r) => setTimeout(r, 120));
+    const desc1 = typeof svc?.describe === 'function' ? svc.describe() : null;
+    const entry1 = (rows(desc1) ?? []).find((r) => (r && (r.ns ?? r.namespace ?? r.id)) === NS) ?? null;
+    const val1 = (entry1 && (entry1.value ?? entry1.config ?? entry1.fields)) ?? {};
+    // (c) 读回 + 插件自己的实时合并层
+    let merged = null, mergeErr = null;
+    try {
+      const ls = await import(pathToFileURL(join(pluginRoot, 'lib', 'live-settings.js')).href);
+      const gen = await import(pathToFileURL(join(pluginRoot, 'lib', 'generate.js')).href);
+      const picked = typeof ls.pickLiveSettings === 'function' ? ls.pickLiveSettings(desc1, NS) : null;
+      merged = {
+        pickedKeys: picked ? Object.keys(picked) : null,
+        hasNewKeys: picked ? NEW_KEYS.filter((k) => Object.hasOwn(picked, k)) : [],
+      };
+      if (picked && typeof gen.mergeLiveConfig === 'function') {
+        const eff = gen.mergeLiveConfig({ provider: '', model: '' }, picked);
+        merged.after = {
+          localAcceptKey: eff.localAcceptKey, wordAcceptKey: eff.wordAcceptKey,
+          dismissKey: eff.dismissKey,
+        };
+      }
+    } catch (e) { mergeErr = String((e && e.message) ?? e).slice(0, 160); }
+    result.settings = {
+      reported: true,
+      hasService: !!svc,
+      api: svc ? (typeof svc.update === 'function' ? 'update' : typeof svc.set === 'function' ? 'set' : 'none') : 'none',
+      attempts, notReady: threw !== null && notReady(threw),
+      nsFound: !!entry,
+      projected: NEW_KEYS.filter((k) => keys0.includes(k)),
+      writeThrew: threw,
+      readBack: { localAcceptKey: val1.localAcceptKey, wordAcceptKey: val1.wordAcceptKey, dismissKey: val1.dismissKey },
+      // 诊断（skill §1c：先打原始载荷再谈逻辑）。0.2.2 的 write() 判据是
+      // configEditor.entries().find(row => row.options.id === ns) **且** schema(entry) 存在，
+      // 两者缺一个都抛同一句 "No configurable plugin entry" ⇒ 必须分开看是哪种。
+      entries: (() => {
+        try {
+          const es = ctx.configEditor?.entries?.() ?? ctx.get?.('configEditor')?.entries?.() ?? null;
+          if (!Array.isArray(es)) return { shape: es === null ? 'absent' : typeof es, ids: [] };
+          return {
+            shape: 'array',
+            count: es.length,
+            ids: es.map((e) => String(e?.options?.id ?? e?.id ?? '?')),
+            ghost: es.map((e) => ({
+              id: String(e?.options?.id ?? '?'),
+              name: String(e?.options?.name ?? e?.meta?.name ?? '?'),
+              kind: String(e?.kind ?? '?'),
+            })).filter((e) => /ghost/i.test(e.id + e.name)),
+          };
+        } catch (e) { return { shape: 'error', error: String((e && e.message) ?? e).slice(0, 120) }; }
+      })(),
+      merged, mergeErr,
+    };
+  } catch (e) {
+    result.settings = { reported: true, hasService: false, api: 'error', error: String((e && e.message) ?? e).slice(0, 160) };
+  }
+
   result.events = readEvents(home);
   try { await ctx.fiber?.dispose?.(); } catch { /* 释放失败不改写结论 */ }
   result.ok = true;
@@ -421,6 +534,7 @@ async function runOne(version) {
     // ── 判据 3：真跑一次「回合结束 → 生成建议」需要模型，成本与不确定性都高，
     // 这里**不做**（见文件尾"未验证"一节）。本脚本只声明它验证了装配面与注册面。
     record.projection = { ...registered, shapes, applyRan, loaderMounted };
+    record.settings = WORKER.settings ?? { reported: false };
 
     // 双判语义标注：这一代的内核到底按哪份声明判准入。
     // 实测分水岭（gate-runner scripts/cross-kernel/out/gate.json）：0.2.1-rc.2 起才读
@@ -490,7 +604,79 @@ async function runOne(version) {
   const p = record.projection ?? {};
   const assemblyOk = !!p.applyRan;
   const projectionOk = !!p.found && !!(p.shapes?.modernShape || p.shapes?.legacyShape);
-  record.verdict = (record.leak || record.assemblyError) ? 'RED' : (assemblyOk && projectionOk ? 'GREEN' : 'RED');
+
+  // ── 判据 4：键位设置面（Gitea #157 续 / PR !186 新增的三个 volatile 键）──────
+  //
+  // 三条分档，**不能压成"绿/红"两档**：
+  //  - APPLIED：该代次把三键投进设置面、写进去、读回来，且插件自己的实时合并层
+  //    （pickLiveSettings + mergeLiveConfig）把值带进 effective() ⇒ 改键真的生效；
+  //  - LEGACY-NO-SURFACE：该代次的命名空间是插件自己 register 的 TransportSchema
+  //    （只有 4 个 JSON 串），**没有这些键可写** ⇒ 改键在该代次不可用，
+  //    但**功能必须仍按默认值工作**（客户端兜底）。这是**代次差异**，不是本单的缺陷，
+  //    也不是"通过"——按 §2 的口径记 **UNDETERMINED**，并在 notes 里写明是哪一种。
+  //  - BROKEN：有写面却写不进 / 读不回 / 合并层丢值 ⇒ **RED**（本单引入的回归）。
+  // try 里那行赋值在未跑到之前不存在；判定块必须无条件可跑
+  // —— 一代的读数缺失不该把整条命令崩掉（那会把「有代未判定」报成「工具坏了」）。
+  record.settings ??= { reported: false };
+  const st = record.settings.reported ? record.settings : null;
+  let settingsState = 'UNKNOWN';
+  if (st && st.error) settingsState = 'BROKEN';
+  else if (st && st.hasService && st.projected.length === 3 && st.writeThrew === null) {
+    const back = st.readBack ?? {};
+    const merged = st.merged?.after ?? {};
+    const roundTrip = back.localAcceptKey === 'F9' && back.wordAcceptKey === 'Up' && back.dismissKey === '';
+    const mergedOk = merged.localAcceptKey === 'F9' && merged.wordAcceptKey === 'Up' && merged.dismissKey === '';
+    settingsState = roundTrip && mergedOk ? 'APPLIED' : 'BROKEN';
+    if (!roundTrip) record.notes.push(`设置写回不匹配：readBack=${JSON.stringify(back)}`);
+    else if (!mergedOk) record.notes.push(`写进去了但 effective() 没拿到（#19 那一类）：merged=${JSON.stringify(merged)}`);
+    if (st.merged?.mergeErr) record.notes.push(`合并层读取失败：${st.merged.mergeErr}`);
+  } else if (st?.hasService && st.projected.length === 0 && st.writeThrew === null
+    && st.readBack?.localAcceptKey === 'F9') {
+    // 老代次（0.1.2 / 0.1.5）：命名空间是插件自己 register 的 TransportSchema
+    // （只有 4 个 JSON 串），所以三键**不在投影里**；但实测 update() 不拒、
+    // describe() 读得回来 ⇒ 值**存得下也读得到**（legacy 存储不裁未知键）。
+    // 宿主合并层拿不到它们（pickLiveSettings 按新代次的行形状取值 ⇒ pickedKeys=[]），
+    // 但这三键是**纯客户端判据**、宿主本来就不读，客户端读的是
+    // remote.settings.describe()（有值即生效，兜底见 src/client/index.ts）⇒ 无影响。
+    settingsState = 'LEGACY-STORED-NOT-PROJECTED';
+    record.notes.push('老代次：三键不在注册 schema 内，但写得进、读得回 ⇒ 改键可用（客户端读 describe 有值即生效）；'
+      + '宿主合并层取不到这三键，而它们是纯客户端判据 ⇒ 无影响');
+  } else if (st?.hasService && st.projected.length === 0) {
+    settingsState = 'LEGACY-NO-SURFACE';
+  } else if (st && st.projected?.length === 3 && /No configurable plugin entry/i.test(String(st.writeThrew ?? ''))) {
+    // **拆成两个子判据，别把量具的边界报成插件的结论**：
+    //  - 投影面（describe 里有没有这三个键）⇒ 本代**已判定 = 有**；
+    //  - 写面（update 收不收）⇒ 本 harness 把插件装成实体副本 + patch 层，
+    //    不是 profile 里可配置的 bundle 条目，内核因此直接拒
+    //    （"No configurable plugin entry"）。这是**合成启动的固有限制**。
+    //    写面在真实例上已实测通过：沙箱 web 实例（0.2.2-rc.5）里把 localAcceptKey 改成
+    //    F7 → 保存 → 硬刷新仍是 F7（见 PR 的 GUI 取证）。
+    settingsState = 'PROJECTED-WRITE-BLOCKED-BY-HARNESS';
+    record.notes.push('投影面已判定（三键都在设置面上）；写面本 harness 测不了（无该条目的可配置入口，'
+      + '既有的 _ops/acceptKey 写同样测不了）⇒ 写面未判定，真实例读数见台账');
+  } else if (st?.notReady) {
+    // 量具/环境问题，不是插件问题：写面存在、键也投影了，只是合成 boot 里条目未激活。
+    settingsState = 'ENV-NOT-READY';
+    record.notes.push(`设置写入被启动期未就绪挡住（attempts=${st.attempts}）：${String(st.writeThrew).slice(0, 110)} ⇒ 该代判未判定，不算插件回归`);
+  } else if (st) {
+    settingsState = st.api === 'none' ? 'LEGACY-NO-SURFACE' : 'BROKEN';
+    record.notes.push(`设置面异常：${JSON.stringify({ api: st.api, nsFound: st.nsFound, writeThrew: st.writeThrew })}`);
+  }
+  record.settings.state = settingsState;
+
+  record.verdict = (record.leak || record.assemblyError) ? 'RED'
+    : settingsState === 'BROKEN' ? 'RED'
+    : (assemblyOk && projectionOk) ? 'GREEN'
+    : 'RED';
+  // ⚠️ 总体判定**只由装配面 + 投影面决定**（这两面本 harness 有真判据）。
+  // 设置面单列一列报出去，理由见下：合成启动是通过 patch 的 include 把插件装进来的，
+  // `configEditor.entries()` 里 99 个条目**没有 suggest-ghost**（实测 ghost=[]），
+  // 而内核的 write() 要求「存在 options.id===ns 的可配置条目且有 schema」
+  // （dsh-settings/lib/index.js:501-504）⇒ 写面在这里根本测不了，
+  // **连既有的 _ops / acceptKey 写也一样**（不是本单引入的缺口）。
+  // 把它计入总体会让 9 代全部从绿变「未判定」，那等于用一把测不到的尺子覆盖掉已有的信号。
+  // ⇒ 设置面的状态在表里单列，并在汇总里明说「写面未判定」；真实例读数见台账。
+  if (settingsState === 'UNKNOWN') record.notes.push('worker 没回报设置面读数 ⇒ 该代未判定');
   if (!assemblyOk) record.notes.push('apply() 没有落痕（插件可能没被装配）');
   if (!p.found) record.notes.push(`投影单元 ${PROJECTION_KEY} 未在 sessionProjections 上注册（${p.reason ?? '未知'}）`);
   else if (!projectionOk) {
@@ -527,7 +713,11 @@ for (const v of VERSIONS) {
   const r = await runOne(v);
   results.push(r);
   if (r.verdict === 'UNDETERMINED') { console.log('未判定'); for (const n of r.notes) console.log(`      · ${n}`); continue; }
-  console.log(r.verdict === 'GREEN' ? 'GREEN' : 'RED');
+  console.log(r.verdict === 'GREEN' ? 'GREEN' : r.verdict === 'UNDETERMINED' ? 'UNDETERMINED' : 'RED');
+  if (r.settings) console.log(`    设置面(单列)=${r.settings.state}`
+    + ` · api=${r.settings.api ?? '-'} · 投影键=${JSON.stringify(r.settings.projected ?? null)}`
+    + ` · 读回=${JSON.stringify(r.settings.readBack ?? null)}`
+    + ` · effective=${JSON.stringify(r.settings.merged?.after ?? null)}`);
   const sh = r.projection?.shapes;
   console.log(`    内核=${r.runtime} · 启动器=${r.launcher} · 契约=${r.semanticsContract?.judgedBy} · apply落痕=${r.projection?.applyRan ? 'Y' : 'N'} · 投影=${r.projection?.found ? 'Y' : 'N'}${sh ? `（${sh.modernShape ? 'modern:stateSchema+wire.view' : sh.legacyShape ? 'legacy:schema+view' : '形状不明'}）` : ''}`);
   console.log(`    树戳=${r.treeStampBefore?.entries} 项 / mtime=${r.treeStampBefore?.mtimeMs}`);

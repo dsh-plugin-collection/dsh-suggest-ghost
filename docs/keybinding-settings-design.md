@@ -308,6 +308,27 @@ export function ownerOfKey(table: BindingTable, event: KeyFacts): Action | null;
 - 独立 PR 的理由：它是**跨内核代次的兼容面**，验收要跑 `verify:kernels`，
   跟 §3 这种纯客户端行为改动混在一个 PR 里，任一条红了都说不清是谁的锅。
 
+### 4.1 合并后补跑的结果（2026-11-26，见 `scripts/cross-kernel/FINDINGS.md` §23）
+
+给跨内核矩阵**加了第四个面**（设置面），因为它原本根本没有这一面
+（`grep -c "settings.update|describe()"` = 0）——也就是说「装配绿」从来没回答过「用户改得动键吗」。
+
+九代实测：装配 + 投影 **9 代全绿**；设置面单列，两档读数：
+
+- **0.1.7-rc.1 ~ 0.2.2-rc.5（7 代）**：三个新键确实进了 `describe()` 投影（内核从插件
+  Config 的 `.volatile()` 字段自动投出，无需额外注册）；
+- **0.1.2-rc.1 / 0.1.5-rc.3（2 代）**：三键不在注册的 `TransportSchema` 里，
+  但实测 `update()` 不拒、`describe()` 读得回 ⇒ 老代次改键**可用**
+  （宿主合并层取不到，而这三键是纯客户端判据 ⇒ 无影响）。
+  ⚠️ 这一条推翻了我读代码时的推断（我以为老代次写不进去）。
+
+**同时暴露一个一直存在的空列**：本 harness 用 patch 的 `include` 装插件，
+`configEditor.entries()` 里 99 个条目**没有 `suggest-ghost`** ⇒ 内核 `write()` 必拒
+（`dsh-settings/lib/index.js:501-504`）⇒ **既有的 `_push`/`_hot`/`_ops`/`acceptKey` 写，
+在这个矩阵里也一次都没测过**。所以设置面不计入总体判定（否则九代全从绿变未判定，
+等于用一把测不到的尺子盖掉已有信号），单列并写明未判定的种类。
+真实例写面已实测（0.2.2-rc.5 沙箱：改 `F7` → 保存 → 硬刷新仍是 `F7`）。
+
 ## 5. 明确不做 / 载荷不变
 
 - **不改** `acceptKey` 已有语义（仍只管 `llm`… 见下）：新增 `localAcceptKey` 是把「历史/续写」
