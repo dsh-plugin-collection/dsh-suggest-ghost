@@ -156,14 +156,53 @@ resolver 与留痕共用）。用途是回答「我改了提示词，这一轮�
 - 超长护栏在界面上成立：填 6001 字 ⇒ 保存按钮 `disabled=true`、`aria-invalid=true`、
   状态行「提示词最长 6000 字，当前 6001 字，请精简后再保存」。
 
-**没拿到的（NOT-COVERED，写清缺哪个前置）**：真回合留痕里的 `prompt=custom`。
-沙箱实例起不了真 agent 回合——这台部署的 `ui-workspace` 条目停用，composer 恒
-`data-phase="inert"`，工作区选择器不弹（`[role=dialog]` 计数 0）；手工往
-`storages/workspace.json` 种一行也没让它进店。⇒ 沙箱日志 `grep -c "suggestion generated"` = 0。
-热生效那条链由本节上面的真回合 e2e 覆盖（真 `Context` + 真 `SessionStore` +
-真 `settings/document-updated` + 真 `apply()`），**但它用的是内存 settings 面**，
-不是内核那个会写盘的 `SettingsForms`。补这一腿的前置：一个能选工作区、能跑真回合的实例。
+**这一面当时没拿到的那条，已在盒子上补掉**（见下面的 §7.1）—— 本机沙箱起不了真 agent 回合：
+这台部署的 `ui-workspace` 条目停用，composer 恒 `data-phase="inert"`，工作区选择器不弹
+（`[role=dialog]` 计数 0），手工往 `storages/workspace.json` 种一行也没让它进店，
+所以沙箱日志 `grep -c "suggestion generated"` = 0。
 
+### 7.1 盒子（Simular 云电脑）上的真回合 A/B —— 这条腿的实际出处
+
+本机拿不到的东西盒子有：**能选工作区、能跑真回合、有可用路由**的完整实例。
+
+| 前置 | 读数 |
+|---|---|
+| 内核 | `0.2.2-rc.1`（`~/.npm/_npx/b86ed90107c62dab/node_modules/@deepseek-ai/dsh`） |
+| 插件 | 装的是 **`dsh-suggest-ghost@0.12.0-alpha.1`**（本支产物发 npm 的 test 版，dist-tag `pr183`） |
+| profile | `testbox`，条目 `suggest-ghost` 在册，路由 `dsh-opendesign-go / deepseek-v4.1-flash-eco` |
+| 工作区 | `/home/user`，71 个既有会话 ⇒ composer 可 attach |
+
+**代码怎么上去的**：本机沙箱端口盒子够不到、LAN Gitea 对盒子不可达（`Network is unreachable`）、
+把 141 KB 产物切块经工具面搬运不成立（`read` 把超长行截到 2000 字符），
+而**推 GitHub 镜像是本仓明令禁止的**。最终走 npm：在临时副本里把 `version` 改成
+`0.12.0-alpha.1`（**不改仓里的 package.json** —— version 由 lead 落），
+`npm publish --tag pr183`（**不动 `alpha` / `latest`**），盒子 `npm pack` 后整包替换。
+⇒ 测的是这条分支的确切字节，不是手改的旧产物。
+
+**A/B 两步（都是真回合、真 `SettingsForms` 写入、真模型输出）**：
+
+| 步 | 盘上 `suggestionPrompt` | 留痕行尾 | 模型产出的幽灵建议 |
+|---|---|---|---|
+| 实验组 | `输出必须以下列标记开头：BOXPROBE- …语言 {{language}}，最多 {{maxChars}} 字。` | `prompt=custom` | `BOXPROBE- 请用一句话解释递归：递归是函数直接或间接调用自身…` |
+| 对照组 | `""`（从设置页清空并保存） | `prompt=builtin` | `举个例子说明一下`（DOM 全文搜 `BOXPROBE` ⇒ `probeHits=0`） |
+
+判据是**可证伪的**：`BOXPROBE-` 这个前缀内置模板绝不会产出，它只随自定义提示词出现、
+清空即消失。另外续写那行的 `prompt=builtin` 也在真实回合里出现过一次
+（`completion generated … draftChars=24 chars=18 … prompt=builtin`），
+所以四条产出行里的两条都有真宿主读数。
+
+**测完的恢复**：插件目录换回 `0.11.1-alpha.1`（替换前整目录留了 `.bak`，事后回滚并核对版本）、
+profile 里两行探针配置删除（`grep -c 'Prompt:'` = 0）、实例停掉（`pgrep` = 0）、
+含 token 的 `/tmp/box-dsh.log` 与全部临时目录清掉。
+
+**仍未覆盖的**（写清楚，不含糊）：
+- 盒子上**没验**「改完不重启、下一回合立刻换词」—— 那两步之间各重启了一次实例；
+  热读不重启由 §7 的真回合 e2e 覆盖（同一进程内写完直接跑下一回合，断的是 `options.system`），
+  但那个 e2e 用的是内存 settings 面，不是内核会写盘的 `SettingsForms`。两条各证一半，别合成一条"全验了"。
+- 盒子 GUI 上「从设置页写 `completionPrompt`」这一发**没落盘**（脚本点到了保存、回读是空、
+  宿主日志零活动）—— 现象在 `suggestionPrompt` 上不存在（同一卡片、同一段代码写成功过）。
+  未归因，形态更像我的驱动脚本在详情页重渲染后拿到了脱离的 DOM 节点，而不是产品缺陷；
+  但既然没归因，就不写成"卡片写续提示词已验证"。
 ## 8. 顺手核到的两条内核事实（写下来防止下一个人重新猜）
 
 1. **volatile 字段会写进 profile 补丁**。`src/settings.ts` 顶部那句「内核写盘时把它们从 profile
