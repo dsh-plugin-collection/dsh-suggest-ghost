@@ -64,6 +64,30 @@ assert.equal(
   R,
   '热度频次应让次新条目反超',
 );
+// —— D：两项频次的分母必须来自**候选集内** ——
+// 分母若取自整个窗口／整张热表，就会由与本次选择无关的条目决定，次级信号被稀释
+// 成噪声：会话内 2 次 vs 1 次会被前缀外的 5 次条目压平，热度 5 vs 1 会被全库最热
+// 的 1000 压平。这两条用例钉住「分母跟着候选走」这个口径（见 history.ts 的步骤 3）。
+{
+  // D1 会话内频次：前缀外的「无关高频甲」出现 5 次，不该让候选之间的 2:1 变成 1:1。
+  const histFreq = ['无关高频甲', '无关高频甲', '无关高频甲', '无关高频甲', '无关高频甲', T, T, R];
+  assert.equal(
+    historySuggestion(histFreq, '帮我', { minChars: 1, maxEntries: 0 }),
+    T,
+    '候选内 2 次应胜过 1 次——前缀外的条目不得参与分母',
+  );
+  // D2 热度：候选内 5 vs 1，全库另有 1000 次的常用句（它并不命中前缀，不该进分母）。
+  const histHot = Array.from({ length: 48 }, (_, i) => `无关条目${i}`).concat([R, T]);
+  assert.equal(
+    historySuggestion(histHot, '帮我', {
+      minChars: 1,
+      maxEntries: 50,
+      hotCounts: new Map([[normalizeForMatch(R), 5], [normalizeForMatch(T), 1], ['全库最热', 1000]]),
+    }),
+    R,
+    '候选内 5 次热度应能反超更新的 1 次——全表最大值不得参与分母',
+  );
+}
 // extraCandidates：会话内没有的历史也能成为候选；重复文本不产生双候选
 assert.equal(
   historySuggestion(['完全无关的消息'], '帮我', { ...opts, extraCandidates: [{ text: R, count: 5 }] }),
