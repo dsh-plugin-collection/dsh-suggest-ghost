@@ -9,9 +9,13 @@
  *    `score = W.recency·新近度 + W.localFreq·会话内频次 + W.hotFreq·全局热度 + W.suffixLen·后缀长度`
  *    取最高分（同分取更新者）。新近度权重占主导，保留 zsh autosuggestions
  *    的「最近优先」体感；频次与热度作为次级信号纠正「一次性旧短语压过高频短语」。
+ *    两项频次的归一化分母取自**候选集内**（不是整个窗口 / 整张热表）：分母若由与本次
+ *    选择无关的条目决定，次级信号会被稀释成噪声（实测见第 3 步那段注释）。
  * 3. **跨会话热度合并**（C）：host 端 HotnessTable 的 top-K 频次（经 settings
  *    `_push` 送达）始终参与打分；`extraCandidates`（跨会话候选文本）仅在用户
  *    开启「跨会话搜索」时由调用方传入，作为 recency=0 的额外候补参与竞争。
+ *    这类候选 `localCount` 也是 0，全部得分靠 `hotFreq`；分母若取全表最大值它们
+ *    几乎恒为 0（永远选不上），取候选内最大值才偶尔真能胜出。
  * 4. **忽略表**（本单）：`ignored` 命中的文本不进入候选集（见 `src/forget.ts`）。
  *    位置在候选构造循环里，所以会话历史与跨会话候选**两条来源同时生效**。
  * @module dsh-suggest-ghost/client/history
@@ -128,7 +132,7 @@ export const HISTORY_WEIGHTS = {
   recency: 1.0,
   /** 会话内出现次数 / 候选内最大次数（0–1）。 */
   localFreq: 0.45,
-  /** 全局热度频次 / 热度表最大频次（0–1；无热度信号时为 0）。 */
+  /** 全局热度频次 / **候选内**最大热度频次（0–1；无热度信号时为 0）。 */
   hotFreq: 0.3,
   /** 后缀信息量：min(后缀长, 60) / 60，偏好有内容的补全而非 1 字符碎片。 */
   suffixLen: 0.1,
@@ -223,21 +227,39 @@ export function historySuggestion(
     }
   }
 
-  // 3) 归一化基准：会话内最大局部频次、热度表最大频次（全局，非仅候选命中）。
+  // 3) 先按前缀筛出**候选集**，再在候选集内取归一化基准。
+  //
+  // 分母必须与候选来自同一个集合。旧实现把分母算在 `byNorm`（整个窗口）与
+  // `opts.hotCounts`（全库热表）上，而这两者都含大量与本次选择无关的条目，
+  // 于是两项频次被压成噪声：
+  //   - 一圈探下来每个候选都只出现 1 次时 `maxLocal` 也是 1 ⇒ `localFreq` 对全部
+  //     候选恒等于 1，这一项零分辨力（实测歧义帧占 94.2%）；
+  //   - 全库最热那句可能出现上千次，20 次 vs 1 次只拿到 0.020 vs 0.001，
+  //     乘 0.3 的权重后差 0.006，等于没有。
+  // 换算到候选集内之后，`localFreq`/`hotFreq` 才真的是「这两个候选谁更常见」。
+  const candidates: ScoredCandidate[] = [];
+  for (const c of byNorm.values()) {
+    if (c.norm === normDraft) continue; // 已输入完整内容（忽略宽度/空白/大小写差异）
+    if (!c.norm.startsWith(normDraft)) continue;
+    candidates.push(c);
+  }
+  if (candidates.length === 0) return undefined;
+
   let maxLocal = 0;
-  for (const c of byNorm.values()) if (c.localCount > maxLocal) maxLocal = c.localCount;
+  for (const c of candidates) if (c.localCount > maxLocal) maxLocal = c.localCount;
   let maxHot = 0;
   if (opts.hotCounts !== undefined) {
-    for (const h of opts.hotCounts.values()) if (h > maxHot) maxHot = h;
+    for (const c of candidates) {
+      const hotCount = opts.hotCounts.get(c.norm) ?? 0;
+      if (hotCount > maxHot) maxHot = hotCount;
+    }
   }
 
   // 4) 打分取最优；同分时新近度更高者优先（迭代顺序无关，显式比较）。
   let best: ScoredCandidate | undefined;
   let bestScore = 0;
   let bestRecency = -1;
-  for (const c of byNorm.values()) {
-    if (c.norm === normDraft) continue; // 已输入完整内容（忽略宽度/空白/大小写差异）
-    if (!c.norm.startsWith(normDraft)) continue;
+  for (const c of candidates) {
     const recency = c.bestIdx < 0 ? 0 : (c.bestIdx + 1) / Math.max(entries.length, 1);
     const localFreq = maxLocal > 0 ? c.localCount / maxLocal : 0;
     const hotCount = opts.hotCounts?.get(c.norm) ?? 0;
