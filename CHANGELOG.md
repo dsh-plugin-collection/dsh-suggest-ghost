@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0-beta.0] - 2026-11-27
+
 ### 新增
 
 - **提示词现在能在设置页改，改完立刻生效**（Gitea #182）。两条生成路径的 system 提示词此前
