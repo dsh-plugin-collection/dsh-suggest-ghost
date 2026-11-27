@@ -497,10 +497,19 @@ onTextDelta?: (rawCumulative: string) => void,
  * 追加到 system prompt **尾部**的负向约束块（#127 重出：把本回合已产出/已被拒的
  * 至多 3 条正文以「MUST NOT repeat any of these」压回去）。
  *
- * **只在调用处拼接，`systemPrompt()` 本体一字不改**：那句措辞是全仓回归基线绑着的
- * （README 的 42 次实测口径建立在它之上），改本体要付的回归代价远大于拼一块尾巴。
- * 缺省 / 空串 ⇒ 拼出来的 `system` 与今天**逐字相同**（回归判据由
- * `scripts/regen-smoke.mjs` 钉：不传这一参时整次调用的 system 不变）。
+ * ⚠️ **当前这个形参没有被函数体引用**（2026-11-26 复核：`grep -n avoidBlock` 在本文件
+ * 只命中形参声明与这段注释；`awk` 取函数体区间再 `grep -c` = 0）。
+ * `src/index.ts` 那边确实算好了并从调用点传进来，所以现象是「重出的避开块从未发给模型」
+ * —— 一条已登记的既有缺陷，本注释只负责把现状说准，**不在这里修**。
+ *
+ * 原注释曾写「只在调用处拼接，`systemPrompt()` 本体一字不改」，那次拼接从未写出来；
+ * 它还引用 `scripts/regen-smoke.mjs`，**该脚本不存在**（现存的是 `regen-policy` /
+ * `regen-pending` / `regen-key` 三条）。这条静默缺陷当时没有任何断言挡着。
+ *
+ * 现在钉住它的是 `scripts/prompt-override-smoke.mjs` 第 10 组：它断言**今天仍然不拼接**，
+ * 并把"接上拼接时这条必红"写进判据 —— 红的时候要求连同 Gitea #182 与设计文档 §6
+ * 一起更新，而不是删断言。`systemPrompt()` 本体一字不改这条纪律继续有效
+ * （README 的 42 次实测口径建立在它之上）。
  *
  * 块的构造在 `src/regen.ts` 的 `buildAvoidBlock`（判同口径同源，去重与截尾也在那里）。
  */
