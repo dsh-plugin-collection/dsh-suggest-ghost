@@ -116,8 +116,16 @@ import type { RegenRecord, RegenRefuseReason } from './regen.js';
  *
  * 语义与 `dsh-client-ui-theme` 的 `preference` / `fontSize` 完全一致：解析后拿到的
  * 不是裸值而是一个**引用**（cosmokit 的 `Volatile<T>`），读值必须走 `.get()`。
- * 内核写盘时用同一判据 `isVolatilePath()` 把这些字段从 profile 文档里剔除，
- * 所以它们只活在 Loader 条目的内存 config 里，不污染手改的补丁文件。
+ * **落盘语义（2026-11-26 实测更正，别再按旧说法推）**：这些字段**会**写进 profile 补丁。
+ * 从设置页写一次，`cordis.patch.yml` 里该条目的 `config` 下就多一行，且**重启后仍在**；
+ * 一次无关字段的写入与宿主自己的一次 `_hot` 回写都不会把它挤掉。
+ * 代码面对得上：`dsh-settings` 的 `write()` 走
+ * `configEditor.edit(entry, () => mergeLayers(strip(raw, form), next))`，`next` 里就带着
+ * volatile 值；而 `dsh-config-editor` 整个包 `grep volatile` = 0 命中，它不做二次剔除。
+ * （本注释此前写的是「内核写盘时把它们从 profile 文档里剔除，只活在 Loader 条目的内存
+ * config 里，不污染手改的补丁文件」——**那句是错的**，会让人以为补丁里不该出现这些键，
+ * 进而把盘上真实存在的行当成脏数据删掉。）
+ * ⇒ 实际含义：一个长文本设置项（如 `suggestionPrompt`，上限 6000 字）会原样进用户手改的补丁。
  *
  * 这些字段**取代** 0.1.5/0.1.2 时代的 `suggest-ghost` settings 命名空间：
  * 0.1.7 删除了 `ctx.settings.register()`，命名空间不再由插件注册，而是内核把

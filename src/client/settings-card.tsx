@@ -29,6 +29,7 @@ import type { HotnessOp } from '../domain.js';
 // 提示词上限的**唯一出处**（宿主 schema 引的是同一个常量）。卡片需要它来在保存前
 // 挡住超长：内核 zod 拒绝时 `save()` 读不到结论，界面只表现为「点了保存、值没变」。
 import { PROMPT_MAX_CHARS } from '../prompt-override.js';
+import { MODEL_OPTIONS_PATH } from '../model-catalog.js';
 import {
   bindingConflicts,
   factsOfSpec,
@@ -1351,7 +1352,7 @@ export function SuggestGhostCard({ scope, locale, surface, modelCatalog, modelCa
   //     （gitea-dispatch 同款处理）。
   //  3. **model 列表按 provider 懒加载**：只有当前选中的 provider 才发一次请求，
   //     切过的 provider 缓存复用；不一次拉全部。
-  const CATALOG_PATH = '/api/suggest-ghost/options';
+  const CATALOG_PATH = MODEL_OPTIONS_PATH;
   const [catalogProviders, setCatalogProviders] = useState<readonly { id: string; name: string }[]>([]);
   const [catalogModels, setCatalogModels] = useState<Record<string, readonly { id: string; name: string }[]>>({});
   const [catalogUnavailable, setCatalogUnavailable] = useState(false);
