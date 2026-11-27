@@ -68,7 +68,7 @@ card copy (field labels/hints, buttons, badges) follows the host DSH UI language
 | Group | Fields |
 |---|---|
 | LLM next-suggestion | enable toggle, max output tokens, max suggestion chars, reference turns, transcript char budget, timeout (ms), accept key, provider / model route (leave empty to inherit the main request), **suggestion reasoning effort `suggestionReasoningEffort` (empty by default = not sent)**, **suggestion prompt `suggestionPrompt` (empty by default = built-in template)** |
-| Pause completion | enable toggle, pause duration (default 100ms), min input chars (pause), completion length cap, **completion reasoning effort `completionReasoningEffort` (empty by default = not sent)**, **completion prompt `completionPrompt` (empty by default = built-in template)** |
+| Pause completion | enable toggle, pause duration (default 100ms), min input chars (pause), completion length cap, **completion context cap `completionContextChars` (default 2000)**, **completion reasoning effort `completionReasoningEffort` (empty by default = not sent)**, **completion prompt `completionPrompt` (empty by default = built-in template)** |
 | History prefix completion | enable toggle, cross-session search, max history entries, min input chars (history) — the keys live under Shortcuts |
 | Shortcuts | **all six actions are rebindable**: `acceptKey` (accept the next suggestion), `localAcceptKey` (accept history / pause completion, Tab by default), `wordAcceptKey` (word-by-word accept, `→` by default), `regenKey` (another suggestion, `Alt+G` by default), `dismissKey` (hide the ghost, `Esc` by default; **empty = give the action up**), `forgetKey` (**never suggest this line again**, `Alt+X` by default; see below), plus the word-by-word / regenerate toggles and the hint-line switch. The section header shows what is **in effect**, read from the same arbitration table the keypress uses |
 | Forget a line | With a ghost on screen, press `Alt+X` and that line leaves the candidate pool for good: it stops being completed and stops counting toward hotness (**retyping it does not bring it back**), and it is removed from Hotness management. Restore entries one by one — or all at once — from the Ignored list in the same section |
@@ -88,6 +88,7 @@ You can also override by id in cordis.patch.yml (as initial values for the above
     timeoutMs: 60000           # auxiliary request deadline (ms)
     maxRecentTurns: 1          # most recent completed turns sent to the suggestion model
     maxTranscriptChars: 12000  # transcript char budget
+    completionContextChars: 2000  # completion context char cap (the smaller of this and the budget wins)
     maxSuggestionChars: 240    # visible suggestion char cap
     acceptKey: Tab             # accept shortcut (next suggestion)
     localAcceptKey: Tab        # accept shortcut (history / pause completion)
@@ -101,6 +102,26 @@ You can also override by id in cordis.patch.yml (as initial values for the above
     suggestionPrompt: ''           # prompt for the next-suggestion call (empty = built-in template)
     completionPrompt: ''           # prompt for the pause completion (same semantics)
 ```
+
+### How much history a continuation reads (two caps)
+
+The pause-completion path reads the **smaller** of:
+
+- *Transcript character budget* (`maxTranscriptChars`, default 12000) — shared by both generation paths;
+- *Completion context cap* (`completionContextChars`, default 2000) — an extra ceiling on completions only.
+
+Why completions need their own cap: they run on the path where **you are waiting** (they fire after a
+100 ms pause by default), and a longer context means a slower first chunk — so this cap belongs to the
+same family of latency guards as the completion reasoning effort.
+
+The cap always existed; it was just a constant buried in the code. The consequence: raising the
+transcript budget to 50000 left the history a continuation reads **unchanged** (measured: 12000 /
+50000 / 200000 all yielded roughly 3 messages), and nothing in the UI explained why. It is now a
+visible default — raise it if you want more context; larger is more accurate but slower. Zero or
+negative values are rejected, since they would leave the continuation with no context at all and it
+would only echo your draft.
+
+The default of 2000 keeps behaviour byte-for-byte identical to before.
 
 ### Custom prompts
 
