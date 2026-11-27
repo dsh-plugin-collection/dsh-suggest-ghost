@@ -36,6 +36,9 @@ import { execFileSync } from 'node:child_process';
 // `## 特性一览` 是 README 的完整清单（10~15 条带说明）。有前者就只发前者 ——
 // 一条 Release 不需要把整份能力表抄一遍。
 const DIGEST_HEADINGS = ['## 功能摘要', '## Feature digest'];
+
+/** 「欢迎外部贡献」的小节：内容原样搬进正文末尾的 `## 致谢`，不参与变更分类。 */
+const THANKS_HEADINGS = ['致谢', '感谢', 'Thanks', 'Acknowledgements', 'Acknowledgments'];
 const FEATURE_HEADINGS = [...DIGEST_HEADINGS, '## 功能', '## 特性一览', '## Features'];
 /** 分组顺序照 later：feat / fix 在前，表外的类型排最后并按名字排序。 */
 // breaking 放最前：它是用户最需要先看到的；其余照 later 的习惯 feat/fix 在前。
@@ -394,7 +397,33 @@ function readmeFeatures() {
 
 /* ─────────── 本版本变更的取材 ─────────── */
 
+/**
+ * 从本版小节里抽出 `### 致谢` 那一段（内容原样保留，含 bullet/散文）。
+ * 它不进变更分类：署名不是"改了什么"，压成一条 ``- **@xxx**`` 就只剩链接。
+ */
+function thanksBlock(lines) {
+  const start = lines.findIndex((l) => {
+    const h = /^###[ \t]+(.*)$/.exec(l);
+    return h && THANKS_HEADINGS.includes(h[1].trim().replace(/[：:].*$/, '').trim());
+  });
+  if (start < 0) return '';
+  const out = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^#{2,4}\s/.test(lines[i])) break;
+    out.push(lines[i]);
+  }
+  const body = out.join('\n').trim();
+  if (!body) return '';
+  return body.startsWith('- ') ? body : body;
+}
+
+const thanks = thanksBlock(sectionLines);
 let changeItems = items(sectionLines).filter((t) => /^-\s/.test(t));
+// `### 致谢` 里的条目不是变更，从分类素材里剔掉
+if (thanks) {
+  changeItems = changeItems.filter((t) => !thanks.split('\n\n').some((p) => p.includes(t.slice(0, 24).trim())));
+}
+
 const subheadOfEntry = subheadMap(sectionLines);
 // `### 发布摘要` 子节是给人做的取舍：有就只用它，且不改写一个字。
 const summaryIdx = sectionLines.findIndex((l) => /^###\s+发布摘要\s*$/.test(l));
@@ -634,6 +663,8 @@ if (MODE === 'dsh') {
   }
   if (!orderedTypes.length && !missingSection) block.push('_(本版无条目)_', '');
 
+  if (thanks) block.push('## 致谢', '', thanks, '');
+
   const prev = previousTag(ver);
   if (prev && repoUrl) {
     block.push(`Full Changelog: ${repoUrl}/compare/${prev}...v${ver}`, '');
@@ -672,6 +703,7 @@ if (missingSection) {
 for (const t of orderedTypes) block.push(`### ${t}`, '', ...groups.get(t), '');
 if (!orderedTypes.length && !missingSection) block.push('_(本版无条目)_', '');
 
+if (thanks) block.push('## 致谢', '', thanks, '');
 block.push('## 说明', '', `- License: ${pkg.license ?? '—'}`);
 if (repoUrl) block.push(`- 仓库：${repoUrl}`, `- 完整更新日志：${repoUrl}/blob/main/CHANGELOG.md`);
 }
