@@ -180,8 +180,8 @@ export const GHOST_FIELDS: ReadonlyArray<{
     key: 'maxTranscriptChars',
     label: { zh: '转录字符预算', en: 'Transcript character budget' },
     hint: {
-      zh: '送进模型的对话记录最多多长（字符），超出会被裁掉。',
-      en: 'Max characters of conversation history sent to the model; the rest is trimmed.',
+      zh: '送进模型的对话记录最多多长（字符），超出会被裁掉。停顿续写还有一道自己的上限，见「续写上下文上限」。',
+      en: 'Max characters of conversation history sent to the model; the rest is trimmed. Pause completion has its own cap — see Completion context cap.',
     },
     kind: 'number',
     section: 'llm',
@@ -512,6 +512,24 @@ export const GHOST_FIELDS: ReadonlyArray<{
     hint: {
       zh: '续写最多显示多少字，超出按词截断。',
       en: 'Max length of the continuation; longer output is cut at a word boundary.',
+    },
+    kind: 'number',
+    section: 'inline',
+    writable: true,
+  },
+  // —— 续写上下文上限（Gitea #190）——
+  //
+  // 这道上限一直存在，只是过去藏在 `min(转录字符预算, 2000)` 的裸魔数里：用户把
+  // 「转录字符预算」调到 50000，续写侧恒定只带约 3 条消息，而那句文案承诺的是别的东西。
+  // 现在把它摆到明面上，默认值 = 那道魔数 ⇒ 不填就是今天的行为。
+  // 说明里必须写清两道上界的优先级（取更小的那个），否则用户会以为调大这一项就够了。
+  {
+    key: 'completionContextChars',
+    group: 'pair',
+    label: { zh: '续写上下文上限', en: 'Completion context cap' },
+    hint: {
+      zh: '续写时最多带多少字的对话历史（默认 2000）。调大更准但等待更久；实际取它与「转录字符预算」中较小的那个。',
+      en: 'How much history a continuation reads (default 2000). Larger is more accurate but slower; the smaller of this and the transcript budget wins.',
     },
     kind: 'number',
     section: 'inline',

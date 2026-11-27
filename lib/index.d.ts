@@ -55,6 +55,8 @@ export interface PluginConfigValues {
     inlineDelayMs: Volatile<number>;
     inlineMinChars: Volatile<number>;
     inlineMaxChars: Volatile<number>;
+    /** 续写上下文字符上限（#190），默认 2000 = 那道裸魔数。 */
+    completionContextChars: Volatile<number>;
     completionReasoningEffort: Volatile<string>;
     suggestionPrompt: Volatile<string>;
     completionPrompt: Volatile<string>;
@@ -183,6 +185,20 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
     inlineMinChars: z<number, number, "volatile-defined">;
     /** 续写可见字符上限。 */
     inlineMaxChars: z<number, number, "volatile-defined">;
+    /**
+     * 续写上下文的字符上限（Gitea #190）。**默认值就是那道裸魔数**，所以不填 = 今天的行为。
+     *
+     * 生效值是 `min(转录字符预算, 这一项)` —— 保留 `min` 而不是直接换成新键，是为了
+     * 不悄悄改变"把预算调到 2000 以下"那批既有配置的行为（那类用户会看到续写上下文变大）。
+     * 上限本身是延迟保护：续写跑在用户停手等待的路径上，上下文越长首块延迟越高。
+     *
+     * 为什么这一项该做成可调而 `COMPLETION_DEADLINE_MS` 不该：超时值从没出现在任何用户文案里，
+     * 硬编码不会说谎；而这道上限绑住的正是设置页公开暴露的那一项，文案已经对用户在说谎。
+     *
+     * 默认值引 `generate.ts` 的单点常量，不在此抄数字 —— 抄来的默认值会与两处
+     * `readVolatile` 的兜底分叉（判据钉在 `scripts/completion-context-smoke.mjs` 第 1 组）。
+     */
+    completionContextChars: z<number, number, "volatile-defined">;
     /**
      * 停顿续写这次辅助调用的推理档位（#35）。语义与 `suggestionReasoningEffort`
      * 完全一致（**默认空串 = 不传 = 继承**，被拒则退一档重发一次），单列一项是因为
@@ -439,6 +455,20 @@ declare const ConfigSchema: z<Schemastery.ObjectS<NoInfer<{
     inlineMinChars: z<number, number, "volatile-defined">;
     /** 续写可见字符上限。 */
     inlineMaxChars: z<number, number, "volatile-defined">;
+    /**
+     * 续写上下文的字符上限（Gitea #190）。**默认值就是那道裸魔数**，所以不填 = 今天的行为。
+     *
+     * 生效值是 `min(转录字符预算, 这一项)` —— 保留 `min` 而不是直接换成新键，是为了
+     * 不悄悄改变"把预算调到 2000 以下"那批既有配置的行为（那类用户会看到续写上下文变大）。
+     * 上限本身是延迟保护：续写跑在用户停手等待的路径上，上下文越长首块延迟越高。
+     *
+     * 为什么这一项该做成可调而 `COMPLETION_DEADLINE_MS` 不该：超时值从没出现在任何用户文案里，
+     * 硬编码不会说谎；而这道上限绑住的正是设置页公开暴露的那一项，文案已经对用户在说谎。
+     *
+     * 默认值引 `generate.ts` 的单点常量，不在此抄数字 —— 抄来的默认值会与两处
+     * `readVolatile` 的兜底分叉（判据钉在 `scripts/completion-context-smoke.mjs` 第 1 组）。
+     */
+    completionContextChars: z<number, number, "volatile-defined">;
     /**
      * 停顿续写这次辅助调用的推理档位（#35）。语义与 `suggestionReasoningEffort`
      * 完全一致（**默认空串 = 不传 = 继承**，被拒则退一档重发一次），单列一项是因为

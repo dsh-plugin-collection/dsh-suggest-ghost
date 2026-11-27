@@ -15,6 +15,25 @@ import type { Transcript } from './transcript.js';
 export { sessionEvents } from './coldstart.js';
 /** 本能力所属的辅助请求超时错误码。 */
 export declare const SUGGEST_TIMEOUT_CODE = "SUGGEST_GHOST_TIMEOUT";
+/**
+ * 续写上下文的默认上限（字符），Gitea #190。
+ *
+ * 这个数**一直存在**，只是过去是 `Math.min(config.maxTranscriptChars, 2000)` 里的裸魔数：
+ * 它绑住的 `maxTranscriptChars` 是设置页公开暴露的那一项，而卡片文案写的是
+ * 「送进模型的对话记录最多多长（字符）」—— 对续写不成立。实测（#190 正文）：预算调到
+ * 12000 / 50000 / 200000 三档，续写侧恒 1488 字符 / 3 条消息，纹丝不动。
+ *
+ * **为什么这道上限该留着**：续写跑在用户停手等待的路径上（`inlineDelayMs` 默认 100ms），
+ * 上下文越长首块延迟越高，与 `COMPLETION_DEADLINE_MS`、`completionReasoningEffort` 同族。
+ *
+ * **为什么它和 `COMPLETION_DEADLINE_MS` 的处置相反**（那边注释明确"刻意不做成 volatile 配置项"）：
+ * 超时值没有出现在任何用户文案里，硬编码不会说谎；而这一项**已经在对用户说谎**。
+ * 所以这里改的是"把天花板变成看得见的默认值"，不是"取消保护"。默认 2000 ⇒ 与今天逐字节相同。
+ *
+ * 单点定义：schema 的 `.default()` 与两处 `readVolatile` 兜底都引这一个常量，
+ * 不抄四份数字（抄来的默认值会分叉，判据见 `scripts/completion-context-smoke.mjs` 第 1 组）。
+ */
+export declare const DEFAULT_COMPLETION_CONTEXT_CHARS = 2000;
 /** host 插件配置（未校验版本）。 */
 export interface Config {
     maxInputBytes: number;
@@ -42,6 +61,12 @@ export interface Config {
     inlineEnabled?: boolean;
     /** 续写可见字符上限。 */
     inlineMaxChars?: number;
+    /**
+     * 续写上下文的字符上限（Gitea #190）。生效值是
+     * `min(maxTranscriptChars, completionContextChars)`，默认 2000 ⇒ 与今天的裸魔数逐字节相同。
+     * 保留 `min` 而不是直接换成新键，是为了不悄悄改变"预算调到 2000 以下"那批既有配置的行为。
+     */
+    completionContextChars?: number;
     /** 是否启用长会话上下文摘要（默认开）。 */
     contextSummaryEnabled?: boolean;
     /** 上下文摘要最大字符数。 */
@@ -113,6 +138,8 @@ export interface EditableConfig {
     inlineDelayMs?: Volatile<number> | number;
     inlineMinChars?: Volatile<number> | number;
     inlineMaxChars?: Volatile<number> | number;
+    /** 续写上下文字符上限；默认 2000 = 今天那道裸魔数，见 `Config.completionContextChars`。 */
+    completionContextChars?: Volatile<number> | number;
     /** 建议调用的推理档位（#35）；空串 = 继承，见 Config 的同名注释。 */
     suggestionReasoningEffort?: Volatile<string> | string;
     /** 续写调用的推理档位（#35）；空串 = 继承。 */
@@ -151,6 +178,7 @@ export type FlatConfig = Config & {
     inlineDelayMs: number;
     inlineMinChars: number;
     inlineMaxChars: number;
+    completionContextChars: number;
     contextSummaryEnabled: boolean;
     contextSummaryChars: number;
     suggestionReasoningEffort: string;
