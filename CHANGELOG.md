@@ -64,7 +64,7 @@ All notable changes to this project will be documented in this file.
 - `docs/design` 修订 §5.1 那条已被推翻的判断，后续项登记进 §9。
 - 记下「`test:smoke` 与 `test:e2e` 不能并发跑」，并如实写明机理未归因。
 
-感谢 [@Kane-LI-0114](https://github.com/Kane-LI-0114)：本版的引用叠字（#11）与滚动掉帧（#13）都是他提的 issue，修复与探针也由他提交；上一版的 #9（长建议折成右侧窄栏）同样来自他，当时漏了鸣谢。
+致谢 [@Kane-LI-0114](https://github.com/Kane-LI-0114)：本版 #11（引用 chip / quote 收尾时锚点量取未截断文本）、#13（`onScroll` 每帧强制同步布局导致掉帧）由其提出，对应的修复与真 Chromium 探针亦由其提交；#9（0.11.2，长建议折行后未回内容左缘）同源，该版发布时未列署名，于此处补记。
 
 ## [0.11.2] - 2026-11-23
 
