@@ -312,3 +312,33 @@ export function factsOfSpec(spec: string | undefined): KeyFacts | undefined {
     shift: mods.has('shift'),
   };
 }
+
+/** 键位表一行的状态（设置卡片用它决定标什么、要不要灰显）。 */
+export type KeyRowState = 'live' | 'off' | 'unbound' | 'clash';
+
+/**
+ * 一行键位此刻的状态。判据收在这里而不是写在 `.tsx` 里，是因为 `.tsx` 不在
+ * 类型检查范围内（`tsconfig.client.json` 只 include `.ts`），写在卡片里就**没有
+ * 一条冒烟能钉它**——本单实测过：卡片里那版把两张仲裁表混着算冲突，
+ * 会让只在 `llm` 表生效的字段因为 `local` 表内部撞键而亮「同键」，
+ * 而构建、冒烟、名称闸全都不会红。
+ *
+ * @param tables  两张仲裁表（`llm` = 下一条建议，`local` = 历史补全 / 停顿续写）
+ * @param scopes  该字段**实际参与**的表（来自 `KEY_TABLES`，不是「两张都算」）
+ * @param action  该字段承载的动作
+ * @param value   当前 spec
+ */
+export function keyRowStateOf(
+  tables: Partial<Record<'llm' | 'local', BindingTable>>,
+  scopes: readonly ('llm' | 'local')[],
+  action: KeyAction,
+  value: string,
+): KeyRowState {
+  if (value.trim() === '') return 'unbound';
+  const inAny = scopes.some((w) => tables[w]?.[action] !== undefined);
+  if (!inAny) return 'off';
+  return scopes.some((w) => {
+    const table = tables[w];
+    return table !== undefined && bindingConflicts(table, action).length > 0;
+  }) ? 'clash' : 'live';
+}

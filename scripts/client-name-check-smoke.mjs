@@ -38,7 +38,27 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 
-const NAME_ERRORS = /error TS(2304|2552):/;
+/**
+ * 闸覆盖的错误类别（本单第二版扩过一次，理由见下）。
+ *
+ * 第一版只筛 TS2304/TS2552（未定义标识符）。结果**它没抓到本单自己写出的一个真错**：
+ * 键位表里 `switchKey` 是 `string | undefined`，我用 `switchOn !== null` 当守卫，
+ * TS 窄化不到 key ⇒ `setField(switchKey, …)` 报 TS2345，而闸当时全绿。
+ * 所以判据从「未定义名字」扩到「**签名用错**」这一族：
+ *  - TS2304 / TS2552 未定义标识符
+ *  - TS2339 属性不存在（改了宿主 face 形状最常见的形态）
+ *  - TS2554 实参个数不对
+ *  - TS2551 名字拼错（带 suggestion 的那版）
+ *  - TS2345 实参类型不匹配（就是漏掉的那条）
+ * **不含 TS2322**：`enStrings` 的映射类型把每个字典值都定成 zh 的**字面量类型**，
+ * 于是每一条英文文案必然红一条（实测 main 上 54 条）。那是既有的结构性噪声，
+ * 与本闸要防的「运行时炸 slot」不是一类；修它要动字典类型，属另一件事（已记进 PR 遗留项）。
+ */
+const STRICT_KINDS = /error TS(2304|2552|2339|2554|2551):/;
+const ARG_TYPE = /error TS2345:/;
+/** 已存在的 TS2345（grandfather）：按消息文本认，不按行号——行号一动就假通过。 */
+const KNOWN_ARG_TYPE = [/GhostContent' is not assignable to parameter of type/];
+const NAME_ERRORS = STRICT_KINDS;
 const TSC = join(process.cwd(), 'node_modules', '.bin', 'tsc');
 const CONFIG = 'tsconfig.client.json';
 
@@ -69,11 +89,14 @@ const nameErrors = (cwd) => {
       throw new Error(`tsc 没有产出任何错误行，工具可能没跑起来：${String(error.message).split('\n')[0]}`);
     }
   }
-  return out.split('\n').filter((line) => NAME_ERRORS.test(line));
+  const strict = out.split('\n').filter((line) => STRICT_KINDS.test(line));
+  const argType = out.split('\n').filter((line) => ARG_TYPE.test(line)
+    && !KNOWN_ARG_TYPE.some((re) => re.test(line)));
+  return [...strict, ...argType];
 };
 
 // ── 1. 真产物：未定义标识符必须为 0 ───────────────────────────────────────
-run('src/client/**.tsx 里没有未定义标识符（TS2304 / TS2552 = 0）', () => {
+run('src/client/**.tsx 没有未定义标识符与签名错（TS2304/2552/2339/2554/2551 = 0，TS2345 无新增）', () => {
   const hits = nameErrors(process.cwd());
   assert.deepEqual(hits, [], `以下名字在用之前没有 import/声明（构建与冒烟都不会红，浏览器里会炸 slot）：\n${hits.join('\n')}`);
 });
@@ -94,6 +117,18 @@ run('★ 注入自证：漏 import 一个函数时本闸必须红', () => {
     writeFileSync(file, without, 'utf8');
     const hits = nameErrors(dir).filter((line) => line.includes('bindingTableFor'));
     assert.ok(hits.length >= 1, '删掉 import 之后本闸仍然全绿 ⇒ 闸是瞎的，本单那条事故抓不住');
+
+    // 注入 B：**签名用错**（本单第二版扩覆盖的直接原因）。
+    // 第一版只筛 TS2304，于是 `setField(switchKey, …)` 里 `switchKey: string | undefined`
+    // 报的 TS2345 从闸缝里漏了出去——是集合差比对把它挖出来的，不是闸。
+    // 这里往组件作用域里插一行「把 number 传给要 string 的形参」，必须被抓住。
+    const withBadArg = src.replace(
+      '  const anyInvalid = GHOST_FIELDS.some(fieldInvalid);',
+      '  const anyInvalid = GHOST_FIELDS.some(fieldInvalid);\n  setField(1, "x"); // 注入：实参类型不匹配');
+    assert.notEqual(withBadArg, src, '注入 B 的锚点没命中（那行代码形状变了）⇒ 这一轮自证无效');
+    writeFileSync(file, withBadArg, 'utf8');
+    const argHits = nameErrors(dir).filter((line) => /TS2345/.test(line) && /setField|number/.test(line));
+    assert.ok(argHits.length >= 1, '把 number 传给 string 形参，本闸仍然全绿 ⇒ TS2345 这一类没接上');
     // 顺带确认：不是「整个文件都不检查」——只有 TS2304 这一类被抓到即可，不要求别的错误。
   } finally {
     rmSync(dir, { recursive: true, force: true });

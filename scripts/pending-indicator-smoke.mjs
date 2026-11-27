@@ -261,7 +261,10 @@ run('两个光效进了「外观」分组，且各自文案里仍写着实验性
   // 徽章本身没删（betaBadge / betaBadgeAria 文案仍在，供别的实验性分组复用）。
   assert.match(card, /key: 'caretGlowEnabled'[\s\S]{0,400}?section: 'appearance'/, 'C1 不在 appearance 分组');
   assert.match(card, /key: 'boxGlowEnabled'[\s\S]{0,400}?section: 'appearance'/, 'V4 不在 appearance 分组');
-  assert.match(card, /key: 'showKeyHint'[\s\S]{0,600}?section: 'keybinds'/, '键位提示没跟着键位进 keybinds 分组');
+  // 键位提示**回到 appearance**（上一轮才刚挪进 keybinds —— 这第三次改判据的原因写在卡片里）：
+  // 键位分区改版成快捷键表后，每行都是「一个动作 + 一个键帽」，而这个开关既不是动作也没有键帽，
+  // 留在表里就是一行破坏列对齐的东西；它管的是输入框上方那行小字，那正是「外观」的定义。
+  assert.match(card, /key: 'showKeyHint'[\s\S]{0,600}?section: 'appearance'/, '键位提示没回到 appearance（表里不该混一个没有键帽的行）');
   const c1 = card.slice(card.indexOf("key: 'caretGlowEnabled'"), card.indexOf("key: 'caretGlowEnabled'") + 500);
   const v4 = card.slice(card.indexOf("key: 'boxGlowEnabled'"), card.indexOf("key: 'boxGlowEnabled'") + 500);
   assert.match(c1, /实验性/, 'C1 文案里没写「实验性」⇒ 用户不知道这是实验性功能');
