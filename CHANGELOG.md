@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### 新增
+
+- **提示词现在能在设置页改，改完立刻生效**（Gitea #182）。两条生成路径的 system 提示词此前
+  只能改源码：`systemPrompt()` 与 `inlinePrompt()` 是硬编码函数，设置页也没有对应的配置项。
+  新增 `suggestionPrompt` / `completionPrompt` 两个配置项。**留空 = 内置模板逐字不变**
+  （`resolveSystemPrompt` 在留空时返回内置模板同一份引用，不是拷贝后相等），所以默认发布
+  形态的生成结果与今天逐字节一致。占位符语义见 `docs/prompt-override.md`。
+
+- **五个按键动作全部可改键**（Gitea #157）。之前只有 `acceptKey` 能改。新增 `localAcceptKey`
+  （历史补全 / 停顿续写，默认 Tab）、`wordAcceptKey`（逐词采纳）、`dismissKey`（关闭幽灵，
+  默认 Escape，允许留空 = 不绑定）。核心不是加字段，而是把散在三处的键位判断收成一张仲裁表
+  （`keyspec.ts` 的 `ownerOfKey` / `KEY_ACTION_PRIORITY` / `bindingConflicts`），
+  `bindingTableFor()` 成为「这条幽灵此刻哪个键做哪件事」的唯一判据。
+
+- **幽灵提示可以就地「别再补这句」**（Gitea #188）。之前只能去设置页的热度管理里删那一行 ——
+  那条路径要求你先知道幽灵从哪来（屏幕上那句几乎都来自会话历史环，不是热表），而且删完
+  并不保证不再出现。现在新增忽略表与 `forgetKey`，就地关掉。三组对照实测：只删热表条目
+  ⇒ 幽灵照旧出现；只过滤候选 ⇒ 界面安静但再打一次那句就以 ×1 复活；忽略表把两条都堵住。
+
+- **续写上下文上限改成可配的 `completionContextChars`，默认 2000 = 逐字节不变**
+  （Gitea #190）。这个上限原本是 `Math.min(config.maxTranscriptChars, 2000)` 里的裸魔数：
+  没有注释、没有命名常量、两份 README 都没提。而它绑住的 `maxTranscriptChars` 正是设置页
+  公开暴露的那一项，卡片写着「送进模型的对话记录最多 N 字」——**对续写不成立**（实测预算
+  12000 / 50000 / 200000 三档，续写侧恒定只取约 3 条消息）。现在两道上界分开、优先级写进
+  两份 README。
+
+- **设置页的键位分区从表单改成快捷键表**（Gitea #193）。1280 视口实测：分区总高
+  **853px → 431px**（−49%），键帽宽度 904px（里面装着 “Tab”）→ 96px 统一列宽，相邻键帽
+  相距 159px → 对齐的列。行状态判据从 `.tsx` 挪进可测模块。
+
+### 修复
+
+- **历史补全的次级信号被稀释**（Gitea #189）。打分里的 `localFreq` / `hotFreq` 分母原本
+  取自整个窗口与整张热表 —— 两者都含大量与本次选择无关的条目，于是这两个次级信号随
+  窗口/热表规模漂移。改成分母取候选集内。
+
+- **多行幽灵滚动时掉帧**（[GitHub #13](https://github.com/dsh-plugin-collection/dsh-suggest-ghost/issues/13)）。
+  `onScroll` 每收到一个 scroll 事件就跑一遍 `alignAndVerify()`，而 `align()` 是「先写样式
+  再回读」，等于**每帧强制一次同步布局**，多行灰字正是那块最贵的被布局元素。真
+  composer 实测（滚轮连续滚动 2.2s）：修前带幽灵的帧间隔 p95 23.5ms、峰值 32.5ms，
+  同页摘掉幽灵节点 p95 17.4ms。现在滚动不再每帧重排。
+
+- **引用 chip / quote 上的幽灵会叠字**（[GitHub #11](https://github.com/dsh-plugin-collection/dsh-suggest-ghost/issues/11)）。
+  锚点原本量「最后一个非空文本节点的末字符」，但 DSH 的引用是内联原子盒子
+  （`contenteditable=false` 的 inline-flex，文字外套 `max-width + overflow:hidden`，
+  chip 240px / quote min(80%,300px)），文本节点的排版宽度是**未截断**的。另外 Lexical
+  把文字包在跨行 inline span 里，`getBoundingClientRect()` 返回的是**所有行框的并集**
+  （top 落在第一行、right 取最宽那行），拿它当收尾必然画错。现在按「收尾那颗子节点」
+  递归分类，锚点改为量**渲染收尾**。
+
+### 其他
+
+- 跨内核矩阵加了**设置面**（Gitea #187），并登记它此前从未覆盖设置写入这件事。
+- 目录路由路径改用 `model-catalog` 导出的常量，消除第二份字面量（零行为变化）。
+- 更正三处已被实测证伪的自述注释（零行为变化）。
+- `docs/design` 修订 §5.1 那条已被推翻的判断，后续项登记进 §9。
+- 记下「`test:smoke` 与 `test:e2e` 不能并发跑」，并如实写明机理未归因。
+
 ## [0.11.2] - 2026-11-23
 
 ### 修复
