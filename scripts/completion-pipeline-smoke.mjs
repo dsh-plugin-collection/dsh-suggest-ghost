@@ -323,7 +323,7 @@ run('上界按真宿主实测分布取值，不是按快样本的算术', () => 
   );
 });
 
-run('设置页字段集合与基线一致（共 38 项：两个推理档位、流式投递、路由继承、两个生成中指示开关、键位提示、两个提示词模板，以及六个键位项）', () => {
+run('设置页字段集合与基线一致（共 39 项：两个推理档位、流式投递、路由继承、两个生成中指示开关、键位提示、两个提示词模板、六个键位项，以及 #190 的续写上下文上限）', () => {
   const hostSource = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta.url)), 'utf8');
   // 只截 `const EditableFields = {` 这个对象字面量本身：从起始 brace 找到它自己的
   // `};`。上一版在这里用 indexOf('/** 配置 schema') 取右边界，而源码里那句写在
@@ -370,7 +370,12 @@ run('设置页字段集合与基线一致（共 38 项：两个推理档位、�
     'caretGlowEnabled', 'boxGlowEnabled',
     'historyEnabled', 'historyCrossSession',
     'historyMaxEntries', 'historyMinChars',
-    'inlineEnabled', 'inlineDelayMs', 'inlineMinChars', 'inlineMaxChars', 'completionReasoningEffort',
+    'inlineEnabled', 'inlineDelayMs', 'inlineMinChars', 'inlineMaxChars',
+    // #190：续写上下文字符上限。默认值 = 那道裸魔数 2000，所以登记进基线不改变任何默认行为；
+    // 但**生效值仍是 `min(转录字符预算, 这一项)`** —— 保留 min 是为了不动"预算调到 2000 以下"
+    // 那批既有配置的行为。判据在 scripts/completion-context-smoke.mjs（含默认值三处一致、
+    // 默认逐字节不变、放宽生效、min 优先级、0/负数硬拒）。
+    'completionContextChars', 'completionReasoningEffort',
     // #182 两条（提示词模板，声明在 `completionReasoningEffort` 之后、`wordAccept` 之前）：
     // **默认空串 = 内置模板逐字不变**，所以它们进基线不改变任何默认行为。
     // 与档位同族：schema / generate 两处 readVolatile / live-settings 键表 / 设置卡四处都登记，
