@@ -48,6 +48,25 @@ const COMPONENTS = [
   '.sgc-textarea{min-height:120px;padding:8px 12px;line-height:1.6;resize:vertical;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}',
 
   /* ==================== 快捷键按钮 ==================== */
+  /* 键位表（Gitea #157 续的排版改版）：一行一个动作，左=动作名、中=状态、右=键帽 + ⓘ。
+     为什么不用 .sgc-field 那套「标签在上、控件在下」：键帽的值只有 3~8 个字符，
+     撑满 959px 的按钮等于 97% 死空间，而眼睛要从最左的值扫到最右的 ⓘ（实测 952px）。
+     表格化后行高从 90px 压到 44px，扫读只走一列。 */
+  '.sgc-kbGroup{margin-top:10px}',
+  '.sgc-kbGroupHead{display:flex;align-items:baseline;gap:8px;margin:0 0 2px;padding:0 0 4px;border-bottom:.5px solid var(--dsw-alias-border-l2)}',
+  '.sgc-kbGroupTitle{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary);letter-spacing:.02em}',
+  '.sgc-kbGroupScope{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
+  '.sgc-kbRow{display:grid;grid-template-columns:minmax(0,1fr) 60px 36px 96px 24px;gap:10px;align-items:center;min-height:36px;padding:4px 0}',
+  '.sgc-kbLabel{flex:1;min-width:0;font-size:13px;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.sgc-kbState{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
+  '.sgc-kbStateWarn{color:var(--dsw-alias-state-warn-primary)}',
+  '.sgc-kbRowOff .sgc-kbLabel,.sgc-kbRowOff .sgc-key{opacity:.45}',
+  '.sgc-kbSwitchSlot{width:36px;height:20px;flex:none}',
+  '.sgc-kbState{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.sgc-kbCell{display:flex;align-items:center;gap:6px;justify-content:flex-end}',
+  '.sgc-key.sgc-keyCompact{width:100%;min-width:0;text-align:center;padding:0 10px;min-height:32px}',
+  '.sgc-kbRow .sgc-help{grid-column:1/-1}',
+  '.sgc-kbWarns{grid-column:1/-1;margin:0 0 4px;font-size:12px;color:var(--dsw-alias-state-warn-primary)}',
   '.sgc-keyRow{display:flex;gap:8px;align-items:stretch}',
   '.sgc-keyRow>.sgc-key{flex:1 1 auto;min-width:0}',
   '.sgc-keyReset{appearance:none;flex:0 0 auto;cursor:pointer;border:.5px solid var(--dsw-alias-border-l4);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:var(--dsw-radius-md,8px);padding:0 10px;font-size:12px}',

@@ -35,14 +35,25 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_ACCEPT_KEY, DEFAULT_DISMISS_KEY, DEFAULT_FORGET_KEY, DEFAULT_REGEN_KEY, DEFAULT_WORD_ACCEPT_KEY } from '../src/client/accept-key.ts';
+// 行状态判据本体在 keyspec.ts（卡片只是喂参数）——静态 import，不用 dynamic：
+// 本脚本的 run() 第一版不认 Promise，async 用例的断言失败会静默打 ✓（已修，见 run 的注释）。
+import { keyRowStateOf } from '../src/client/keyspec.ts';
+import { bindingTableFor } from '../src/client/accept-key.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(join(root, rel), 'utf8');
 
 let failed = 0;
-const run = (name, fn) => {
+/**
+ * 登记并立刻跑一条用例。**必须认 Promise**：
+ * 本脚本第一版的 `run` 只 try 同步调用，于是任何写成 `async` 的用例
+ * ——断言的 rejection 落在返回的 Promise 上，`failed` 永远不加——
+ * **无论对错都打 ✓**。这是一道假闸，比没有闸更糟（它会让人以为判据在跑）。
+ * 现在 async 用例必须 await，且顶层用 `await run(...)` 串起来。
+ */
+const run = async (name, fn) => {
   try {
-    fn();
+    await fn();
     console.log(`  ✓ ${name}`);
   } catch (error) {
     failed += 1;
@@ -63,7 +74,7 @@ const KEYS = [
 const NAMES = KEYS.map((k) => k.key);
 
 // ── ① schema：都在、默认值正确、都标了 volatile ──────────────────────────
-run('① src/index.ts：六个键位字段齐、默认值一致、都标 .volatile()', () => {
+await run('① src/index.ts：六个键位字段齐、默认值一致、都标 .volatile()', () => {
   const host = read('src/index.ts');
   for (const { key, def, allowEmpty } of KEYS) {
     // 中间那段（可能含 `.min(1)`）用 (.*?) 捕获：写成正则字符类时容易漏掉括号转义，
@@ -79,7 +90,7 @@ run('① src/index.ts：六个键位字段齐、默认值一致、都标 .volati
 });
 
 // ── ② generate.ts 的两处 readVolatile 与 schema 同值 ─────────────────────
-run('② src/generate.ts：flattenConfig 与 resolveConfig 两处兜底都与 schema 同值', () => {
+await run('② src/generate.ts：flattenConfig 与 resolveConfig 两处兜底都与 schema 同值', () => {
   const gen = read('src/generate.ts');
   for (const { key, def } of KEYS) {
     const hits = [...gen.matchAll(new RegExp(`readVolatile\\((?:config|raw)\\.${key},\\s*'([^']*)'\\)`, 'g'))].map((m) => m[1]);
@@ -97,7 +108,7 @@ run('② src/generate.ts：flattenConfig 与 resolveConfig 两处兜底都与 sc
 });
 
 // ── ③ live-settings 键表 ────────────────────────────────────────────────
-run('③ src/live-settings.ts：六键都在 SETTING_SPECS，空串口径正确', () => {
+await run('③ src/live-settings.ts：六键都在 SETTING_SPECS，空串口径正确', () => {
   const ls = read('src/live-settings.ts');
   for (const { key, allowEmpty } of KEYS) {
     const want = allowEmpty ? 'true' : 'false';
@@ -107,7 +118,7 @@ run('③ src/live-settings.ts：六键都在 SETTING_SPECS，空串口径正确'
 });
 
 // ── ④ 设置卡片 ──────────────────────────────────────────────────────────
-run('④ settings-card.tsx：六行卡片都在、可写、且都归进 keybinds 分区', () => {
+await run('④ settings-card.tsx：六行卡片都在、可写、且都归进 keybinds 分区', () => {
   const card = read('src/client/settings-card.tsx');
   for (const key of NAMES) {
     const block = new RegExp(`key: '${key}'[\\s\\S]{0,700}?section: '([a-z]+)'`).exec(card);
@@ -128,7 +139,7 @@ run('④ settings-card.tsx：六行卡片都在、可写、且都归进 keybinds
 });
 
 // ── ⑤ README 两份 ───────────────────────────────────────────────────────
-run('⑤ 两份 README 都写了六个键位字段', () => {
+await run('⑤ 两份 README 都写了六个键位字段', () => {
   for (const file of ['README.md', 'README.en.md']) {
     const doc = read(file);
     for (const key of NAMES) assert.ok(doc.includes(key), `${file} 里没有 ${key}`);
@@ -136,7 +147,7 @@ run('⑤ 两份 README 都写了六个键位字段', () => {
 });
 
 // ── ⑥ 客户端兜底：旧宿主 / describe 缺席时不许改变键位 ──────────────────
-run('⑥ src/client/index.ts：客户端初值与 live 读取的兜底都与 DEFAULT_* 同值', () => {
+await run('⑥ src/client/index.ts：客户端初值与 live 读取的兜底都与 DEFAULT_* 同值', () => {
   const client = read('src/client/index.ts');
   // `Alt+G` 里的 `+` 是正则量词——不转义的话这条断言会「匹配不到」而不是报错，
   // 表现成「客户端初值不对」的假红（本脚本第一版就红在这儿）。
@@ -157,6 +168,93 @@ run('⑥ src/client/index.ts：客户端初值与 live 读取的兜底都与 DEF
     '客户端的 acceptKey 兜底没有走 DEFAULT_ACCEPT_KEY（要么改了载荷路径，要么偷偷写回了字面量）');
   assert.equal((client.match(/\?\? 'Tab'/g) ?? []).length, 0,
     '客户端里又出现了 `?? \u0027Tab\u0027` 这类第二份字面量（该走 DEFAULT_ACCEPT_KEY）');
+});
+
+// ── ⑨ 行状态判据（排版改版新增；本体在 keyspec.ts，所以这里钉得住）──────
+await run('⑨ keyRowStateOf：四态齐全，且冲突只按字段实际参与的表算', () => {
+  const btf = bindingTableFor;
+  // 两张表用真判据组，避免本脚本自己抄一份形状
+  // 夹具必须**像卡片那样**把 dismissKey 传进去：卡片是 `tableOf(…, read, switches)`，
+  // 六个键全传。第一版这里漏传 ⇒ 表里没有 dismiss 格 ⇒ 判成 off，
+  // 看着像判据错了，其实是夹具与调用点不同形（这类假红最费时间）。
+  const mk = (over) => ({
+    llm: btf({ kind: 'llm', dismissKey: 'Escape', ...over }),
+    local: btf({ kind: 'history', dismissKey: 'Escape', ...over }),
+  });
+  assert.equal(keyRowStateOf(mk({}), ['llm'], 'accept', ''), 'unbound', '留空必须判不接管');
+  assert.equal(keyRowStateOf(mk({ wordAccept: false }), ['local'], 'word', 'Right'), 'off',
+    '开关关掉后该动作不在表里 ⇒ 必须判已关闭');
+  // ★ 本单实测写错过的那一条：local 表内部撞键，不该让只在 llm 表的 acceptKey 亮同键。
+  const clashLocal = mk({ localAcceptKey: 'F5', wordAcceptKey: 'F5' });
+  assert.equal(keyRowStateOf(clashLocal, ['local'], 'accept', 'Tab'), 'clash',
+    'local 表内 accept 与 word 同键 ⇒ 该行该亮同键');
+  assert.equal(keyRowStateOf(clashLocal, ['llm'], 'accept', 'Tab'), 'live',
+    '★ 只在 llm 表参与的字段，绝不能因为 local 表内部撞键而亮同键（假警告）');
+  assert.equal(keyRowStateOf(mk({ regenKey: 'Tab' }), ['llm'], 'accept', 'Tab'), 'clash',
+    'llm 表内 accept 与 regen 同键 ⇒ 亮同键');
+  assert.equal(keyRowStateOf(mk({}), ['llm', 'local'], 'dismiss', 'Escape'), 'live');
+  // ★ 判据只回答「此刻这张表接不接管」，**不回答为什么不接管**：
+  // 值非空但表里没有这一格 ⇒ 同样是 off（卡片按有没有开关决定文案，见 kbStateOff / kbStateUnbound）。
+  assert.equal(keyRowStateOf(mk({}), ['llm'], 'word', 'Right'), 'off',
+    'word 不在 llm 表里 ⇒ 必须判 off（而不是 live）');
+});
+
+// ── ⑩ 名字只有一个出口（表格化新增）────────────────────────────────────
+run('⑩ 键位警告/拒绝文案引用 kbName，不各自取 label', () => {
+  const card = read('src/client/settings-card.tsx');
+  const code = card.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  // 判据（**第一版太宽，实测抓到了一条不是缺陷的**）：卡片里 `?.label[lang]` 出现一次在
+  // 开关自己的 `aria-label` 上——那是故意的：屏幕阅读器念的是控件本身，而这个控件在界面上
+  // 没有可见名字，全称才是完整语境。所以这里只禁「**跨字段引用**时用全称」。
+  // 要防的形状是：行上印「逐词采纳」，警告里却说「与「逐词采纳快捷键」用了同一个键」——
+  // 同一张卡片给同一个东西起两个名字，用户得自己对上。
+  const kbBody = /const kbName = [\s\S]*?\n};/.exec(code);
+  assert.ok(kbBody !== null, '找不到 kbName 函数体（形状变了，本条判据要跟着改）');
+  const crossRefs = [...code.matchAll(/[^\n]*(?:GHOST_FIELDS\.find\([^\n]*\)\??\.label\[lang\]|labelOf\([^\n]*\))[^\n]*/g)]
+    .map((m) => m[0].trim())
+    .filter((line) => !kbBody[0].includes(line))
+    // 放行：控件自身的 aria-label（上面已说明为什么那是故意的，不是漏网）
+    .filter((line) => !line.includes('aria-label'));
+  assert.deepEqual(crossRefs, [],
+    `有 ${crossRefs.length} 处在 kbName 之外拼「别的字段的全称 label」：\n      ${crossRefs.join('\n      ')}`);
+  assert.match(code, /t\.keyUnsafe\(kbName\(/, '拒绝文案没走 kbName');
+  assert.match(code, /t\.keyConflict\(kbName\(/, '撞键文案没走 kbName');
+});
+
+// ── ⑦ 键位表的分组覆盖（排版改版新增）────────────────────────────────────
+await run('⑦ 每个键位字段都有 KEY_TABLES 条目（表格分组由它投影）', () => {
+  const card = read('src/client/settings-card.tsx');
+  const tablesBlock = /const KEY_TABLES: Record<string, readonly \([^)]*\)\[\]> = \{([\s\S]*?)\n\};/.exec(card);
+  assert.ok(tablesBlock !== null, '找不到 KEY_TABLES（形状变了？分组投影的判据就断了）');
+  const listed = [...tablesBlock[1].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
+  // 卡片里 kind==='key' 且归 keybinds 分区的字段集合。
+  // ⚠️ 必须**按字段块切**再判，不能用「key: X … 900 字符内出现 section:'keybinds'」——
+  // 那种写法会把 llm 组最后一个字段也捞进来（实测误报过 timeoutMs / regenEnabled /
+  // historyMinChars：它们自己不是键行，只是**下一个**字段是键行）。
+  const blocks = card.split(/\n  \{\n/).slice(1);
+  const rowKeys = blocks
+    .filter((b) => /^\s*key: '(\w+)',/.test(b)
+      && /section: 'keybinds'/.test(b)
+      && /kind: 'key'/.test(b))
+    .map((b) => /^\s*key: '(\w+)',/.exec(b)[1]);
+  assert.ok(rowKeys.length >= 5, `只认出 ${rowKeys.length} 个键行，解析方式大概漂了（应为 6）`);
+  const missing = rowKeys.filter((k) => !listed.includes(k));
+  assert.deepEqual(missing, [],
+    `这些键位字段没有 KEY_TABLES 条目 ⇒ keybindGroups() 会把它静默归进「所有形态」，`
+    + `而适用范围是**界面在代替仲裁表说话**：${missing.join(', ')}`);
+  const orphan = listed.filter((k) => !rowKeys.includes(k));
+  assert.deepEqual(orphan, [], `KEY_TABLES 里有没人用的条目（死登记，删掉或补字段）：${orphan.join(', ')}`);
+});
+
+// ── ⑧ 开关必须挂在动作行上，不独立成行 ──────────────────────────────────
+await run('⑧ 两个动作开关挂在各自键行（KEYBIND_SWITCH_OF），且没有独立渲染', () => {
+  const card = read('src/client/settings-card.tsx');
+  for (const [row, sw] of [['wordAcceptKey', 'wordAccept'], ['regenKey', 'regenEnabled']]) {
+    assert.match(card, new RegExp(`${row}: '${sw}',`), `开关 ${sw} 没挂到 ${row} 行`);
+  }
+  assert.match(card,
+    /const keybindFields = GHOST_FIELDS\.filter\(f => f\.section === 'keybinds' && f\.kind === 'key'\)/,
+    'keybindFields 没有只取键行 ⇒ 开关会作为独立一行混进表里（旧版扫读断裂的原因）');
 });
 
 console.log(`\n${failed === 0 ? '✅' : '❌'} keybinding-registration-smoke: ${failed === 0 ? '五处登记点一致' : `${failed} 处漂移`}`);
